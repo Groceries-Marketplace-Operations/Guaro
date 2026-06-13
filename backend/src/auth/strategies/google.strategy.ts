@@ -46,6 +46,14 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       );
     }
 
+    if (!account.googleSub) {
+      await this.authService.linkGoogleSub(account.id, profile.id);
+    }
+
+    if (!account.email) {
+      await this.authService.linkEmail(account.id, email);
+    }
+
     done(null, account);
   }
 }

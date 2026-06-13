@@ -10,17 +10,18 @@
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "seed": "ts-node --require dotenv/config -r tsconfig-paths/register src/seed/seed.ts dotenv_config_path=../.env"
   },
   "dependencies": {
+    "@nestjs/bullmq": "^10.2.1",
     "@nestjs/common": "^10.3.10",
-    "@nestjs/core": "^10.3.10",
     "@nestjs/config": "^3.2.3",
+    "@nestjs/core": "^10.3.10",
     "@nestjs/jwt": "^10.2.0",
     "@nestjs/passport": "^10.0.3",
     "@nestjs/platform-express": "^10.3.10",
     "@nestjs/schedule": "^4.1.0",
-    "@nestjs/bullmq": "^10.2.1",
     "@prisma/client": "5.19.1",
     "bullmq": "^5.13.2",
     "class-transformer": "^0.5.1",
@@ -38,7 +39,10 @@
     "@types/node": "^20.14.15",
     "@types/passport-google-oauth20": "^2.0.16",
     "@types/passport-jwt": "^4.0.1",
+    "dotenv": "^17.4.2",
     "prisma": "5.19.1",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.5.4"
   }
 }

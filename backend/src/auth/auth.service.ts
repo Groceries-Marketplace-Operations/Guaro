@@ -30,6 +30,13 @@ export class AuthService {
     });
   }
 
+  async linkEmail(accountId: string, email: string): Promise<void> {
+    await this.prisma.account.update({
+      where: { id: accountId },
+      data: { email },
+    });
+  }
+
   issueToken(account: Account): string {
     const payload: JwtPayload = {
       sub: account.id,

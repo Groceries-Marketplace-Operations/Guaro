@@ -3,6 +3,10 @@
 /node_modules
 /build
 /tmp
+/backend/node_modules
+/backend/dist
+/backend/build
+/backend/tmp
 
 # Logs
 logs
