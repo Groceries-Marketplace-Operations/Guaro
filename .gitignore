@@ -18,7 +18,15 @@ lerna-debug.log*
 .env.development
 .env.test
 .env.production
+.env.*
 
 # temp directory
 .temp
 .tmp
+
+# AI
+CLAUDE.md
+/.claude
+
+# prisma
+/prisma
