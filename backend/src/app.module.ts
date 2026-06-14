@@ -14,6 +14,7 @@ import { TasksModule } from './tasks/tasks.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { BpoManagementModule } from './bpo-management/bpo-management.module';
+import { AccountsModule } from './accounts/accounts.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { BpoManagementModule } from './bpo-management/bpo-management.module';
     QueueModule,
     SchedulerModule,
     BpoManagementModule,
+    AccountsModule,
   ],
 })
 export class AppModule {}

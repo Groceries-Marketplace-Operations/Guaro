@@ -3,7 +3,7 @@ import { IsBoolean, IsOptional, IsString, IsUrl } from 'class-validator';
 export class UpdateWebhookDto {
   @IsOptional()
   @IsString()
-  nombre?: string;
+  name?: string;
 
   @IsOptional()
   @IsUrl()
@@ -11,5 +11,5 @@ export class UpdateWebhookDto {
 
   @IsOptional()
   @IsBoolean()
-  esAlertas?: boolean;
+  isAlerts?: boolean;
 }

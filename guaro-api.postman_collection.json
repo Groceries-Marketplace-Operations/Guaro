@@ -1,0 +1,616 @@
+{
+  "info": {
+    "name": "Guaro API",
+    "_postman_id": "guaro-api-v2",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "token", "value": "" },
+    { "key": "sectionId", "value": "00000000-0000-0000-0000-000000000001" },
+    { "key": "taskTypeId", "value": "00000000-0000-0000-0000-000000000020" },
+    { "key": "taskId", "value": "" },
+    { "key": "stepId", "value": "" },
+    { "key": "brandId", "value": "" },
+    { "key": "shopId", "value": "" },
+    { "key": "ruleId", "value": "" },
+    { "key": "invitationToken", "value": "" },
+    { "key": "webhookId", "value": "" },
+    { "key": "newTaskTypeId", "value": "" },
+    { "key": "stepDefId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Dev Login — super_admin",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.access_token) pm.collectionVariables.set('token', res.access_token);",
+            "pm.test('Login OK', () => pm.response.to.have.status(201));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth/dev-login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"superadmin@didi-labs.com\"\n}" }
+          }
+        },
+        {
+          "name": "Dev Login — admin",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.access_token) pm.collectionVariables.set('token', res.access_token);",
+            "pm.test('Login OK', () => pm.response.to.have.status(201));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth/dev-login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"admin@didi-labs.com\"\n}" }
+          }
+        },
+        {
+          "name": "Dev Login — bpo1",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.access_token) pm.collectionVariables.set('token', res.access_token);",
+            "pm.test('Login OK', () => pm.response.to.have.status(201));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth/dev-login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"bpo1@didi-labs.com\"\n}" }
+          }
+        },
+        {
+          "name": "Dev Login — user1",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.access_token) pm.collectionVariables.set('token', res.access_token);",
+            "pm.test('Login OK', () => pm.response.to.have.status(201));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth/dev-login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"user1@didi-labs.com\"\n}" }
+          }
+        },
+        {
+          "name": "Me",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/auth/me",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Invitations",
+      "item": [
+        {
+          "name": "Create invitation (bpo)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.token) pm.collectionVariables.set('invitationToken', res.token);",
+            "pm.test('Created', () => pm.response.to.have.status(201));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/invitations",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"rol\": \"bpo\",\n  \"sectionId\": \"{{sectionId}}\"\n}" }
+          }
+        },
+        {
+          "name": "List invitations",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/invitations",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Use invitation",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/invitations/{{invitationToken}}/use",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"New BPO\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sections",
+      "item": [
+        {
+          "name": "List sections",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/sections",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Create section",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/sections",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Expansion\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Handlers",
+      "item": [
+        {
+          "name": "List handlers",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/handlers",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Create handler",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/handlers",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"send_notification\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "List webhooks",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/webhooks",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Create webhook",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.id) pm.collectionVariables.set('webhookId', res.id);"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/webhooks",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Slack Ops\",\n  \"url\": \"https://hooks.slack.com/test\",\n  \"isAlerts\": false\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Task Types",
+      "item": [
+        {
+          "name": "List task types",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/task-types",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Get task type (seed)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/task-types/{{taskTypeId}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Create task type",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.id) pm.collectionVariables.set('newTaskTypeId', res.id);"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/task-types",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"sectionId\": \"{{sectionId}}\",\n  \"name\": \"Shop onboarding\",\n  \"description\": \"New shop onboarding flow\",\n  \"schedulable\": false\n}" }
+          }
+        },
+        {
+          "name": "Add manual step",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.id) pm.collectionVariables.set('stepDefId', res.id);"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/task-types/{{newTaskTypeId}}/steps",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Review documents\",\n  \"order\": 1,\n  \"executionType\": \"manual_internal\",\n  \"assignmentStrategy\": \"round_robin\"\n}" }
+          }
+        },
+        {
+          "name": "Add form field",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/task-types/{{newTaskTypeId}}/fields",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"label\": \"Contract URL\",\n  \"tipo\": \"link\",\n  \"required\": true,\n  \"order\": 1\n}" }
+          }
+        },
+        {
+          "name": "Add candidate to step",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/task-types/{{newTaskTypeId}}/steps/{{stepDefId}}/candidates",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"accountId\": \"<bpo-account-id>\"\n}" }
+          }
+        },
+        {
+          "name": "Add webhook to step",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/task-types/{{newTaskTypeId}}/steps/{{stepDefId}}/webhooks",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"webhookId\": \"{{webhookId}}\",\n  \"events\": [\"on_start\", \"on_complete\", \"on_fail\"]\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Applications",
+      "item": [
+        {
+          "name": "List applications",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/applications",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Create application",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.id) pm.collectionVariables.set('appId', res.id);"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/applications",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"appId\": \"APP-MX-001\",\n  \"appName\": \"DiDi Mexico Demo\",\n  \"country\": \"MX\",\n  \"appSecret\": \"my-super-secret\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Brands",
+      "item": [
+        {
+          "name": "List brands",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.length > 0) pm.collectionVariables.set('brandId', res[0].id);"
+          ]}}],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/brands",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Get brand",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/brands/{{brandId}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Create brand (auto-assigns owner)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.id) pm.collectionVariables.set('brandId', res.id);",
+            "pm.test('Has owner', () => pm.expect(res.owner).to.not.be.null);"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/brands",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"brandId\": \"BRAND-CO-002\",\n  \"brandName\": \"Pizza Test CO\",\n  \"country\": \"CO\",\n  \"kaType\": \"KA\",\n  \"category\": \"Pizza\"\n}" }
+          }
+        },
+        {
+          "name": "Update brand",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/brands/{{brandId}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"brandName\": \"Pizza Test CO (updated)\"\n}" }
+          }
+        },
+        {
+          "name": "List assignment rules",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.length > 0) pm.collectionVariables.set('ruleId', res[0].id);"
+          ]}}],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/brands/assignment-rules",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Update assignment rule mode",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/brands/assignment-rules/{{ruleId}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"modo\": \"round_robin\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Shops",
+      "item": [
+        {
+          "name": "List shops",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/shops",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "List shops by brand",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/shops?brandId={{brandId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["shops"],
+              "query": [{ "key": "brandId", "value": "{{brandId}}" }]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Create shop",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.id) pm.collectionVariables.set('shopId', res.id);"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/shops",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"shopId\": \"SHOP-CO-010\",\n  \"appShopId\": \"S010\",\n  \"brandId\": \"{{brandId}}\",\n  \"city\": \"Medellin\",\n  \"latitude\": \"6.2476\",\n  \"longitude\": \"-75.5658\"\n}" }
+          }
+        },
+        {
+          "name": "Update shop status",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/shops/{{shopId}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"application\"\n}" }
+          }
+        },
+        {
+          "name": "Add schedule",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/shops/{{shopId}}/schedules",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"day\": \"monday\",\n  \"openTime\": \"08:00\",\n  \"closeTime\": \"22:00\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tasks",
+      "item": [
+        {
+          "name": "List tasks",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/tasks",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Create task (immediate)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "var res = pm.response.json();",
+            "if (res.id) pm.collectionVariables.set('taskId', res.id);",
+            "if (res.stepInstances) {",
+            "  var active = res.stepInstances.find(s => s.status === 'in_progress');",
+            "  if (active) pm.collectionVariables.set('stepId', active.id);",
+            "}",
+            "pm.test('Task created', () => pm.response.to.have.status(201));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/tasks",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"taskTypeId\": \"{{taskTypeId}}\",\n  \"brandId\": \"{{brandId}}\"\n}" }
+          }
+        },
+        {
+          "name": "Create scheduled task",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/tasks",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"taskTypeId\": \"{{taskTypeId}}\",\n  \"brandId\": \"{{brandId}}\",\n  \"scheduledStart\": \"2026-06-14T08:00:00.000Z\",\n  \"scheduledEnd\": \"2026-06-14T18:00:00.000Z\"\n}" }
+          }
+        },
+        {
+          "name": "Get task",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/tasks/{{taskId}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Complete step",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/tasks/{{taskId}}/steps/{{stepId}}/complete",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"note\": \"Credentials validated successfully\"\n}" }
+          }
+        },
+        {
+          "name": "Block step",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/tasks/{{taskId}}/steps/{{stepId}}/block",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"note\": \"Missing client documentation\"\n}" }
+          }
+        },
+        {
+          "name": "Retry blocked step",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/tasks/{{taskId}}/steps/{{stepId}}/retry",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Fail step",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/tasks/{{taskId}}/steps/{{stepId}}/fail",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"failureReason\": \"bpo_timed_out\",\n  \"note\": \"Did not respond within the window\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "BPO Management",
+      "item": [
+        {
+          "name": "My active tasks",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/bpo-management/my-tasks",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "My performance",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/bpo-management/my-performance",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Team performance (admin)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/bpo-management/team",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Team history",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/bpo-management/team/history",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "BPO performance by id",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/bpo-management/team/<accountId>",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    }
+  ]
+}

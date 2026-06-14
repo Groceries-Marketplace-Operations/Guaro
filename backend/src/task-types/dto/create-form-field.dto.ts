@@ -3,7 +3,7 @@ import {
   IsEnum,
   IsInt,
   IsOptional,
-  IsUUID,
+
   IsString,
   Min,
 } from 'class-validator';
@@ -11,28 +11,27 @@ import { FormFieldTipo } from '@prisma/client';
 
 export class CreateFormFieldDto {
   @IsString()
-  etiqueta: string;
+  label: string;
 
   @IsEnum(FormFieldTipo)
-  tipo: FormFieldTipo;
+  type: FormFieldTipo;
 
   @IsOptional()
   @IsBoolean()
-  requerido?: boolean;
+  required?: boolean;
 
   @IsOptional()
   @IsBoolean()
   multiple?: boolean;
 
   @IsOptional()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  opciones?: any;
+  options?: string[];
 
   @IsInt()
   @Min(1)
-  orden: number;
+  order: number;
 
   @IsOptional()
-  @IsUUID()
-  filtraPorId?: string;
+  @IsString()
+  filteredById?: string;
 }

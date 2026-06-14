@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Country, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { encrypt } from '../common/crypto.util';
 import { CreateApplicationDto } from './dto/create-application.dto';
@@ -19,17 +20,27 @@ export class ApplicationsService {
     this.encKey = config.getOrThrow('APP_SECRET_ENCRYPTION_KEY');
   }
 
-  findAll() {
-    return this.prisma.application.findMany({
-      where: { deletedAt: null },
-      select: SELECT_SAFE,
-      orderBy: { appName: 'asc' },
-    });
+  async findAll(filters: { page?: number; limit?: number; q?: string; country?: Country } = {}) {
+    const { page = 1, limit = 25, q, country } = filters;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.ApplicationWhereInput = { deletedAt: null };
+    if (country) where.country = country;
+    if (q) where.OR = [
+      { appName: { contains: q, mode: 'insensitive' } },
+      { appId:   { contains: q, mode: 'insensitive' } },
+    ];
+
+    const [data, total] = await Promise.all([
+      this.prisma.application.findMany({ where, select: SELECT_SAFE, orderBy: { appName: 'asc' }, skip, take: limit }),
+      this.prisma.application.count({ where }),
+    ]);
+    return { data, total, page, limit };
   }
 
   async findOne(id: string) {
     const app = await this.prisma.application.findUnique({ where: { id }, select: SELECT_SAFE });
-    if (!app || app.deletedAt) throw new NotFoundException('Application no encontrada');
+    if (!app || app.deletedAt) throw new NotFoundException('Application not found');
     return app;
   }
 

@@ -1,68 +1,68 @@
-import { PrismaClient, AccountRol, KaType, Country, AsignacionModo } from '@prisma/client';
+import { PrismaClient, AccountRole, KaType, Country, AssignmentMode } from '@prisma/client';
 import { encrypt } from '../common/crypto.util';
 
 const prisma = new PrismaClient();
 
 async function main() {
   const encKey = process.env.APP_SECRET_ENCRYPTION_KEY;
-  if (!encKey) throw new Error('APP_SECRET_ENCRYPTION_KEY no definida');
+  if (!encKey) throw new Error('APP_SECRET_ENCRYPTION_KEY not defined');
 
-  // ── 1. Bootstrap: primer super_admin ─────────────────────────────────────
+  // ── 1. Bootstrap: first super_admin ──────────────────────────────────────
   const superAdmin = await prisma.account.upsert({
     where: { email: 'superadmin@didi-labs.com' },
     update: {},
     create: {
-      nombre: 'Super Admin',
+      name: 'Super Admin',
       email: 'superadmin@didi-labs.com',
-      roles: [AccountRol.super_admin],
+      roles: [AccountRole.super_admin],
     },
   });
   console.log('✓ super_admin:', superAdmin.email);
 
-  // ── 2. Section inicial ────────────────────────────────────────────────────
+  // ── 2. Initial section ───────────────────────────────────────────────────
   const section = await prisma.section.upsert({
     where: { id: '00000000-0000-0000-0000-000000000001' },
     update: {},
-    create: { id: '00000000-0000-0000-0000-000000000001', nombre: 'Operaciones' },
+    create: { id: '00000000-0000-0000-0000-000000000001', name: 'Operations' },
   });
-  console.log('✓ section:', section.nombre);
+  console.log('✓ section:', section.name);
 
-  // ── 3. Handlers del catálogo ──────────────────────────────────────────────
+  // ── 3. Catalog handlers ───────────────────────────────────────────────────
   const handlerNames = [
     'sync_menu',
     'validate_app_credentials',
     'enable_shop_online',
     'notify_integration_complete',
   ];
-  for (const nombre of handlerNames) {
-    await prisma.handler.upsert({ where: { nombre }, update: {}, create: { nombre } });
+  for (const name of handlerNames) {
+    await prisma.handler.upsert({ where: { name }, update: {}, create: { name } });
   }
   console.log('✓ handlers:', handlerNames.length);
 
-  // ── 4. Webhooks de alerta ─────────────────────────────────────────────────
+  // ── 4. Alert webhooks ─────────────────────────────────────────────────────
   const alertWebhook = await prisma.webhook.upsert({
     where: { id: '00000000-0000-0000-0000-000000000010' },
     update: {},
     create: {
       id: '00000000-0000-0000-0000-000000000010',
-      nombre: 'Alertas Sistema',
+      name: 'System Alerts',
       url: process.env.ALERT_WEBHOOK_URL ?? 'http://localhost:9999/alert',
-      esAlertas: true,
+      isAlerts: true,
     },
   });
-  console.log('✓ webhook alerta:', alertWebhook.nombre);
+  console.log('✓ alert webhook:', alertWebhook.name);
 
-  // ── 5. Las 9 reglas de asignación (3 ka_type × 3 países) ─────────────────
-  const rules: { kaType: KaType; country: Country; modo: AsignacionModo }[] = [
-    { kaType: KaType.KA,  country: Country.CO, modo: AsignacionModo.fijo },
-    { kaType: KaType.KA,  country: Country.MX, modo: AsignacionModo.fijo },
-    { kaType: KaType.KA,  country: Country.CR, modo: AsignacionModo.fijo },
-    { kaType: KaType.CKA, country: Country.CO, modo: AsignacionModo.round_robin },
-    { kaType: KaType.CKA, country: Country.MX, modo: AsignacionModo.round_robin },
-    { kaType: KaType.CKA, country: Country.CR, modo: AsignacionModo.round_robin },
-    { kaType: KaType.SME, country: Country.CO, modo: AsignacionModo.round_robin },
-    { kaType: KaType.SME, country: Country.MX, modo: AsignacionModo.round_robin },
-    { kaType: KaType.SME, country: Country.CR, modo: AsignacionModo.round_robin },
+  // ── 5. The 9 assignment rules (3 ka_type × 3 countries) ──────────────────
+  const rules: { kaType: KaType; country: Country; modo: AssignmentMode }[] = [
+    { kaType: KaType.KA,  country: Country.CO, modo: AssignmentMode.fixed },
+    { kaType: KaType.KA,  country: Country.MX, modo: AssignmentMode.fixed },
+    { kaType: KaType.KA,  country: Country.CR, modo: AssignmentMode.fixed },
+    { kaType: KaType.CKA, country: Country.CO, modo: AssignmentMode.round_robin },
+    { kaType: KaType.CKA, country: Country.MX, modo: AssignmentMode.round_robin },
+    { kaType: KaType.CKA, country: Country.CR, modo: AssignmentMode.round_robin },
+    { kaType: KaType.SME, country: Country.CO, modo: AssignmentMode.round_robin },
+    { kaType: KaType.SME, country: Country.MX, modo: AssignmentMode.round_robin },
+    { kaType: KaType.SME, country: Country.CR, modo: AssignmentMode.round_robin },
   ];
   for (const rule of rules) {
     await prisma.brandAssignmentRule.upsert({
@@ -71,41 +71,41 @@ async function main() {
       create: rule,
     });
   }
-  console.log('✓ reglas de asignación:', rules.length);
+  console.log('✓ assignment rules:', rules.length);
 
-  // ── 6. Datos de prueba (solo dev) ─────────────────────────────────────────
+  // ── 6. Test data (dev only) ───────────────────────────────────────────────
   if (process.env.NODE_ENV === 'production') {
-    console.log('→ producción: omitiendo datos de prueba');
+    console.log('→ production: skipping test data');
     return;
   }
 
-  // Cuentas de prueba
+  // Test accounts
   const admin = await prisma.account.upsert({
     where: { email: 'admin@didi-labs.com' },
     update: {},
-    create: { nombre: 'Admin Ops', email: 'admin@didi-labs.com', roles: [AccountRol.admin], sectionId: section.id },
+    create: { name: 'Admin Ops', email: 'admin@didi-labs.com', roles: [AccountRole.admin], sectionId: section.id },
   });
 
   const bpo1 = await prisma.account.upsert({
     where: { email: 'bpo1@didi-labs.com' },
     update: {},
-    create: { nombre: 'BPO Uno', email: 'bpo1@didi-labs.com', roles: [AccountRol.bpo], sectionId: section.id },
+    create: { name: 'BPO One', email: 'bpo1@didi-labs.com', roles: [AccountRole.bpo], sectionId: section.id },
   });
 
   const bpo2 = await prisma.account.upsert({
     where: { email: 'bpo2@didi-labs.com' },
     update: {},
-    create: { nombre: 'BPO Dos', email: 'bpo2@didi-labs.com', roles: [AccountRol.bpo], sectionId: section.id },
+    create: { name: 'BPO Two', email: 'bpo2@didi-labs.com', roles: [AccountRole.bpo], sectionId: section.id },
   });
 
   const user1 = await prisma.account.upsert({
     where: { email: 'user1@didi-labs.com' },
     update: {},
-    create: { nombre: 'Usuario Uno', email: 'user1@didi-labs.com', roles: [AccountRol.user], sectionId: section.id },
+    create: { name: 'User One', email: 'user1@didi-labs.com', roles: [AccountRole.user], sectionId: section.id },
   });
-  console.log('✓ cuentas de prueba:', [admin.email, bpo1.email, bpo2.email, user1.email]);
+  console.log('✓ test accounts:', [admin.email, bpo1.email, bpo2.email, user1.email]);
 
-  // Asignar BPOs a regla KA/CO
+  // Assign BPOs to rule KA/CO
   const ruleKaCo = await prisma.brandAssignmentRule.findUnique({
     where: { kaType_country: { kaType: KaType.KA, country: Country.CO } },
   });
@@ -117,7 +117,7 @@ async function main() {
     });
   }
 
-  // Asignar BPOs al pool CKA/CO
+  // Assign BPOs to pool CKA/CO
   const ruleCkaCo = await prisma.brandAssignmentRule.findUnique({
     where: { kaType_country: { kaType: KaType.CKA, country: Country.CO } },
   });
@@ -131,7 +131,7 @@ async function main() {
     }
   }
 
-  // Application de prueba
+  // Sample application
   const app = await prisma.application.upsert({
     where: { appId: 'APP-CO-001' },
     update: {},
@@ -144,7 +144,7 @@ async function main() {
     },
   });
 
-  // Brand de prueba
+  // Sample brand
   const brand = await prisma.brand.upsert({
     where: { brandId: 'BRAND-CO-001' },
     update: {},
@@ -154,14 +154,14 @@ async function main() {
       country: Country.CO,
       kaType: KaType.KA,
       category: 'Burgers',
-      responsableId: bpo1.id,
+      ownerId: bpo1.id,
       applicationId: app.id,
       createdById: superAdmin.id,
     },
   });
-  console.log('✓ brand de prueba:', brand.brandName);
+  console.log('✓ sample brand:', brand.brandName);
 
-  // Shops de prueba
+  // Sample shops
   for (let i = 1; i <= 3; i++) {
     await prisma.shop.upsert({
       where: { shopId: `SHOP-CO-00${i}` },
@@ -175,10 +175,10 @@ async function main() {
       },
     });
   }
-  console.log('✓ shops de prueba: 3');
+  console.log('✓ sample shops: 3');
 
-  // TaskType de prueba con un step manual y uno automático
-  const syncHandler = await prisma.handler.findUnique({ where: { nombre: 'sync_menu' } });
+  // Sample task type with one manual and one automatic step
+  const syncHandler = await prisma.handler.findUnique({ where: { name: 'sync_menu' } });
 
   const taskType = await prisma.taskType.upsert({
     where: { id: '00000000-0000-0000-0000-000000000020' },
@@ -186,40 +186,40 @@ async function main() {
     create: {
       id: '00000000-0000-0000-0000-000000000020',
       sectionId: section.id,
-      nombre: 'Integración de marca',
-      descripcion: 'Flujo completo para integrar una nueva marca en la plataforma',
-      programable: true,
+      name: 'Brand Integration',
+      descripcion: 'Complete flow to integrate a new brand on the platform',
+      schedulable: true,
     },
   });
 
   const step1 = await prisma.stepDefinition.upsert({
-    where: { taskTypeId_orden: { taskTypeId: taskType.id, orden: 1 } },
+    where: { taskTypeId_order: { taskTypeId: taskType.id, order: 1 } },
     update: {},
     create: {
       taskTypeId: taskType.id,
-      nombre: 'Validar credenciales',
-      orden: 1,
-      tipoEjecucion: 'manual_interno',
-      estrategiaAsignacion: 'round_robin',
+      name: 'Validate credentials',
+      order: 1,
+      executionType: 'manual_internal',
+      assignmentStrategy: 'round_robin',
     },
   });
 
   if (syncHandler) {
     await prisma.stepDefinition.upsert({
-      where: { taskTypeId_orden: { taskTypeId: taskType.id, orden: 2 } },
+      where: { taskTypeId_order: { taskTypeId: taskType.id, order: 2 } },
       update: {},
       create: {
         taskTypeId: taskType.id,
-        nombre: 'Sincronizar menú',
-        orden: 2,
-        tipoEjecucion: 'automatico',
-        estrategiaAsignacion: 'fijo',
+        name: 'Sync menu',
+        order: 2,
+        executionType: 'automatic',
+        assignmentStrategy: 'fixed',
         handlerId: syncHandler.id,
       },
     });
   }
 
-  // Agregar BPOs como candidatos al step 1
+  // Add BPOs as candidates for step 1
   for (const bpo of [bpo1, bpo2]) {
     await prisma.stepDefinitionAccount.upsert({
       where: { stepDefinitionId_accountId: { stepDefinitionId: step1.id, accountId: bpo.id } },
@@ -228,8 +228,8 @@ async function main() {
     });
   }
 
-  console.log('✓ task type de prueba:', taskType.nombre);
-  console.log('\n✅ Seed completado');
+  console.log('✓ sample task type:', taskType.name);
+  console.log('\n✅ Seed complete');
 }
 
 main()

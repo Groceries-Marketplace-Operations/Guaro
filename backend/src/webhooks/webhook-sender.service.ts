@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { WebhookEvento } from '@prisma/client';
+import { WebhookEvent } from '@prisma/client';
 
 export interface WebhookPayload {
   text: string;
@@ -18,18 +18,18 @@ export class WebhookSenderService {
 
   constructor(private prisma: PrismaService) {}
 
-  async sendForStep(stepDefinitionId: string, evento: WebhookEvento, payload: WebhookPayload) {
+  async sendForStep(stepDefinitionId: string, event: WebhookEvent, payload: WebhookPayload) {
     const stepWebhooks = await this.prisma.stepWebhook.findMany({
       where: { stepDefinitionId },
       include: { webhook: true },
     });
 
-    const targets = stepWebhooks.filter((sw) => sw.eventos.includes(evento));
+    const targets = stepWebhooks.filter((sw) => sw.events.includes(event));
     await Promise.allSettled(targets.map((sw) => this.send(sw.webhook.url, payload)));
   }
 
   async sendAlert(payload: WebhookPayload) {
-    const alertWebhooks = await this.prisma.webhook.findMany({ where: { esAlertas: true } });
+    const alertWebhooks = await this.prisma.webhook.findMany({ where: { isAlerts: true } });
     await Promise.allSettled(alertWebhooks.map((w) => this.send(w.url, payload)));
   }
 

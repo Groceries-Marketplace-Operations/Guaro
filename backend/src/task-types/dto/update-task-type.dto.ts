@@ -3,13 +3,13 @@ import { IsBoolean, IsOptional, IsString } from 'class-validator';
 export class UpdateTaskTypeDto {
   @IsOptional()
   @IsString()
-  nombre?: string;
+  name?: string;
 
   @IsOptional()
   @IsString()
-  descripcion?: string;
+  description?: string;
 
   @IsOptional()
   @IsBoolean()
-  programable?: boolean;
+  schedulable?: boolean;
 }

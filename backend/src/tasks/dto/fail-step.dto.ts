@@ -1,11 +1,11 @@
 import { IsEnum, IsOptional, IsString } from 'class-validator';
-import { StepMotivoFallo } from '@prisma/client';
+import { StepFailureReason } from '@prisma/client';
 
 export class FailStepDto {
-  @IsEnum(StepMotivoFallo)
-  motivoFallo: StepMotivoFallo;
+  @IsEnum(StepFailureReason)
+  failureReason: StepFailureReason;
 
   @IsOptional()
   @IsString()
-  nota?: string;
+  note?: string;
 }

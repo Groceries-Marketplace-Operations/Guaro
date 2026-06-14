@@ -5,13 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
-  EstrategiaAsignacion,
+  AssignmentStrategy,
+  ExecutionType,
   Prisma,
-  StepEstado,
-  StepMotivoFallo,
-  TaskEstado,
-  TipoEjecucion,
-  WebhookEvento,
+  StepFailureReason,
+  StepStatus,
+  TaskStatus,
+  WebhookEvent,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
@@ -27,160 +27,160 @@ export class TaskEngineService {
     private webhookSender: WebhookSenderService,
   ) {}
 
-  // ── Activar un step (just-in-time assignment) ─────────────────────────────
+  // ── Activate a step (just-in-time assignment) ─────────────────────────────
 
   async activateStep(stepInstanceId: string): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       const step = await tx.stepInstance.findUnique({
         where: { id: stepInstanceId },
-        include: { stepDefinition: { include: { candidatos: true } }, task: true },
+        include: { stepDefinition: { include: { candidates: true } }, task: true },
       });
-      if (!step) throw new NotFoundException('StepInstance no encontrado');
-      if (step.estado !== StepEstado.pending) return;
+      if (!step) throw new NotFoundException('StepInstance not found');
+      if (step.status !== StepStatus.pending) return;
 
-      const asignadoId = await this.assignBpo(tx, step.stepDefinition);
+      const assignedToId = await this.assignBpo(tx, step.stepDefinition);
 
       await tx.stepInstance.update({
         where: { id: stepInstanceId },
-        data: { estado: StepEstado.in_progress, asignadoId },
+        data: { status: StepStatus.in_progress, assignedToId },
       });
 
       await tx.task.update({
         where: { id: step.taskId },
-        data: { estado: TaskEstado.in_progress },
+        data: { status: TaskStatus.in_progress },
       });
     });
 
-    // Webhook fuera de la tx (best-effort)
+    // Webhook outside tx (best-effort)
     const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
     if (step) {
-      await this.sendStepWebhook(step.stepDefinitionId, WebhookEvento.al_iniciar, step.taskId);
+      await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_start, step.taskId);
     }
   }
 
-  // ── Completar un step ─────────────────────────────────────────────────────
+  // ── Complete a step ───────────────────────────────────────────────────────
 
-  async completeStep(stepInstanceId: string, resultado?: unknown, nota?: string): Promise<void> {
+  async completeStep(stepInstanceId: string, result?: unknown, note?: string): Promise<void> {
     const step = await this.prisma.stepInstance.findUnique({
       where: { id: stepInstanceId },
       include: { stepDefinition: true },
     });
-    if (!step) throw new NotFoundException('StepInstance no encontrado');
-    if (step.estado !== StepEstado.in_progress) {
-      throw new BadRequestException('Solo se puede completar un step en in_progress');
+    if (!step) throw new NotFoundException('StepInstance not found');
+    if (step.status !== StepStatus.in_progress) {
+      throw new BadRequestException('Step must be in_progress to be completed');
     }
 
     await this.prisma.stepInstance.update({
       where: { id: stepInstanceId },
       data: {
-        estado: StepEstado.done,
-        completadoEn: new Date(),
-        resultado: resultado as Prisma.InputJsonValue ?? Prisma.JsonNull,
-        nota: nota ?? null,
+        status: StepStatus.done,
+        completedAt: new Date(),
+        result: result as Prisma.InputJsonValue ?? Prisma.JsonNull,
+        note: note ?? null,
       },
     });
 
-    await this.sendStepWebhook(step.stepDefinitionId, WebhookEvento.al_terminar, step.taskId);
+    await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_complete, step.taskId);
     await this.advanceTask(step.taskId);
   }
 
-  // ── Fallar un step ────────────────────────────────────────────────────────
+  // ── Fail a step ───────────────────────────────────────────────────────────
 
   async failStep(
     stepInstanceId: string,
-    motivoFallo: StepMotivoFallo,
-    nota?: string,
+    failureReason: StepFailureReason,
+    note?: string,
   ): Promise<void> {
     const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
-    if (!step) throw new NotFoundException('StepInstance no encontrado');
+    if (!step) throw new NotFoundException('StepInstance not found');
 
     await this.prisma.$transaction([
       this.prisma.stepInstance.update({
         where: { id: stepInstanceId },
-        data: { estado: StepEstado.failed, motivoFallo, nota: nota ?? null, completadoEn: new Date() },
+        data: { status: StepStatus.failed, failureReason, note: note ?? null, completedAt: new Date() },
       }),
       this.prisma.task.update({
         where: { id: step.taskId },
-        data: { estado: TaskEstado.failed },
+        data: { status: TaskStatus.failed },
       }),
     ]);
 
-    await this.sendStepWebhook(step.stepDefinitionId, WebhookEvento.al_fallar, step.taskId);
+    await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_fail, step.taskId);
   }
 
-  // ── Bloquear un step (solo manual) ───────────────────────────────────────
+  // ── Block a step (manual only) ────────────────────────────────────────────
 
-  async blockStep(stepInstanceId: string, nota?: string): Promise<void> {
+  async blockStep(stepInstanceId: string, note?: string): Promise<void> {
     const step = await this.prisma.stepInstance.findUnique({
       where: { id: stepInstanceId },
       include: { stepDefinition: true },
     });
-    if (!step) throw new NotFoundException('StepInstance no encontrado');
-    if (step.stepDefinition.tipoEjecucion === TipoEjecucion.automatico) {
-      throw new BadRequestException('Los steps automáticos no pueden bloquearse');
+    if (!step) throw new NotFoundException('StepInstance not found');
+    if (step.stepDefinition.executionType === ExecutionType.automatic) {
+      throw new BadRequestException('Automatic steps cannot be blocked');
     }
-    if (step.estado !== StepEstado.in_progress) {
-      throw new BadRequestException('Solo se puede bloquear un step en in_progress');
+    if (step.status !== StepStatus.in_progress) {
+      throw new BadRequestException('Step must be in_progress to be blocked');
     }
 
     await this.prisma.stepInstance.update({
       where: { id: stepInstanceId },
-      data: { estado: StepEstado.blocked, nota: nota ?? null },
+      data: { status: StepStatus.blocked, note: note ?? null },
     });
   }
 
-  // ── Reintentar un step bloqueado ──────────────────────────────────────────
+  // ── Retry a blocked step ──────────────────────────────────────────────────
 
   async retryStep(stepInstanceId: string): Promise<void> {
     const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
-    if (!step) throw new NotFoundException('StepInstance no encontrado');
-    if (step.estado !== StepEstado.blocked) {
-      throw new BadRequestException('Solo se puede reintentar un step bloqueado');
+    if (!step) throw new NotFoundException('StepInstance not found');
+    if (step.status !== StepStatus.blocked) {
+      throw new BadRequestException('Only blocked steps can be retried');
     }
     await this.prisma.stepInstance.update({
       where: { id: stepInstanceId },
-      data: { estado: StepEstado.in_progress, nota: null },
+      data: { status: StepStatus.in_progress, note: null },
     });
   }
 
-  // ── Avanzar la tarea al siguiente step ────────────────────────────────────
+  // ── Advance task to next step ─────────────────────────────────────────────
 
   async advanceTask(taskId: string): Promise<void> {
     const nextStep = await this.prisma.stepInstance.findFirst({
-      where: { taskId, estado: StepEstado.pending },
+      where: { taskId, status: StepStatus.pending },
       include: { stepDefinition: true },
-      orderBy: { stepDefinition: { orden: 'asc' } },
+      orderBy: { stepDefinition: { order: 'asc' } },
     });
 
     if (!nextStep) {
-      await this.prisma.task.update({ where: { id: taskId }, data: { estado: TaskEstado.done } });
+      await this.prisma.task.update({ where: { id: taskId }, data: { status: TaskStatus.done } });
       return;
     }
 
     await this.activateStep(nextStep.id);
 
-    // Si es automático, publicar en cola (el módulo queue se encarga)
-    if (nextStep.stepDefinition.tipoEjecucion === TipoEjecucion.automatico) {
+    // If automatic, publish to queue (queue module handles this)
+    if (nextStep.stepDefinition.executionType === ExecutionType.automatic) {
       this.emitAutoStep(nextStep.id, nextStep.stepDefinition.handlerId!);
     }
   }
 
-  // Lo sobreescribe QueueModule para publicar el job (evita circular dep)
+  // Overridden by QueueModule to publish the job (avoids circular dep)
   emitAutoStep: (stepInstanceId: string, handlerId: string) => void = () => undefined;
 
-  // ── Asignación just-in-time ───────────────────────────────────────────────
+  // ── Just-in-time assignment ───────────────────────────────────────────────
 
-  private async assignBpo(tx: Tx, stepDef: { id: string; estrategiaAsignacion: EstrategiaAsignacion; peso: number }): Promise<string | undefined> {
-    const candidatos = await tx.stepDefinitionAccount.findMany({
+  private async assignBpo(tx: Tx, stepDef: { id: string; assignmentStrategy: AssignmentStrategy; weight: number }): Promise<string | undefined> {
+    const candidates = await tx.stepDefinitionAccount.findMany({
       where: { stepDefinitionId: stepDef.id },
     });
-    if (!candidatos.length) return undefined;
+    if (!candidates.length) return undefined;
 
-    if (stepDef.estrategiaAsignacion === EstrategiaAsignacion.fijo) {
-      return candidatos[0].accountId;
+    if (stepDef.assignmentStrategy === AssignmentStrategy.fixed) {
+      return candidates[0].accountId;
     }
 
-    if (stepDef.estrategiaAsignacion === EstrategiaAsignacion.round_robin) {
+    if (stepDef.assignmentStrategy === AssignmentStrategy.round_robin) {
       const rows = await tx.$queryRaw<{ id: string; contador_rr: number }[]>`
         SELECT a.id, a.contador_rr
         FROM step_definition_account sda
@@ -191,11 +191,11 @@ export class TaskEngineService {
         FOR UPDATE OF a
       `;
       if (!rows.length) return undefined;
-      await tx.account.update({ where: { id: rows[0].id }, data: { contadorRr: { increment: 1 } } });
+      await tx.account.update({ where: { id: rows[0].id }, data: { rrCounter: { increment: 1 } } });
       return rows[0].id;
     }
 
-    // por_peso: menor carga, incrementar por el peso del step
+    // by_weight: lowest workload, increment by step weight
     const rows = await tx.$queryRaw<{ id: string }[]>`
       SELECT a.id
       FROM step_definition_account sda
@@ -206,34 +206,34 @@ export class TaskEngineService {
       FOR UPDATE OF a
     `;
     if (!rows.length) return undefined;
-    await tx.account.update({ where: { id: rows[0].id }, data: { carga: { increment: stepDef.peso } } });
+    await tx.account.update({ where: { id: rows[0].id }, data: { workload: { increment: stepDef.weight } } });
     return rows[0].id;
   }
 
   // ── Webhook helper ────────────────────────────────────────────────────────
 
-  private async sendStepWebhook(stepDefinitionId: string, evento: WebhookEvento, taskId: string) {
+  private async sendStepWebhook(stepDefinitionId: string, event: WebhookEvent, taskId: string) {
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
       include: { brand: true, taskType: true },
     });
 
-    const colorMap: Record<WebhookEvento, string> = {
-      al_iniciar: '#2196F3',
-      al_terminar: '#4CAF50',
-      al_fallar: '#F44336',
+    const colorMap: Record<WebhookEvent, string> = {
+      on_start: '#2196F3',
+      on_complete: '#4CAF50',
+      on_fail: '#F44336',
     };
 
     const payload = {
-      text: `[${task?.taskType.nombre ?? 'Tarea'}] ${evento.replace('al_', '')} — ${task?.brand?.brandName ?? ''}`,
+      text: `[${task?.taskType.name ?? 'Task'}] ${event.replace('on_', '')} — ${task?.brand?.brandName ?? ''}`,
       attachments: [{
-        title: task?.taskType.nombre ?? '',
-        text: task?.brand ? `Marca: ${task.brand.brandName} (${task.brand.country})` : '',
-        color: colorMap[evento],
+        title: task?.taskType.name ?? '',
+        text: task?.brand ? `Brand: ${task.brand.brandName} (${task.brand.country})` : '',
+        color: colorMap[event],
       }],
     };
 
-    await this.webhookSender.sendForStep(stepDefinitionId, evento, payload).catch((err) =>
+    await this.webhookSender.sendForStep(stepDefinitionId, event, payload).catch((err) =>
       this.logger.error(`Webhook error: ${err.message}`),
     );
   }

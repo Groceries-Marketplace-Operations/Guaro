@@ -11,10 +11,6 @@ export class UpdateBrandDto {
   kaType?: KaType;
 
   @IsOptional()
-  @IsString()
-  category?: string;
-
-  @IsOptional()
   @IsEnum(MenuIntegration)
   menuIntegration?: MenuIntegration;
 
@@ -28,5 +24,9 @@ export class UpdateBrandDto {
 
   @IsOptional()
   @IsUUID()
-  applicationId?: string;
+  applicationId?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  ownerId?: string | null;
 }

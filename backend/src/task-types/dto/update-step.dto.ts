@@ -3,39 +3,39 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUUID,
+
   Min,
 } from 'class-validator';
-import { EstrategiaAsignacion, TipoEjecucion } from '@prisma/client';
+import { AssignmentStrategy, ExecutionType } from '@prisma/client';
 
 export class UpdateStepDto {
   @IsOptional()
   @IsString()
-  nombre?: string;
+  name?: string;
 
   @IsOptional()
   @IsInt()
   @Min(1)
-  orden?: number;
+  order?: number;
 
   @IsOptional()
-  @IsEnum(TipoEjecucion)
-  tipoEjecucion?: TipoEjecucion;
+  @IsEnum(ExecutionType)
+  executionType?: ExecutionType;
 
   @IsOptional()
   @IsString()
-  accion?: string;
+  action?: string;
 
   @IsOptional()
-  @IsEnum(EstrategiaAsignacion)
-  estrategiaAsignacion?: EstrategiaAsignacion;
+  @IsEnum(AssignmentStrategy)
+  assignmentStrategy?: AssignmentStrategy;
 
   @IsOptional()
   @IsInt()
   @Min(1)
-  peso?: number;
+  weight?: number;
 
   @IsOptional()
-  @IsUUID()
+  @IsString()
   handlerId?: string;
 }

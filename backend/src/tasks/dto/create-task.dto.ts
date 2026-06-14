@@ -3,40 +3,40 @@ import {
   IsDateString,
   IsOptional,
   IsString,
-  IsUUID,
+
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class FormValueInput {
-  @IsUUID()
+  @IsString()
   formFieldId: string;
 
   @IsOptional()
   @IsString()
-  valor?: string;
+  value?: string;
 
   @IsOptional()
-  @IsUUID()
+  @IsString()
   brandId?: string;
 
   @IsOptional()
-  @IsUUID()
+  @IsString()
   shopId?: string;
 }
 
 export class CreateTaskDto {
-  @IsUUID()
+  @IsString()
   taskTypeId: string;
 
   @IsOptional()
-  @IsUUID()
+  @IsString()
   brandId?: string;
 
   @IsOptional()
   @IsArray()
-  @IsUUID('4', { each: true })
+  @IsString({ each: true })
   shopIds?: string[];
 
   @IsOptional()
@@ -47,9 +47,9 @@ export class CreateTaskDto {
 
   @IsOptional()
   @IsDateString()
-  programadoInicio?: string;
+  scheduledStart?: string;
 
-  @ValidateIf((o) => !!o.programadoInicio)
+  @ValidateIf((o) => !!o.scheduledStart)
   @IsDateString()
-  programadoFin?: string;
+  scheduledEnd?: string;
 }

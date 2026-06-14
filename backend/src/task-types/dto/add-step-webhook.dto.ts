@@ -1,11 +1,11 @@
-import { IsArray, IsEnum, IsUUID } from 'class-validator';
-import { WebhookEvento } from '@prisma/client';
+import { IsArray, IsEnum, IsString } from 'class-validator';
+import { WebhookEvent } from '@prisma/client';
 
 export class AddStepWebhookDto {
-  @IsUUID()
+  @IsString()
   webhookId: string;
 
   @IsArray()
-  @IsEnum(WebhookEvento, { each: true })
-  eventos: WebhookEvento[];
+  @IsEnum(WebhookEvent, { each: true })
+  events: WebhookEvent[];
 }

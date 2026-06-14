@@ -1,7 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { StepMotivoFallo } from '@prisma/client';
+import { StepFailureReason } from '@prisma/client';
 import { TaskEngineService } from '../tasks/task-engine.service';
 
 export interface HandlerJobData {
@@ -9,8 +9,8 @@ export interface HandlerJobData {
   handlerName: string;
 }
 
-// Registro de handlers automáticos: nombre → función
-// Agregar nuevos handlers aquí sin tocar el procesador.
+// Registry of automatic handlers: name → function
+// Add new handlers here without touching the processor.
 type HandlerFn = (data: HandlerJobData) => Promise<unknown>;
 const HANDLER_REGISTRY = new Map<string, HandlerFn>();
 
@@ -28,26 +28,26 @@ export class HandlerProcessor extends WorkerHost {
 
   async process(job: Job<HandlerJobData>): Promise<void> {
     const { stepInstanceId, handlerName } = job.data;
-    this.logger.log(`Ejecutando handler [${handlerName}] para step ${stepInstanceId}`);
+    this.logger.log(`Running handler [${handlerName}] for step ${stepInstanceId}`);
 
     const fn = HANDLER_REGISTRY.get(handlerName);
     if (!fn) {
-      this.logger.error(`Handler desconocido: ${handlerName}`);
-      await this.engine.failStep(stepInstanceId, StepMotivoFallo.error_handler, `Handler desconocido: ${handlerName}`);
+      this.logger.error(`Unknown handler: ${handlerName}`);
+      await this.engine.failStep(stepInstanceId, StepFailureReason.error_handler, `Unknown handler: ${handlerName}`);
       return;
     }
 
     try {
-      const resultado = await fn(job.data);
-      await this.engine.completeStep(stepInstanceId, resultado);
+      const result = await fn(job.data);
+      await this.engine.completeStep(stepInstanceId, result);
     } catch (err) {
       const msg = (err as Error).message;
-      this.logger.error(`Handler [${handlerName}] falló: ${msg}`);
-      // BullMQ reintentará según la config; en el último intento failStep
+      this.logger.error(`Handler [${handlerName}] failed: ${msg}`);
+      // BullMQ will retry based on config; on last attempt failStep
       if (job.attemptsMade >= (job.opts.attempts ?? 1) - 1) {
-        await this.engine.failStep(stepInstanceId, StepMotivoFallo.error_handler, msg);
+        await this.engine.failStep(stepInstanceId, StepFailureReason.error_handler, msg);
       }
-      throw err; // para que BullMQ registre el fallo y reintente
+      throw err; // so BullMQ records the failure and retries
     }
   }
 }

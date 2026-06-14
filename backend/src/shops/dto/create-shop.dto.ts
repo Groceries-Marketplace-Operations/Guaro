@@ -1,4 +1,4 @@
-import { IsDecimal, IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsDecimal, IsEnum, IsOptional, IsString } from 'class-validator';
 import { ShopStatus } from '@prisma/client';
 
 export class CreateShopDto {
@@ -8,7 +8,7 @@ export class CreateShopDto {
   @IsString()
   appShopId: string;
 
-  @IsUUID()
+  @IsString()
   brandId: string;
 
   @IsOptional()

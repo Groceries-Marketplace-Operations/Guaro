@@ -1,18 +1,28 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { AccountRol, AsignacionModo, Country, KaType, Prisma } from '@prisma/client';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { AccountRole, AssignmentMode, Country, KaType, MenuIntegration, PaymentMode, PickingMode, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddRuleCandidateDto } from './dto/add-rule-candidate.dto';
 import { CreateBrandDto } from './dto/create-brand.dto';
 import { UpdateBrandDto } from './dto/update-brand.dto';
 
 const BRAND_INCLUDE = {
-  responsable: { select: { id: true, nombre: true, email: true } },
+  owner: { select: { id: true, name: true, email: true } },
   application: { select: { id: true, appId: true, appName: true, country: true } },
+  webhooks: { include: { webhook: { select: { id: true, name: true, url: true, isAlerts: true } } } },
+  _count: { select: { shops: true } },
 } as const;
+
+export interface BrandFilters {
+  page?: number;
+  limit?: number;
+  q?: string;
+  country?: Country;
+  kaType?: KaType;
+  menuIntegration?: MenuIntegration;
+  pickingMode?: PickingMode;
+  paymentMode?: PaymentMode;
+  myBrands?: boolean;
+}
 
 @Injectable()
 export class BrandsService {
@@ -20,39 +30,95 @@ export class BrandsService {
 
   // ── Brands ────────────────────────────────────────────────────────────────
 
-  findAll(roles: AccountRol[], accountId: string) {
+  async findAll(roles: AccountRole[], accountId: string, filters: BrandFilters = {}) {
+    const { page = 1, limit = 25, q, country, kaType, menuIntegration, pickingMode, paymentMode, myBrands } = filters;
+    const skip = (page - 1) * limit;
+
     const where: Prisma.BrandWhereInput = { deletedAt: null };
-    if (roles.includes(AccountRol.bpo) && !roles.includes(AccountRol.admin) && !roles.includes(AccountRol.super_admin)) {
-      where.responsableId = accountId;
+
+    if (myBrands) {
+      where.ownerId = accountId;
     }
-    return this.prisma.brand.findMany({ where, include: BRAND_INCLUDE, orderBy: { brandName: 'asc' } });
+
+    if (q) where.OR = [
+      { brandName: { contains: q, mode: 'insensitive' } },
+      { brandId:   { contains: q, mode: 'insensitive' } },
+    ];
+    if (country) where.country = country;
+    if (kaType) where.kaType = kaType;
+    if (menuIntegration) where.menuIntegration = menuIntegration;
+    if (pickingMode) where.pickingMode = pickingMode;
+    if (paymentMode) where.paymentMode = paymentMode;
+
+    const [data, total] = await Promise.all([
+      this.prisma.brand.findMany({ where, include: BRAND_INCLUDE, orderBy: { brandName: 'asc' }, skip, take: limit }),
+      this.prisma.brand.count({ where }),
+    ]);
+    return { data, total, page, limit };
   }
 
   async findOne(id: string) {
     const brand = await this.prisma.brand.findUnique({ where: { id }, include: BRAND_INCLUDE });
-    if (!brand || brand.deletedAt) throw new NotFoundException('Brand no encontrada');
+    if (!brand || brand.deletedAt) throw new NotFoundException('Brand not found');
     return brand;
   }
 
   async create(dto: CreateBrandDto, createdById: string) {
-    const responsableId = await this.assignResponsable(dto.kaType, dto.country);
+    const { webhookIds, ...brandData } = dto;
+    const ownerId = await this.assignOwner(dto.kaType, dto.country);
     return this.prisma.brand.create({
-      data: { ...dto, responsableId, createdById },
+      data: {
+        ...brandData,
+        ownerId: ownerId ?? undefined,
+        createdById,
+        ...(webhookIds?.length && {
+          webhooks: { create: webhookIds.map(webhookId => ({ webhookId })) },
+        }),
+      },
       include: BRAND_INCLUDE,
     });
   }
 
-  async update(id: string, dto: UpdateBrandDto) {
+  async update(id: string, dto: UpdateBrandDto, requesterId?: string, requesterRoles?: AccountRole[]) {
     const brand = await this.findOne(id);
 
-    const data: Prisma.BrandUpdateInput = { ...dto };
+    const isBpoOnly = requesterRoles?.includes(AccountRole.bpo) &&
+      !requesterRoles?.includes(AccountRole.admin) &&
+      !requesterRoles?.includes(AccountRole.super_admin);
 
-    // Si cambia el ka_type, reasignar responsable
-    if (dto.kaType && dto.kaType !== brand.kaType) {
-      const newResponsableId = await this.assignResponsable(dto.kaType, brand.country);
-      data.responsable = { connect: { id: newResponsableId } };
-      delete (data as any).kaType;
-      data.kaType = dto.kaType;
+    if (isBpoOnly) {
+      if (brand.ownerId !== requesterId) {
+        throw new ForbiddenException('You can only edit brands you own');
+      }
+      if (dto.kaType !== undefined || dto.ownerId !== undefined) {
+        throw new ForbiddenException('BPOs cannot change the KA type or owner of a brand');
+      }
+    }
+
+    const { applicationId, ownerId, kaType, ...rest } = dto;
+    const data: Prisma.BrandUpdateInput = { ...rest };
+
+    // If ka_type changes, auto-reassign owner (unless ownerId is also being set manually)
+    if (kaType && kaType !== brand.kaType && ownerId === undefined) {
+      const newOwnerId = await this.assignOwner(kaType, brand.country);
+      if (newOwnerId) {
+        data.owner = { connect: { id: newOwnerId } };
+      }
+      data.kaType = kaType;
+    } else if (kaType) {
+      data.kaType = kaType;
+    }
+
+    // Manual OP override
+    if (ownerId !== undefined) {
+      data.owner = ownerId ? { connect: { id: ownerId } } : { disconnect: true };
+    }
+
+    // Handle application link/unlink
+    if (applicationId !== undefined) {
+      data.application = applicationId
+        ? { connect: { id: applicationId } }
+        : { disconnect: true };
     }
 
     return this.prisma.brand.update({ where: { id }, data, include: BRAND_INCLUDE });
@@ -72,21 +138,21 @@ export class BrandsService {
   findAllRules() {
     return this.prisma.brandAssignmentRule.findMany({
       include: {
-        candidatos: { include: { account: { select: { id: true, nombre: true, email: true } } } },
+        candidates: { include: { account: { select: { id: true, name: true, email: true } } } },
       },
       orderBy: [{ kaType: 'asc' }, { country: 'asc' }],
     });
   }
 
-  async updateRule(id: string, modo: AsignacionModo) {
+  async updateRule(id: string, modo: AssignmentMode) {
     const rule = await this.prisma.brandAssignmentRule.findUnique({ where: { id } });
-    if (!rule) throw new NotFoundException('Regla no encontrada');
+    if (!rule) throw new NotFoundException('Rule not found');
     return this.prisma.brandAssignmentRule.update({ where: { id }, data: { modo } });
   }
 
   async addRuleCandidate(ruleId: string, dto: AddRuleCandidateDto) {
     const rule = await this.prisma.brandAssignmentRule.findUnique({ where: { id: ruleId } });
-    if (!rule) throw new NotFoundException('Regla no encontrada');
+    if (!rule) throw new NotFoundException('Rule not found');
     return this.prisma.brandAssignmentRuleAccount.create({
       data: { ruleId, accountId: dto.accountId },
     });
@@ -98,24 +164,22 @@ export class BrandsService {
     });
   }
 
-  // ── Asignación de responsable ─────────────────────────────────────────────
+  // ── Owner assignment ──────────────────────────────────────────────────────
 
-  private async assignResponsable(kaType: KaType, country: Country): Promise<string> {
+  private async assignOwner(kaType: KaType, country: Country): Promise<string | null> {
     const rule = await this.prisma.brandAssignmentRule.findUnique({
       where: { kaType_country: { kaType, country } },
-      include: { candidatos: true },
+      include: { candidates: true },
     });
 
-    if (!rule) throw new BadRequestException(`Sin regla de asignación para ${kaType}/${country}`);
-    if (!rule.candidatos.length) throw new BadRequestException('La regla no tiene candidatos configurados');
+    if (!rule || !rule.candidates.length) return null;
 
-    if (rule.modo === AsignacionModo.fijo) {
-      return rule.candidatos[0].accountId;
+    if (rule.modo === AssignmentMode.fixed) {
+      return rule.candidates[0].accountId;
     }
 
-    // round_robin: pick candidate con menor contadorRr, incrementar atómicamente
+    // round_robin: pick candidate with lowest rrCounter, increment atomically
     return this.prisma.$transaction(async (tx) => {
-      // SELECT FOR UPDATE vía queryRaw para garantizar atomicidad
       const rows = await tx.$queryRaw<{ account_id: string; contador_rr: number }[]>`
         SELECT bra.account_id, a.contador_rr
         FROM brand_assignment_rule_account bra
@@ -126,12 +190,12 @@ export class BrandsService {
         FOR UPDATE OF a
       `;
 
-      if (!rows.length) throw new BadRequestException('Sin candidatos disponibles');
+      if (!rows.length) return null;
       const chosen = rows[0];
 
       await tx.account.update({
         where: { id: chosen.account_id },
-        data: { contadorRr: { increment: 1 } },
+        data: { rrCounter: { increment: 1 } },
       });
 
       return chosen.account_id;

@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsArray, IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
 import { Country, KaType, MenuIntegration, PaymentMode, PickingMode } from '@prisma/client';
 
 export class CreateBrandDto {
@@ -15,10 +15,6 @@ export class CreateBrandDto {
   kaType: KaType;
 
   @IsOptional()
-  @IsString()
-  category?: string;
-
-  @IsOptional()
   @IsEnum(MenuIntegration)
   menuIntegration?: MenuIntegration;
 
@@ -31,6 +27,11 @@ export class CreateBrandDto {
   paymentMode?: PaymentMode;
 
   @IsOptional()
-  @IsUUID()
+  @IsString()
   applicationId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  webhookIds?: string[];
 }

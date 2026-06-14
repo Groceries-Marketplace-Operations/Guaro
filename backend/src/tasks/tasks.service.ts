@@ -1,21 +1,21 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AccountRol, Prisma, TaskEstado, TipoEjecucion } from '@prisma/client';
+import { AccountRole, ExecutionType, Prisma, StepFailureReason, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from './task-engine.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 
 const TASK_INCLUDE = {
-  taskType: { select: { id: true, nombre: true, sectionId: true } },
+  taskType: { select: { id: true, name: true, sectionId: true } },
   brand: { select: { id: true, brandId: true, brandName: true, country: true } },
-  createdBy: { select: { id: true, nombre: true, email: true } },
+  createdBy: { select: { id: true, name: true, email: true } },
   stepInstances: {
-    orderBy: { stepDefinition: { orden: 'asc' as const } },
+    orderBy: { stepDefinition: { order: 'asc' as const } },
     include: {
-      stepDefinition: { select: { id: true, nombre: true, orden: true, tipoEjecucion: true } },
-      asignado: { select: { id: true, nombre: true, email: true } },
+      stepDefinition: { select: { id: true, name: true, order: true, executionType: true } },
+      assignedTo: { select: { id: true, name: true, email: true } },
     },
   },
-  formValues: { include: { formField: { select: { id: true, etiqueta: true, tipo: true } } } },
+  formValues: { include: { formField: { select: { id: true, label: true, tipo: true } } } },
   taskShops: { include: { shop: { select: { id: true, shopId: true, appShopId: true } } } },
 } as const;
 
@@ -26,18 +26,18 @@ export class TasksService {
     private engine: TaskEngineService,
   ) {}
 
-  // ── Crear tarea ───────────────────────────────────────────────────────────
+  // ── Create task ───────────────────────────────────────────────────────────
 
   async create(dto: CreateTaskDto, createdById: string) {
     const taskType = await this.prisma.taskType.findUnique({
       where: { id: dto.taskTypeId },
-      include: { stepDefinitions: { orderBy: { orden: 'asc' } } },
+      include: { stepDefinitions: { orderBy: { order: 'asc' } } },
     });
-    if (!taskType || taskType.deletedAt) throw new NotFoundException('TaskType no encontrado');
+    if (!taskType || taskType.deletedAt) throw new NotFoundException('TaskType not found');
 
-    const isProgramada = !!dto.programadoInicio;
-    if (isProgramada && !taskType.programable) {
-      throw new BadRequestException('Este TaskType no es programable');
+    const isScheduled = !!dto.scheduledStart;
+    if (isScheduled && !taskType.schedulable) {
+      throw new BadRequestException('This TaskType is not schedulable');
     }
 
     const task = await this.prisma.$transaction(async (tx) => {
@@ -46,9 +46,9 @@ export class TasksService {
           taskTypeId: dto.taskTypeId,
           brandId: dto.brandId ?? null,
           createdById,
-          estado: isProgramada ? TaskEstado.scheduled : TaskEstado.pending,
-          programadoInicio: dto.programadoInicio ? new Date(dto.programadoInicio) : null,
-          programadoFin: dto.programadoFin ? new Date(dto.programadoFin) : null,
+          status: isScheduled ? TaskStatus.scheduled : TaskStatus.pending,
+          scheduledStart: dto.scheduledStart ? new Date(dto.scheduledStart) : null,
+          scheduledEnd: dto.scheduledEnd ? new Date(dto.scheduledEnd) : null,
         },
       });
 
@@ -65,7 +65,7 @@ export class TasksService {
       // FormValues
       if (dto.formValues?.length) {
         await tx.formValue.createMany({
-          data: dto.formValues.map((fv) => ({ taskId: created.id, ...fv })),
+          data: dto.formValues.map(({ value, ...fv }) => ({ taskId: created.id, ...fv, valor: value })),
         });
       }
 
@@ -79,16 +79,16 @@ export class TasksService {
       return created;
     });
 
-    // Activar primer step si no es programada
-    if (!isProgramada && taskType.stepDefinitions.length > 0) {
+    // Activate first step if not scheduled
+    if (!isScheduled && taskType.stepDefinitions.length > 0) {
       const firstStep = await this.prisma.stepInstance.findFirst({
         where: { taskId: task.id },
         include: { stepDefinition: true },
-        orderBy: { stepDefinition: { orden: 'asc' } },
+        orderBy: { stepDefinition: { order: 'asc' } },
       });
       if (firstStep) {
         await this.engine.activateStep(firstStep.id);
-        if (firstStep.stepDefinition.tipoEjecucion === TipoEjecucion.automatico) {
+        if (firstStep.stepDefinition.executionType === ExecutionType.automatic) {
           this.engine.emitAutoStep(firstStep.id, firstStep.stepDefinition.handlerId!);
         }
       }
@@ -97,45 +97,62 @@ export class TasksService {
     return this.findOne(task.id);
   }
 
-  // ── Consultas ─────────────────────────────────────────────────────────────
+  // ── Queries ───────────────────────────────────────────────────────────────
 
-  findAll(roles: AccountRol[], accountId: string, sectionId: string | null) {
+  async findAll(
+    roles: AccountRole[],
+    accountId: string,
+    sectionId: string | null,
+    filters: { page?: number; limit?: number; q?: string; status?: TaskStatus; brandId?: string } = {},
+  ) {
+    const { page = 1, limit = 25, q, status, brandId } = filters;
+    const skip = (page - 1) * limit;
+
     const where: Prisma.TaskWhereInput = { deletedAt: null };
-
-    if (roles.includes(AccountRol.user) && !roles.includes(AccountRol.admin) && !roles.includes(AccountRol.super_admin)) {
+    if (roles.includes(AccountRole.user) && !roles.includes(AccountRole.admin) && !roles.includes(AccountRole.super_admin)) {
       where.createdById = accountId;
-    } else if (roles.includes(AccountRol.bpo) && !roles.includes(AccountRol.admin) && !roles.includes(AccountRol.super_admin)) {
-      where.stepInstances = { some: { asignadoId: accountId } };
-    } else if (roles.includes(AccountRol.admin) && !roles.includes(AccountRol.super_admin)) {
+    } else if (roles.includes(AccountRole.bpo) && !roles.includes(AccountRole.admin) && !roles.includes(AccountRole.super_admin)) {
+      where.stepInstances = { some: { assignedToId: accountId } };
+    } else if (roles.includes(AccountRole.admin) && !roles.includes(AccountRole.super_admin)) {
       where.taskType = { sectionId: sectionId ?? undefined };
     }
+    if (status) where.status = status;
+    if (brandId) where.brandId = brandId;
+    if (q) where.OR = [
+      { brand:    { brandName: { contains: q, mode: 'insensitive' } } },
+      { taskType: { name:      { contains: q, mode: 'insensitive' } } },
+    ];
 
-    return this.prisma.task.findMany({ where, include: TASK_INCLUDE, orderBy: { createdAt: 'desc' } });
+    const [data, total] = await Promise.all([
+      this.prisma.task.findMany({ where, include: TASK_INCLUDE, orderBy: { createdAt: 'desc' }, skip, take: limit }),
+      this.prisma.task.count({ where }),
+    ]);
+    return { data, total, page, limit };
   }
 
   async findOne(id: string) {
     const task = await this.prisma.task.findUnique({ where: { id }, include: TASK_INCLUDE });
-    if (!task || task.deletedAt) throw new NotFoundException('Tarea no encontrada');
+    if (!task || task.deletedAt) throw new NotFoundException('Task not found');
     return task;
   }
 
-  // ── Acciones sobre steps ──────────────────────────────────────────────────
+  // ── Step actions ──────────────────────────────────────────────────────────
 
-  async completeStep(taskId: string, stepId: string, resultado?: unknown, nota?: string) {
+  async completeStep(taskId: string, stepId: string, result?: unknown, note?: string) {
     await this.assertStepOfTask(taskId, stepId);
-    await this.engine.completeStep(stepId, resultado, nota);
+    await this.engine.completeStep(stepId, result, note);
     return this.findOne(taskId);
   }
 
-  async failStep(taskId: string, stepId: string, motivoFallo: any, nota?: string) {
+  async failStep(taskId: string, stepId: string, failureReason: StepFailureReason, note?: string) {
     await this.assertStepOfTask(taskId, stepId);
-    await this.engine.failStep(stepId, motivoFallo, nota);
+    await this.engine.failStep(stepId, failureReason, note);
     return this.findOne(taskId);
   }
 
-  async blockStep(taskId: string, stepId: string, nota?: string) {
+  async blockStep(taskId: string, stepId: string, note?: string) {
     await this.assertStepOfTask(taskId, stepId);
-    await this.engine.blockStep(stepId, nota);
+    await this.engine.blockStep(stepId, note);
     return this.findOne(taskId);
   }
 
@@ -147,6 +164,6 @@ export class TasksService {
 
   private async assertStepOfTask(taskId: string, stepId: string) {
     const step = await this.prisma.stepInstance.findUnique({ where: { id: stepId } });
-    if (!step || step.taskId !== taskId) throw new NotFoundException('Step no encontrado en esta tarea');
+    if (!step || step.taskId !== taskId) throw new NotFoundException('Step not found in this task');
   }
 }

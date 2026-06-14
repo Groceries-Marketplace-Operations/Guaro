@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, ShopStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { CreateShopDto } from './dto/create-shop.dto';
@@ -6,24 +7,35 @@ import { UpdateShopDto } from './dto/update-shop.dto';
 
 const SHOP_INCLUDE = {
   brand: { select: { id: true, brandId: true, brandName: true, country: true } },
-  schedules: { orderBy: { dia: 'asc' as const } },
+  schedules: { orderBy: { day: 'asc' as const } },
 } as const;
 
 @Injectable()
 export class ShopsService {
   constructor(private prisma: PrismaService) {}
 
-  findAll(brandId?: string) {
-    return this.prisma.shop.findMany({
-      where: { deletedAt: null, ...(brandId && { brandId }) },
-      include: SHOP_INCLUDE,
-      orderBy: { shopId: 'asc' },
-    });
+  async findAll(filters: { page?: number; limit?: number; q?: string; brandId?: string; status?: ShopStatus } = {}) {
+    const { page = 1, limit = 25, q, brandId, status } = filters;
+    const skip = (page - 1) * limit;
+    const where: Prisma.ShopWhereInput = { deletedAt: null };
+    if (brandId) where.brandId = brandId;
+    if (status) where.status = status;
+    if (q) where.OR = [
+      { shopId:    { contains: q, mode: 'insensitive' } },
+      { appShopId: { contains: q, mode: 'insensitive' } },
+      { city:      { contains: q, mode: 'insensitive' } },
+      { brand: { brandName: { contains: q, mode: 'insensitive' } } },
+    ];
+    const [data, total] = await Promise.all([
+      this.prisma.shop.findMany({ where, include: SHOP_INCLUDE, orderBy: { shopId: 'asc' }, skip, take: limit }),
+      this.prisma.shop.count({ where }),
+    ]);
+    return { data, total, page, limit };
   }
 
   async findOne(id: string) {
     const shop = await this.prisma.shop.findUnique({ where: { id }, include: SHOP_INCLUDE });
-    if (!shop || shop.deletedAt) throw new NotFoundException('Shop no encontrada');
+    if (!shop || shop.deletedAt) throw new NotFoundException('Shop not found');
     return shop;
   }
 
@@ -70,7 +82,7 @@ export class ShopsService {
       return d;
     };
     return this.prisma.schedule.create({
-      data: { shopId, dia: dto.dia, apertura: toDate(dto.apertura), cierre: toDate(dto.cierre) },
+      data: { shopId, day: dto.day, openTime: toDate(dto.openTime), closeTime: toDate(dto.closeTime) },
     });
   }
 

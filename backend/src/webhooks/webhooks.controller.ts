@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { AccountRol } from '@prisma/client';
+import { AccountRole } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -9,7 +9,7 @@ import { WebhooksService } from './webhooks.service';
 
 @Controller('webhooks')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(AccountRol.admin, AccountRol.super_admin)
+@Roles(AccountRole.admin, AccountRole.super_admin)
 export class WebhooksController {
   constructor(private webhooksService: WebhooksService) {}
 

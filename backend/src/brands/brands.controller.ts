@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { AccountRol, AsignacionModo } from '@prisma/client';
+import { Body, Controller, DefaultValuePipe, Delete, Get, Param, ParseBoolPipe, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { AccountRole, AssignmentMode, Country, KaType, MenuIntegration, PaymentMode, PickingMode } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { JwtUser } from '../auth/types/jwt-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -14,61 +15,72 @@ import { UpdateBrandDto } from './dto/update-brand.dto';
 export class BrandsController {
   constructor(private brandsService: BrandsService) {}
 
-  // ── Brands ────────────────────────────────────────────────────────────────
-
-  @Get()
-  @Roles(AccountRol.user, AccountRol.bpo, AccountRol.admin, AccountRol.super_admin, AccountRol.director)
-  findAll(@CurrentUser() u: any) {
-    return this.brandsService.findAll(u.roles, u.id);
-  }
-
-  @Get(':id')
-  @Roles(AccountRol.user, AccountRol.bpo, AccountRol.admin, AccountRol.super_admin, AccountRol.director)
-  findOne(@Param('id') id: string) {
-    return this.brandsService.findOne(id);
-  }
-
-  @Post()
-  @Roles(AccountRol.admin, AccountRol.super_admin)
-  create(@CurrentUser() u: any, @Body() dto: CreateBrandDto) {
-    return this.brandsService.create(dto, u.id);
-  }
-
-  @Patch(':id')
-  @Roles(AccountRol.admin, AccountRol.super_admin)
-  update(@Param('id') id: string, @Body() dto: UpdateBrandDto) {
-    return this.brandsService.update(id, dto);
-  }
-
-  @Delete(':id')
-  @Roles(AccountRol.admin, AccountRol.super_admin)
-  remove(@Param('id') id: string) {
-    return this.brandsService.remove(id);
-  }
-
-  // ── BrandAssignmentRules ──────────────────────────────────────────────────
+  // ── BrandAssignmentRules (rutas fijas ANTES de :id) ──────────────────────
 
   @Get('assignment-rules')
-  @Roles(AccountRol.admin, AccountRol.super_admin)
+  @Roles(AccountRole.admin, AccountRole.super_admin)
   findAllRules() {
     return this.brandsService.findAllRules();
   }
 
   @Patch('assignment-rules/:ruleId')
-  @Roles(AccountRol.admin, AccountRol.super_admin)
-  updateRule(@Param('ruleId') ruleId: string, @Body('modo') modo: AsignacionModo) {
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  updateRule(@Param('ruleId') ruleId: string, @Body('modo') modo: AssignmentMode) {
     return this.brandsService.updateRule(ruleId, modo);
   }
 
   @Post('assignment-rules/:ruleId/candidates')
-  @Roles(AccountRol.admin, AccountRol.super_admin)
+  @Roles(AccountRole.admin, AccountRole.super_admin)
   addRuleCandidate(@Param('ruleId') ruleId: string, @Body() dto: AddRuleCandidateDto) {
     return this.brandsService.addRuleCandidate(ruleId, dto);
   }
 
   @Delete('assignment-rules/:ruleId/candidates/:accountId')
-  @Roles(AccountRol.admin, AccountRol.super_admin)
+  @Roles(AccountRole.admin, AccountRole.super_admin)
   removeRuleCandidate(@Param('ruleId') ruleId: string, @Param('accountId') accountId: string) {
     return this.brandsService.removeRuleCandidate(ruleId, accountId);
+  }
+
+  // ── Brands ────────────────────────────────────────────────────────────────
+
+  @Get()
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
+  findAll(
+    @CurrentUser() u: JwtUser,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(25), ParseIntPipe) limit: number,
+    @Query('q') q?: string,
+    @Query('country') country?: Country,
+    @Query('kaType') kaType?: KaType,
+    @Query('menuIntegration') menuIntegration?: MenuIntegration,
+    @Query('pickingMode') pickingMode?: PickingMode,
+    @Query('paymentMode') paymentMode?: PaymentMode,
+    @Query('myBrands', new DefaultValuePipe(false), ParseBoolPipe) myBrands?: boolean,
+  ) {
+    return this.brandsService.findAll(u.roles, u.id, { page, limit, q, country, kaType, menuIntegration, pickingMode, paymentMode, myBrands });
+  }
+
+  @Get(':id')
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
+  findOne(@Param('id') id: string) {
+    return this.brandsService.findOne(id);
+  }
+
+  @Post()
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  create(@CurrentUser() u: JwtUser, @Body() dto: CreateBrandDto) {
+    return this.brandsService.create(dto, u.id);
+  }
+
+  @Patch(':id')
+  @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  update(@Param('id') id: string, @CurrentUser() u: JwtUser, @Body() dto: UpdateBrandDto) {
+    return this.brandsService.update(id, dto, u.id, u.roles);
+  }
+
+  @Delete(':id')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  remove(@Param('id') id: string) {
+    return this.brandsService.remove(id);
   }
 }

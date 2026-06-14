@@ -1,54 +1,54 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { AccountRol, StepEstado, TaskEstado } from '@prisma/client';
+import { AccountRole, StepStatus, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class BpoManagementService {
   constructor(private prisma: PrismaService) {}
 
-  // ── Tareas activas del BPO autenticado ────────────────────────────────────
+  // ── Active tasks for authenticated BPO ───────────────────────────────────
 
   myActiveTasks(accountId: string) {
     return this.prisma.task.findMany({
       where: {
         deletedAt: null,
-        estado: { in: [TaskEstado.in_progress, TaskEstado.assigned] },
+        status: { in: [TaskStatus.in_progress, TaskStatus.assigned] },
         stepInstances: {
           some: {
-            asignadoId: accountId,
-            estado: { in: [StepEstado.in_progress, StepEstado.blocked] },
+            assignedToId: accountId,
+            status: { in: [StepStatus.in_progress, StepStatus.blocked] },
           },
         },
       },
       include: {
-        taskType: { select: { id: true, nombre: true } },
+        taskType: { select: { id: true, name: true } },
         brand: { select: { id: true, brandName: true, country: true } },
         stepInstances: {
-          where: { asignadoId: accountId, estado: { in: [StepEstado.in_progress, StepEstado.blocked] } },
-          include: { stepDefinition: { select: { nombre: true, orden: true, tipoEjecucion: true } } },
+          where: { assignedToId: accountId, status: { in: [StepStatus.in_progress, StepStatus.blocked] } },
+          include: { stepDefinition: { select: { name: true, order: true, executionType: true } } },
         },
       },
       orderBy: { updatedAt: 'desc' },
     });
   }
 
-  // ── Performance del BPO autenticado ──────────────────────────────────────
+  // ── Performance of authenticated BPO ─────────────────────────────────────
 
   async myPerformance(accountId: string) {
     return this.buildPerformance(accountId);
   }
 
-  // ── Vista admin: performance de todo el team ──────────────────────────────
+  // ── Admin view: performance of entire team ────────────────────────────────
 
-  async teamPerformance(roles: AccountRol[], sectionId: string | null) {
-    const where = roles.includes(AccountRol.super_admin)
-      ? {}
-      : { sectionId: sectionId ?? undefined, roles: { has: AccountRol.bpo } };
+  async teamPerformance(roles: AccountRole[], sectionId: string | null) {
+    const where = roles.includes(AccountRole.super_admin)
+      ? { roles: { has: AccountRole.bpo } }
+      : { sectionId: sectionId ?? undefined, roles: { has: AccountRole.bpo } };
 
     const bpos = await this.prisma.account.findMany({
       where: { ...where, deletedAt: null },
-      select: { id: true, nombre: true, email: true, carga: true, contadorRr: true },
-      orderBy: { nombre: 'asc' },
+      select: { id: true, name: true, email: true, workload: true, rrCounter: true },
+      orderBy: { name: 'asc' },
     });
 
     const performances = await Promise.all(
@@ -61,59 +61,65 @@ export class BpoManagementService {
     return performances;
   }
 
-  // ── Performance de un BPO específico (admin) ──────────────────────────────
+  // ── Performance of a specific BPO (admin) ─────────────────────────────────
 
   async bpoPerformance(accountId: string) {
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },
-      select: { id: true, nombre: true, email: true, carga: true, contadorRr: true },
+      select: { id: true, name: true, email: true, workload: true, rrCounter: true },
     });
-    if (!account) throw new NotFoundException('Cuenta no encontrada');
+    if (!account) throw new NotFoundException('Account not found');
     return { account, ...(await this.buildPerformance(accountId)) };
   }
 
-  // ── Histórico del team ────────────────────────────────────────────────────
+  // ── Team history ──────────────────────────────────────────────────────────
 
-  teamHistory(roles: AccountRol[], sectionId: string | null) {
-    const where = roles.includes(AccountRol.super_admin)
+  async teamHistory(
+    roles: AccountRole[],
+    sectionId: string | null,
+    { page = 1, limit = 25 }: { page?: number; limit?: number } = {},
+  ) {
+    const skip = (page - 1) * limit;
+    const where = roles.includes(AccountRole.super_admin)
       ? { deletedAt: null }
       : { deletedAt: null, taskType: { sectionId: sectionId ?? undefined } };
 
-    return this.prisma.task.findMany({
-      where,
-      include: {
-        taskType: { select: { id: true, nombre: true } },
-        brand: { select: { id: true, brandName: true, country: true } },
-        createdBy: { select: { id: true, nombre: true } },
-        stepInstances: {
-          include: {
-            stepDefinition: { select: { nombre: true, orden: true } },
-            asignado: { select: { id: true, nombre: true } },
-          },
-          orderBy: { stepDefinition: { orden: 'asc' } },
+    const include = {
+      taskType: { select: { id: true, name: true } },
+      brand: { select: { id: true, brandName: true, country: true } },
+      createdBy: { select: { id: true, name: true } },
+      stepInstances: {
+        include: {
+          stepDefinition: { select: { name: true, order: true } },
+          assignedTo: { select: { id: true, name: true } },
         },
+        orderBy: { stepDefinition: { order: 'asc' as const } },
       },
-      orderBy: { createdAt: 'desc' },
-      take: 200,
-    });
+    } as const;
+
+    const [data, total] = await Promise.all([
+      this.prisma.task.findMany({ where, include, orderBy: { createdAt: 'desc' }, skip, take: limit }),
+      this.prisma.task.count({ where }),
+    ]);
+    return { data, total, page, limit };
   }
 
-  // ── Helper interno ────────────────────────────────────────────────────────
+  // ── Internal helper ───────────────────────────────────────────────────────
 
   private async buildPerformance(accountId: string) {
     const [totalCompleted, totalFailed, totalInProgress] = await Promise.all([
       this.prisma.stepInstance.count({
-        where: { asignadoId: accountId, estado: StepEstado.done },
+        where: { assignedToId: accountId, status: StepStatus.done },
       }),
       this.prisma.stepInstance.count({
-        where: { asignadoId: accountId, estado: StepEstado.failed },
+        where: { assignedToId: accountId, status: StepStatus.failed },
       }),
       this.prisma.stepInstance.count({
-        where: { asignadoId: accountId, estado: { in: [StepEstado.in_progress, StepEstado.blocked] } },
+        where: { assignedToId: accountId, status: { in: [StepStatus.in_progress, StepStatus.blocked] } },
       }),
     ]);
 
-    // Tiempo promedio de completado en horas
+    // Average completion time in hours
     const avgResult = await this.prisma.$queryRaw<{ avg_hours: number | null }[]>`
       SELECT EXTRACT(EPOCH FROM AVG(completado_en - created_at)) / 3600 AS avg_hours
       FROM step_instance
@@ -121,10 +127,10 @@ export class BpoManagementService {
     `;
 
     return {
-      stepsCompletados: totalCompleted,
-      stepsFallidos: totalFailed,
-      stepsEnCurso: totalInProgress,
-      promedioHorasCompletado: avgResult[0]?.avg_hours ?? null,
+      stepsCompleted: totalCompleted,
+      stepsFailed: totalFailed,
+      stepsInProgress: totalInProgress,
+      avgCompletionHours: avgResult[0]?.avg_hours ?? null,
     };
   }
 }

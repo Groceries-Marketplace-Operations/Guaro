@@ -8,7 +8,7 @@ export class WebhooksService {
   constructor(private prisma: PrismaService) {}
 
   findAll() {
-    return this.prisma.webhook.findMany({ orderBy: { nombre: 'asc' } });
+    return this.prisma.webhook.findMany({ orderBy: { name: 'asc' } });
   }
 
   create(dto: CreateWebhookDto) {
@@ -27,6 +27,6 @@ export class WebhooksService {
 
   private async assertExists(id: string) {
     const w = await this.prisma.webhook.findUnique({ where: { id } });
-    if (!w) throw new NotFoundException('Webhook no encontrado');
+    if (!w) throw new NotFoundException('Webhook not found');
   }
 }

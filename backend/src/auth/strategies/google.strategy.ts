@@ -29,7 +29,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     const email: string = profile.emails?.[0]?.value ?? '';
 
     if (!email.endsWith(`@${ALLOWED_DOMAIN}`)) {
-      return done(new UnauthorizedException('Dominio no permitido'), false);
+      return done(new UnauthorizedException('Domain not allowed'), false);
     }
 
     const account = await this.authService.findAccountByGoogleProfile(
@@ -40,7 +40,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     if (!account) {
       return done(
         new UnauthorizedException(
-          'Cuenta no encontrada. Usá el link de invitación para registrarte.',
+          'Account not found. Use your invitation link to register.',
         ),
         false,
       );

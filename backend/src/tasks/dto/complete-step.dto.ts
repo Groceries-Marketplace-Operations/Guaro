@@ -2,9 +2,9 @@ import { IsOptional, IsString } from 'class-validator';
 
 export class CompleteStepDto {
   @IsOptional()
-  resultado?: unknown;
+  result?: unknown;
 
   @IsOptional()
   @IsString()
-  nota?: string;
+  note?: string;
 }

@@ -6,6 +6,7 @@ import { Queue } from 'bullmq';
 import { TasksModule } from '../tasks/tasks.module';
 import { TaskEngineService } from '../tasks/task-engine.service';
 import { HandlerProcessor } from './handler.processor';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Module({
   imports: [
@@ -34,16 +35,21 @@ export class QueueModule implements OnModuleInit {
   constructor(
     @InjectQueue('handlers') private queue: Queue,
     private engine: TaskEngineService,
+    private prisma: PrismaService,
   ) {}
 
   onModuleInit() {
-    // Inyectar la función de emisión en el engine (evita circular dep)
     this.engine.emitAutoStep = (stepInstanceId: string, handlerId: string) => {
-      this.queue.add(
-        'run-handler',
-        { stepInstanceId, handlerName: handlerId },
-        { jobId: stepInstanceId }, // idempotente
-      ).catch((err) => console.error('Queue add error:', err));
+      this.prisma.handler.findUnique({ where: { id: handlerId } })
+        .then((handler) => {
+          if (!handler) throw new Error(`Handler record not found: ${handlerId}`);
+          return this.queue.add(
+            'run-handler',
+            { stepInstanceId, handlerName: handler.name },
+            { jobId: stepInstanceId },
+          );
+        })
+        .catch((err) => console.error('Queue emit error:', err));
     };
   }
 }

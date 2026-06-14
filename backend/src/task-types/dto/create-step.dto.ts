@@ -3,37 +3,37 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUUID,
+
   Min,
   ValidateIf,
 } from 'class-validator';
-import { EstrategiaAsignacion, TipoEjecucion } from '@prisma/client';
+import { AssignmentStrategy, ExecutionType } from '@prisma/client';
 
 export class CreateStepDto {
   @IsString()
-  nombre: string;
+  name: string;
 
   @IsInt()
   @Min(1)
-  orden: number;
+  order: number;
 
-  @IsEnum(TipoEjecucion)
-  tipoEjecucion: TipoEjecucion;
+  @IsEnum(ExecutionType)
+  executionType: ExecutionType;
 
   @IsOptional()
   @IsString()
-  accion?: string;
+  action?: string;
 
-  @IsEnum(EstrategiaAsignacion)
-  estrategiaAsignacion: EstrategiaAsignacion;
+  @IsEnum(AssignmentStrategy)
+  assignmentStrategy: AssignmentStrategy;
 
   @IsOptional()
   @IsInt()
   @Min(1)
-  peso?: number;
+  weight?: number;
 
-  // Solo si tipoEjecucion === automatico
-  @ValidateIf((o) => o.tipoEjecucion === TipoEjecucion.automatico)
-  @IsUUID()
+  // Only if executionType === automatic
+  @ValidateIf((o) => o.executionType === ExecutionType.automatic)
+  @IsString()
   handlerId?: string;
 }
