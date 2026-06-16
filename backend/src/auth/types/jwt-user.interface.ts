@@ -5,4 +5,5 @@ export interface JwtUser {
   email: string;
   roles: AccountRole[];
   sectionId: string | null;
+  bpoPermissions: string[];
 }

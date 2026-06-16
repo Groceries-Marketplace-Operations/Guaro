@@ -4,9 +4,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
-import { tasksApi } from '../../api';
+import { tasksApi, accountsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
-import type { Task, StepInstance, StepStatus, FormValue } from '../../types';
+import type { Task, StepInstance, StepStatus, FormValue, Account } from '../../types';
 
 const CheckIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -67,11 +67,37 @@ export default function TaskDetail() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
+  // Manual assignment state
+  const [manualAssignStep, setManualAssignStep] = useState<string | null>(null);
+  const [manualAssignBpo, setManualAssignBpo] = useState('');
+
   const { data: task, isLoading } = useQuery<Task>({
     queryKey: ['task', id],
     queryFn: () => tasksApi.get(id!).then(r => r.data),
     refetchInterval: 5000,
   });
+
+  const canManualAssign = roles.some(r => r === 'admin' || r === 'super_admin');
+  const { data: bpoAccountsResult } = useQuery<{ data: Account[] }>({
+    queryKey: ['accounts', 'bpo'],
+    queryFn: () => accountsApi.list({ role: 'bpo', limit: 200 }).then(r => r.data as { data: Account[] }),
+    enabled: canManualAssign && !!task,
+  });
+  const bpoAccounts: Account[] = bpoAccountsResult?.data ?? [];
+
+  const handleManualAssign = async (stepId: string) => {
+    if (!manualAssignBpo) return;
+    setSaving(true); setErr('');
+    try {
+      await tasksApi.assignStep(id!, stepId, manualAssignBpo);
+      qc.invalidateQueries({ queryKey: ['task', id] });
+      setManualAssignStep(null);
+      setManualAssignBpo('');
+    } catch (ex: unknown) {
+      const e = ex as { response?: { data?: { message?: string } } };
+      setErr(e.response?.data?.message ?? 'Error assigning BPO');
+    } finally { setSaving(false); }
+  };
 
   const handleAction = async () => {
     if (!activeStep || !action) return;
@@ -159,7 +185,30 @@ export default function TaskDetail() {
                     <td><StatusBadge status={s.status} /></td>
                     <td className="text-muted text-sm">{s.note ?? '—'}</td>
                     <td>
+                      {canManualAssign && s.stepDefinition?.assignmentStrategy === 'manual' && s.status === 'pending' && !s.assignedToId && (
+                        manualAssignStep === s.id ? (
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <select className="form-select" style={{ fontSize: '0.8rem', padding: '3px 8px', height: 'auto' }}
+                              value={manualAssignBpo} onChange={e => setManualAssignBpo(e.target.value)}>
+                              <option value="">Select BPO…</option>
+                              {bpoAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                            </select>
+                            <button className="btn btn-sm btn-primary" disabled={!manualAssignBpo || saving}
+                              onClick={() => handleManualAssign(s.id)}>
+                              Assign
+                            </button>
+                            <button className="btn btn-sm btn-ghost" onClick={() => { setManualAssignStep(null); setManualAssignBpo(''); }}>
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button className="btn btn-sm btn-ghost" onClick={() => { setManualAssignStep(s.id); setManualAssignBpo(''); }}>
+                            Assign BPO
+                          </button>
+                        )
+                      )}
                       {canActOnStep && s.status === 'pending' && s.stepDefinition?.executionType !== 'automatic' &&
+                        !(s.stepDefinition?.assignmentStrategy === 'manual' && !s.assignedToId) &&
                         (s.assignedToId === account?.id || roles.some(r => r === 'admin' || r === 'super_admin')) && (
                         <button
                           className="btn btn-sm btn-primary"

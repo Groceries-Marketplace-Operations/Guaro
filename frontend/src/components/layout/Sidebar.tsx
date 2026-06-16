@@ -82,6 +82,8 @@ export default function Sidebar() {
   const isSA       = roles.includes('super_admin');
   const isDirector = roles.includes('director');
   const canCreate  = !isDirector && !(isBpo && !isAdmin);
+  const adminMods  = account?.adminModules ?? [];
+  const canSeeModule = (mod: string) => isSA || adminMods.includes(mod);
 
   return (
     <aside className="sidebar">
@@ -137,21 +139,27 @@ export default function Sidebar() {
           <NavLink to="/bpo" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> My Queue
           </NavLink>
-          <NavLink to="/applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconApp /> Applications
-          </NavLink>
+          {canSeeModule('create_application') && (
+            <NavLink to="/applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+              <IconApp /> Applications
+            </NavLink>
+          )}
         </div>
       )}
 
       {isAdmin && (
         <div className="sidebar-section">
           <div className="sidebar-section-label">Admin</div>
-          <NavLink to="/applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconApp /> Applications
-          </NavLink>
-          <NavLink to="/bpo-management" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconBriefcase /> BPO Team
-          </NavLink>
+          {canSeeModule('applications') && (
+            <NavLink to="/applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+              <IconApp /> Applications
+            </NavLink>
+          )}
+          {canSeeModule('bpo_team') && (
+            <NavLink to="/bpo-management" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+              <IconBriefcase /> BPO Team
+            </NavLink>
+          )}
           {isSA && (
             <NavLink to="/sections" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
               <IconUsers /> Sections

@@ -1,15 +1,17 @@
 name: Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
     branches: [main]
+    types: [completed]
 
 jobs:
   deploy:
     name: Deploy to production
     runs-on: ubuntu-latest
     environment: production
-    needs: []   # add 'backend' and 'frontend' here once CI is confirmed working
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1

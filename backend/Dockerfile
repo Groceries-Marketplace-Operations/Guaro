@@ -33,6 +33,7 @@ COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/clie
 COPY prisma ./prisma/
 
 ENV NODE_ENV=production
+RUN mkdir -p /app/uploads
 EXPOSE 3000
 
 # Run migrations then start the app

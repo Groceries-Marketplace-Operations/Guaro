@@ -33,6 +33,8 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
+    volumes:
+      - uploads_data:/app/uploads
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_HOST: redis
@@ -68,3 +70,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  uploads_data:

@@ -29,7 +29,7 @@ export class AuthController {
   async me(@CurrentUser() user: JwtUser) {
     const account = await this.authService.findAccountById(user.id);
     if (!account) return user;
-    return { id: account.id, name: account.name, email: account.email, roles: account.roles, sectionId: account.sectionId };
+    return { id: account.id, name: account.name, email: account.email, roles: account.roles, sectionId: account.sectionId, adminModules: account.adminModules, bpoPermissions: account.bpoPermissions };
   }
 
   // Only available in development — issues JWT by email without going through Google

@@ -36,9 +36,11 @@ export const taskTypesApi = {
   toggleActive: (id: string) => client.patch(`/task-types/${id}/toggle-active`),
   addStep: (id: string, data: object) => client.post(`/task-types/${id}/steps`, data),
   updateStep: (id: string, stepId: string, data: object) => client.patch(`/task-types/${id}/steps/${stepId}`, data),
+  reorderSteps: (id: string, order: { id: string; order: number }[]) => client.patch(`/task-types/${id}/steps/reorder`, { order }),
   deleteStep: (id: string, stepId: string) => client.delete(`/task-types/${id}/steps/${stepId}`),
   addField: (id: string, data: object) => client.post(`/task-types/${id}/fields`, data),
   updateField: (id: string, fieldId: string, data: object) => client.patch(`/task-types/${id}/fields/${fieldId}`, data),
+  reorderFields: (id: string, order: { id: string; order: number }[]) => client.patch(`/task-types/${id}/fields/reorder`, { order }),
   deleteField: (id: string, fieldId: string) => client.delete(`/task-types/${id}/fields/${fieldId}`),
   addCandidate: (id: string, stepId: string, accountId: string) =>
     client.post(`/task-types/${id}/steps/${stepId}/candidates`, { accountId }),
@@ -48,6 +50,16 @@ export const taskTypesApi = {
     client.post(`/task-types/${id}/steps/${stepId}/webhooks`, data),
   removeWebhook: (id: string, stepId: string, webhookId: string) =>
     client.delete(`/task-types/${id}/steps/${stepId}/webhooks/${webhookId}`),
+  addTemplate: (id: string, data: object) => client.post(`/task-types/${id}/templates`, data),
+  uploadTemplate: (id: string, name: string, file: File) => {
+    const fd = new FormData();
+    fd.append('name', name);
+    fd.append('file', file);
+    return client.post(`/task-types/${id}/templates/upload`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  removeTemplate: (id: string, templateId: string) => client.delete(`/task-types/${id}/templates/${templateId}`),
 };
 
 /* ── Accounts ───────────────────────────────────────────────── */
@@ -104,6 +116,8 @@ export const tasksApi = {
     client.patch(`/tasks/${taskId}/steps/${stepId}/retry`),
   startStep: (taskId: string, stepId: string) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/start`),
+  assignStep: (taskId: string, stepId: string, accountId: string) =>
+    client.patch(`/tasks/${taskId}/steps/${stepId}/assign`, { accountId }),
 };
 
 /* ── BPO Management ─────────────────────────────────────────── */

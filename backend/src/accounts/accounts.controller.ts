@@ -50,7 +50,7 @@ export class AccountsController {
     const [data, total] = await Promise.all([
       this.prisma.account.findMany({
         where,
-        select: { id: true, name: true, email: true, roles: true, sectionId: true },
+        select: { id: true, name: true, email: true, roles: true, sectionId: true, adminModules: true, bpoPermissions: true },
         orderBy: { name: 'asc' },
         skip,
         take: limit,
@@ -64,7 +64,7 @@ export class AccountsController {
   @Roles(AccountRole.admin, AccountRole.super_admin)
   async update(
     @Param('id') id: string,
-    @Body() body: { sectionId?: string | null; roles?: AccountRole[] },
+    @Body() body: { sectionId?: string | null; roles?: AccountRole[]; adminModules?: string[]; bpoPermissions?: string[] },
     @CurrentUser() requester: JwtUser,
   ) {
     const isSuperAdmin = requester.roles.includes(AccountRole.super_admin);
@@ -83,7 +83,7 @@ export class AccountsController {
         throw new ForbiddenException('Admins cannot edit other admins or directors');
       }
     }
-    const data: { sectionId?: string | null; roles?: AccountRole[] } = {};
+    const data: { sectionId?: string | null; roles?: AccountRole[]; adminModules?: string[]; bpoPermissions?: string[] } = {};
     if ('sectionId' in body && isSuperAdmin) data.sectionId = body.sectionId ?? null;
     if (body.roles?.length) {
       if (body.roles.includes(AccountRole.super_admin)) {
@@ -94,7 +94,18 @@ export class AccountsController {
       }
       data.roles = body.roles;
     }
-    return this.prisma.account.update({ where: { id }, data, select: { id: true, name: true, email: true, roles: true, sectionId: true } });
+    // Only super_admin can set adminModules (on admin accounts) or bpoPermissions (on bpo accounts)
+    if ('adminModules' in body && isSuperAdmin && Array.isArray(body.adminModules)) {
+      if (target.roles.includes(AccountRole.admin)) {
+        data.adminModules = body.adminModules;
+      }
+    }
+    if ('bpoPermissions' in body && isSuperAdmin && Array.isArray(body.bpoPermissions)) {
+      if (target.roles.includes(AccountRole.bpo)) {
+        data.bpoPermissions = body.bpoPermissions;
+      }
+    }
+    return this.prisma.account.update({ where: { id }, data, select: { id: true, name: true, email: true, roles: true, sectionId: true, adminModules: true, bpoPermissions: true } });
   }
 
   @Delete(':id')

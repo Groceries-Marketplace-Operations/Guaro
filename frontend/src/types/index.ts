@@ -2,7 +2,7 @@ export type AccountRole = 'user' | 'bpo' | 'admin' | 'super_admin' | 'director';
 export type TaskStatus = 'scheduled' | 'pending' | 'assigned' | 'in_progress' | 'blocked' | 'done' | 'failed';
 export type StepStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'blocked';
 export type ExecutionType = 'manual_internal' | 'manual_external' | 'automatic';
-export type AssignmentStrategy = 'fixed' | 'round_robin' | 'brand_assignment';
+export type AssignmentStrategy = 'fixed' | 'round_robin' | 'brand_assignment' | 'by_weight' | 'manual';
 export type ShopStatus = 'lead' | 'application' | 'integrated' | 'online';
 export type KaType = 'KA' | 'CKA' | 'SME';
 export type Country = 'MX' | 'CO' | 'CR';
@@ -15,6 +15,8 @@ export interface Account {
   roles: AccountRole[];
   sectionId?: string;
   section?: { id: string; name: string };
+  adminModules?: string[];
+  bpoPermissions?: string[];
   createdAt: string;
 }
 
@@ -62,6 +64,15 @@ export interface StepDefinition {
   webhooks?: { webhook: Webhook; events: WebhookEvent[] }[];
 }
 
+export interface TaskTypeTemplate {
+  id: string;
+  taskTypeId: string;
+  name: string;
+  url: string;
+  tipo: string;
+  createdAt: string;
+}
+
 export interface TaskType {
   id: string;
   name: string;
@@ -72,6 +83,7 @@ export interface TaskType {
   section?: Section;
   stepDefinitions?: StepDefinition[];
   formFields?: FormField[];
+  templates?: TaskTypeTemplate[];
   createdAt: string;
   _count?: { tasks: number; stepDefinitions?: number; formFields?: number };
 }

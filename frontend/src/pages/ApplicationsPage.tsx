@@ -1,9 +1,11 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Navigate } from 'react-router-dom';
 import Topbar from '../components/layout/Topbar';
 import Modal from '../components/ui/Modal';
 import Paginator from '../components/ui/Paginator';
 import { applicationsApi } from '../api';
+import { useAuth } from '../auth/AuthContext';
 import type { Application, Country, Paginated } from '../types';
 
 const COUNTRY_EMOJI: Record<Country, string> = { MX: '🇲🇽', CO: '🇨🇴', CR: '🇨🇷' };
@@ -29,6 +31,12 @@ const EditIcon = () => (
 
 export default function ApplicationsPage() {
   const qc = useQueryClient();
+  const { account } = useAuth();
+  const isAdmin = account?.roles.includes('admin') || account?.roles.includes('super_admin');
+  const isBpoOnly = account?.roles.includes('bpo') && !isAdmin;
+  const hasAppPermission = (account?.bpoPermissions ?? []).includes('create_application');
+  const canAccessApps = isAdmin || (isBpoOnly && hasAppPermission);
+  const canCreateApp = canAccessApps;
 
   // filters
   const [q, setQ] = useState('');
@@ -104,6 +112,8 @@ export default function ApplicationsPage() {
     } catch { /* ignore */ }
   };
 
+  if (!canAccessApps) return <Navigate to="/" replace />;
+
   return (
     <>
       <Topbar breadcrumb={[{ label: 'Applications' }]} />
@@ -114,9 +124,11 @@ export default function ApplicationsPage() {
             <p>{total} application{total !== 1 ? 's' : ''}</p>
           </div>
           <div className="page-actions">
-            <button className="btn btn-primary" onClick={() => { setOpenCreate(true); setErr(''); }}>
-              <PlusIcon /> New Application
-            </button>
+            {canCreateApp && (
+              <button className="btn btn-primary" onClick={() => { setOpenCreate(true); setErr(''); }}>
+                <PlusIcon /> New Application
+              </button>
+            )}
           </div>
         </div>
 

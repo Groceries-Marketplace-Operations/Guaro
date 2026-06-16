@@ -10,11 +10,15 @@ import { CompleteStepDto } from './dto/complete-step.dto';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { FailStepDto } from './dto/fail-step.dto';
 import { TasksService } from './tasks.service';
+import { TaskEngineService } from './task-engine.service';
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class TasksController {
-  constructor(private tasksService: TasksService) {}
+  constructor(
+    private tasksService: TasksService,
+    private taskEngine: TaskEngineService,
+  ) {}
 
   @Get()
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
@@ -81,5 +85,14 @@ export class TasksController {
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   startStep(@Param('id') id: string, @Param('stepId') stepId: string) {
     return this.tasksService.startStep(id, stepId);
+  }
+
+  @Patch(':id/steps/:stepId/assign')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  assignStep(
+    @Param('stepId') stepId: string,
+    @Body('accountId') accountId: string,
+  ) {
+    return this.taskEngine.assignStepManually(stepId, accountId);
   }
 }

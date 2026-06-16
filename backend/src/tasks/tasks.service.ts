@@ -11,7 +11,7 @@ const TASK_INCLUDE = {
   stepInstances: {
     orderBy: { stepDefinition: { order: 'asc' as const } },
     include: {
-      stepDefinition: { select: { id: true, name: true, order: true, executionType: true } },
+      stepDefinition: { select: { id: true, name: true, order: true, executionType: true, assignmentStrategy: true } },
       assignedTo: { select: { id: true, name: true, email: true } },
     },
   },

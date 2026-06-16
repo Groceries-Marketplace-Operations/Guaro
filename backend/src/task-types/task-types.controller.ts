@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   DefaultValuePipe,
@@ -9,8 +10,14 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { randomUUID } from 'crypto';
 import { AccountRole } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
@@ -82,6 +89,16 @@ export class TaskTypesController {
     return this.taskTypesService.createStep(id, dto, u.roles, u.sectionId);
   }
 
+  @Patch(':id/steps/reorder')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  reorderSteps(
+    @Param('id') id: string,
+    @CurrentUser() u: JwtUser,
+    @Body() body: { order: { id: string; order: number }[] },
+  ) {
+    return this.taskTypesService.reorderSteps(id, body.order, u.roles, u.sectionId);
+  }
+
   @Patch(':id/steps/:stepId')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   updateStep(@Param('id') id: string, @Param('stepId') stepId: string, @CurrentUser() u: JwtUser, @Body() dto: UpdateStepDto) {
@@ -142,7 +159,73 @@ export class TaskTypesController {
     return this.taskTypesService.removeStepWebhook(id, stepId, swId, u.roles, u.sectionId);
   }
 
+  // ── Templates ─────────────────────────────────────────────────────────────
+
+  @Post(':id/templates')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  addTemplate(
+    @Param('id') id: string,
+    @CurrentUser() u: JwtUser,
+    @Body() dto: { name: string; url: string; tipo?: string },
+  ) {
+    return this.taskTypesService.addTemplate(id, dto, u.roles, u.sectionId);
+  }
+
+  @Post(':id/templates/upload')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  @UseInterceptors(FileInterceptor('file', {
+    storage: diskStorage({
+      destination: join(process.cwd(), 'uploads'),
+      filename: (_req, file, cb) => {
+        const ext = extname(file.originalname).toLowerCase();
+        cb(null, `${randomUUID()}${ext}`);
+      },
+    }),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+    fileFilter: (_req, file, cb) => {
+      const allowed = ['.xlsx', '.csv', '.docx', '.pdf'];
+      const ext = extname(file.originalname).toLowerCase();
+      if (!allowed.includes(ext)) {
+        return cb(new BadRequestException(`File type not allowed. Allowed: ${allowed.join(', ')}`), false);
+      }
+      cb(null, true);
+    },
+  }))
+  async uploadTemplate(
+    @Param('id') id: string,
+    @CurrentUser() u: JwtUser,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('name') name: string,
+  ) {
+    if (!file) throw new BadRequestException('No file provided');
+    if (!name?.trim()) throw new BadRequestException('Template name is required');
+
+    const ext = extname(file.originalname).toLowerCase().replace('.', '');
+    const url = `/uploads/${file.filename}`;
+    return this.taskTypesService.addTemplate(id, { name, url, tipo: ext }, u.roles, u.sectionId);
+  }
+
+  @Delete(':id/templates/:templateId')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  removeTemplate(
+    @Param('id') id: string,
+    @Param('templateId') templateId: string,
+    @CurrentUser() u: JwtUser,
+  ) {
+    return this.taskTypesService.removeTemplate(id, templateId, u.roles, u.sectionId);
+  }
+
   // ── Form Fields ───────────────────────────────────────────────────────────
+
+  @Patch(':id/fields/reorder')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  reorderFields(
+    @Param('id') id: string,
+    @CurrentUser() u: JwtUser,
+    @Body() body: { order: { id: string; order: number }[] },
+  ) {
+    return this.taskTypesService.reorderFields(id, body.order, u.roles, u.sectionId);
+  }
 
   @Post(':id/fields')
   @Roles(AccountRole.admin, AccountRole.super_admin)

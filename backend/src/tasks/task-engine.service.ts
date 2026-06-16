@@ -257,6 +257,33 @@ export class TaskEngineService {
   // Overridden by QueueModule to publish the job (avoids circular dep)
   emitAutoStep: (stepInstanceId: string, handlerId: string, taskId: string) => void = () => undefined;
 
+  // ── Manual step assignment (admin assigns BPO at runtime) ────────────────
+
+  async assignStepManually(stepInstanceId: string, accountId: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const step = await tx.stepInstance.findUnique({
+        where: { id: stepInstanceId },
+        include: { stepDefinition: true },
+      });
+      if (!step) throw new NotFoundException('StepInstance not found');
+      if (step.stepDefinition.assignmentStrategy !== AssignmentStrategy.manual) {
+        throw new BadRequestException('Step does not use manual assignment strategy');
+      }
+      if (step.status !== StepStatus.pending) {
+        throw new BadRequestException('Step must be pending to be manually assigned');
+      }
+
+      await tx.stepInstance.update({
+        where: { id: stepInstanceId },
+        data: { assignedToId: accountId },
+      });
+      await tx.task.update({
+        where: { id: step.taskId },
+        data: { status: TaskStatus.assigned },
+      });
+    });
+  }
+
   // ── Just-in-time assignment ───────────────────────────────────────────────
 
   private async assignBpo(
@@ -264,6 +291,11 @@ export class TaskEngineService {
     stepDef: { id: string; assignmentStrategy: AssignmentStrategy; weight: number },
     taskId: string,
   ): Promise<string | undefined> {
+
+    // ── Manual: admin assigns at runtime, no automatic assignment ────────────
+    if (stepDef.assignmentStrategy === AssignmentStrategy.manual) {
+      return undefined;
+    }
 
     // ── Brand assignment: resolve BPO via BrandAssignmentRule ─────────────────
     if (stepDef.assignmentStrategy === AssignmentStrategy.brand_assignment) {

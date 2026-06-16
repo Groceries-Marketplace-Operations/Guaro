@@ -1,4 +1,4 @@
-import { Body, Controller, DefaultValuePipe, Delete, Get, Param, ParseBoolPipe, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Delete, ForbiddenException, Get, Param, ParseBoolPipe, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AccountRole, AssignmentMode, Country, KaType, MenuIntegration, PaymentMode, PickingMode } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
@@ -67,8 +67,12 @@ export class BrandsController {
   }
 
   @Post()
-  @Roles(AccountRole.admin, AccountRole.super_admin)
+  @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateBrandDto) {
+    const isBpoOnly = u.roles.includes(AccountRole.bpo) && !u.roles.includes(AccountRole.admin) && !u.roles.includes(AccountRole.super_admin);
+    if (isBpoOnly && !u.bpoPermissions.includes('create_brand')) {
+      throw new ForbiddenException('You do not have permission to create brands');
+    }
     return this.brandsService.create(dto, u.id);
   }
 

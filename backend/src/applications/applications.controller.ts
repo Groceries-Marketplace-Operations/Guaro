@@ -1,4 +1,4 @@
-import { Body, Controller, DefaultValuePipe, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Delete, ForbiddenException, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AccountRole, Country } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
@@ -17,23 +17,36 @@ export class ApplicationsController {
   @Get()
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   findAll(
+    @CurrentUser() u: JwtUser,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(25), ParseIntPipe) limit: number,
     @Query('q') q?: string,
     @Query('country') country?: Country,
   ) {
+    const isBpoOnly = u.roles.includes(AccountRole.bpo) && !u.roles.includes(AccountRole.admin) && !u.roles.includes(AccountRole.super_admin);
+    if (isBpoOnly && !u.bpoPermissions.includes('create_application')) {
+      throw new ForbiddenException('You do not have access to applications');
+    }
     return this.applicationsService.findAll({ page, limit, q, country });
   }
 
   @Get(':id')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
-  findOne(@Param('id') id: string) {
+  findOne(@CurrentUser() u: JwtUser, @Param('id') id: string) {
+    const isBpoOnly = u.roles.includes(AccountRole.bpo) && !u.roles.includes(AccountRole.admin) && !u.roles.includes(AccountRole.super_admin);
+    if (isBpoOnly && !u.bpoPermissions.includes('create_application')) {
+      throw new ForbiddenException('You do not have access to applications');
+    }
     return this.applicationsService.findOne(id);
   }
 
   @Post()
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateApplicationDto) {
+    const isBpoOnly = u.roles.includes(AccountRole.bpo) && !u.roles.includes(AccountRole.admin) && !u.roles.includes(AccountRole.super_admin);
+    if (isBpoOnly && !u.bpoPermissions.includes('create_application')) {
+      throw new ForbiddenException('You do not have permission to create applications');
+    }
     return this.applicationsService.create(dto, u.id);
   }
 

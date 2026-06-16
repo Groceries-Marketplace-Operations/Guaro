@@ -68,6 +68,7 @@ export default function BrandsList() {
   const { account } = useAuth();
   const isBpo = account?.roles.includes('bpo') && !account?.roles.includes('admin') && !account?.roles.includes('super_admin');
   const isAdmin = account?.roles.includes('admin') || account?.roles.includes('super_admin');
+  const canCreateBrand = isAdmin || (isBpo && (account?.bpoPermissions ?? []).includes('create_brand'));
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [dq, setDq] = useState(''); // debounced q
@@ -188,7 +189,7 @@ export default function BrandsList() {
                 My Brands
               </button>
             )}
-            {isAdmin && (
+            {canCreateBrand && (
               <button className="btn btn-primary" onClick={() => setOpen(true)}>
                 <PlusIcon /> New Brand
               </button>

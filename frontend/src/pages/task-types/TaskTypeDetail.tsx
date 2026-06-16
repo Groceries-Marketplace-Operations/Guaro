@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { taskTypesApi, handlersApi, webhooksApi, accountsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
-import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account } from '../../types';
+import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account, TaskTypeTemplate } from '../../types';
 
 const PlusIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -27,7 +27,17 @@ const EditIcon = () => (
 );
 
 const EXECUTION_TYPES: ExecutionType[] = ['manual_internal', 'manual_external', 'automatic'];
-const STRATEGIES: AssignmentStrategy[] = ['fixed', 'round_robin', 'brand_assignment', 'by_weight'];
+const STRATEGIES: AssignmentStrategy[] = ['fixed', 'round_robin', 'brand_assignment', 'by_weight', 'manual'];
+const TIPO_OPTIONS = [
+  { v: 'link',  l: 'Link (URL)' },
+  { v: 'xlsx',  l: 'Excel (.xlsx)' },
+  { v: 'csv',   l: 'CSV (.csv)' },
+  { v: 'docx',  l: 'Word (.docx)' },
+  { v: 'pdf',   l: 'PDF (.pdf)' },
+];
+const FILE_TIPOS = ['xlsx', 'csv', 'docx', 'pdf'];
+const FILE_ACCEPT = '.xlsx,.csv,.docx,.pdf';
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 const WH_EVENTS: WebhookEvent[] = ['on_start', 'on_complete', 'on_fail'];
 const FIELD_TYPES = ['texto', 'numero', 'link', 'link_spreadsheet', 'select', 'select_brand', 'select_store', 'select_ka_type', 'select_country'];
 
@@ -107,9 +117,17 @@ export default function TaskTypeDetail() {
   // Drag-and-drop for steps
   const [stepDragIndex, setStepDragIndex] = useState<number | null>(null);
   const [stepDragOver, setStepDragOver] = useState<number | null>(null);
+  const stepDragRef = useRef<number | null>(null);
   // Drag-and-drop for fields
   const [fieldDragIndex, setFieldDragIndex] = useState<number | null>(null);
   const [fieldDragOver, setFieldDragOver] = useState<number | null>(null);
+  const fieldDragRef = useRef<number | null>(null);
+
+  // Templates
+  const [addingTemplate, setAddingTemplate] = useState(false);
+  const [templateForm, setTemplateForm] = useState({ name: '', url: '', tipo: 'link' });
+  const [templateFile, setTemplateFile] = useState<File | null>(null);
+  const [templateFileErr, setTemplateFileErr] = useState('');
 
   const [stepForm, setStepForm] = useState(EMPTY_STEP_FORM);
   const [fieldForm, setFieldForm] = useState(EMPTY_FIELD_FORM);
@@ -290,33 +308,39 @@ export default function TaskTypeDetail() {
   // ── Drag & drop ────────────────────────────────────────────────────────────
 
   const dropStep = async (toIndex: number) => {
-    if (stepDragIndex === null || stepDragIndex === toIndex) {
-      setStepDragIndex(null); setStepDragOver(null); return;
+    const fromIndex = stepDragRef.current;
+    if (fromIndex === null || fromIndex === toIndex) {
+      setStepDragIndex(null); setStepDragOver(null); stepDragRef.current = null; return;
     }
     const reordered = [...steps];
-    const [moved] = reordered.splice(stepDragIndex, 1);
+    const [moved] = reordered.splice(fromIndex, 1);
     reordered.splice(toIndex, 0, moved);
     const updates = reordered
       .map((s, i) => ({ id: s.id, newOrder: i + 1, oldOrder: s.order }))
       .filter(u => u.newOrder !== u.oldOrder);
-    setStepDragIndex(null); setStepDragOver(null);
-    await Promise.all(updates.map(u => taskTypesApi.updateStep(id!, u.id, { order: u.newOrder })));
-    qc.invalidateQueries({ queryKey: ['task-type', id] });
+    setStepDragIndex(null); setStepDragOver(null); stepDragRef.current = null;
+    if (updates.length > 0) {
+      await taskTypesApi.reorderSteps(id!, reordered.map((s, i) => ({ id: s.id, order: i + 1 })));
+      qc.invalidateQueries({ queryKey: ['task-type', id] });
+    }
   };
 
   const dropField = async (toIndex: number) => {
-    if (fieldDragIndex === null || fieldDragIndex === toIndex) {
-      setFieldDragIndex(null); setFieldDragOver(null); return;
+    const fromIndex = fieldDragRef.current;
+    if (fromIndex === null || fromIndex === toIndex) {
+      setFieldDragIndex(null); setFieldDragOver(null); fieldDragRef.current = null; return;
     }
     const reordered = [...fields];
-    const [moved] = reordered.splice(fieldDragIndex, 1);
+    const [moved] = reordered.splice(fromIndex, 1);
     reordered.splice(toIndex, 0, moved);
     const updates = reordered
       .map((f, i) => ({ id: f.id, newOrder: i + 1, oldOrder: f.order }))
       .filter(u => u.newOrder !== u.oldOrder);
-    setFieldDragIndex(null); setFieldDragOver(null);
-    await Promise.all(updates.map(u => taskTypesApi.updateField(id!, u.id, { order: u.newOrder })));
-    qc.invalidateQueries({ queryKey: ['task-type', id] });
+    setFieldDragIndex(null); setFieldDragOver(null); fieldDragRef.current = null;
+    if (updates.length > 0) {
+      await taskTypesApi.reorderFields(id!, reordered.map((f, i) => ({ id: f.id, order: i + 1 })));
+      qc.invalidateQueries({ queryKey: ['task-type', id] });
+    }
   };
 
   const toggleEvent = (ev: WebhookEvent) => {
@@ -399,11 +423,10 @@ export default function TaskTypeDetail() {
                   return (
                     <div key={s.id}
                       draggable
-                      onDragStart={() => setStepDragIndex(i)}
+                      onDragStart={() => { setStepDragIndex(i); stepDragRef.current = i; }}
                       onDragOver={e => { e.preventDefault(); setStepDragOver(i); }}
-                      onDragLeave={() => setStepDragOver(null)}
                       onDrop={() => dropStep(i)}
-                      onDragEnd={() => { setStepDragIndex(null); setStepDragOver(null); }}
+                      onDragEnd={() => { setStepDragIndex(null); setStepDragOver(null); stepDragRef.current = null; }}
                       style={{
                         padding: '10px 12px', borderRadius: 8,
                         background: isDragging ? 'var(--orange-muted)' : 'var(--surface-2)',
@@ -483,11 +506,10 @@ export default function TaskTypeDetail() {
                   return (
                     <div key={f.id}
                       draggable
-                      onDragStart={() => setFieldDragIndex(i)}
+                      onDragStart={() => { setFieldDragIndex(i); fieldDragRef.current = i; }}
                       onDragOver={e => { e.preventDefault(); setFieldDragOver(i); }}
-                      onDragLeave={() => setFieldDragOver(null)}
                       onDrop={() => dropField(i)}
-                      onDragEnd={() => { setFieldDragIndex(null); setFieldDragOver(null); }}
+                      onDragEnd={() => { setFieldDragIndex(null); setFieldDragOver(null); fieldDragRef.current = null; }}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8,
                         padding: '8px 10px', borderRadius: 8,
@@ -528,6 +550,124 @@ export default function TaskTypeDetail() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Templates */}
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="card-header">
+            <span className="card-title">Templates ({(tt.templates ?? []).length})</span>
+            <button className="btn btn-primary btn-sm" onClick={() => setAddingTemplate(t => !t)}>
+              <PlusIcon /> Add Template
+            </button>
+          </div>
+
+          {addingTemplate && (
+            <form style={{ display: 'flex', gap: 8, padding: '0 0 16px', flexWrap: 'wrap', alignItems: 'flex-end' }}
+              onSubmit={async e => {
+                e.preventDefault();
+                setTemplateFileErr('');
+                const isFile = FILE_TIPOS.includes(templateForm.tipo);
+                if (isFile && !templateFile) { setTemplateFileErr('Select a file to upload.'); return; }
+                setSaving(true); setErr('');
+                try {
+                  if (isFile && templateFile) {
+                    await taskTypesApi.uploadTemplate(id!, templateForm.name, templateFile);
+                  } else {
+                    await taskTypesApi.addTemplate(id!, templateForm);
+                  }
+                  qc.invalidateQueries({ queryKey: ['task-type', id] });
+                  setTemplateForm({ name: '', url: '', tipo: 'link' });
+                  setTemplateFile(null);
+                  setAddingTemplate(false);
+                } catch (ex) { setErr(errMsg(ex)); } finally { setSaving(false); }
+              }}
+            >
+              <div className="form-group" style={{ margin: 0, flex: '1 1 160px' }}>
+                <label className="form-label">Name</label>
+                <input className="form-input" placeholder="Integration SOP" value={templateForm.name}
+                  onChange={e => setTemplateForm(f => ({ ...f, name: e.target.value }))} required autoFocus />
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Type</label>
+                <select className="form-select" value={templateForm.tipo}
+                  onChange={e => {
+                    setTemplateForm(f => ({ ...f, tipo: e.target.value, url: '' }));
+                    setTemplateFile(null);
+                    setTemplateFileErr('');
+                  }}>
+                  {TIPO_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                </select>
+              </div>
+
+              {FILE_TIPOS.includes(templateForm.tipo) ? (
+                <div className="form-group" style={{ margin: 0, flex: '2 1 240px' }}>
+                  <label className="form-label">File <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(max 10 MB)</span></label>
+                  <input
+                    type="file"
+                    accept={FILE_ACCEPT}
+                    className="form-input"
+                    style={{ padding: '5px 10px', cursor: 'pointer' }}
+                    onChange={e => {
+                      const f = e.target.files?.[0] ?? null;
+                      setTemplateFileErr('');
+                      if (f && f.size > MAX_FILE_BYTES) {
+                        setTemplateFileErr(`File exceeds 10 MB (${(f.size / 1024 / 1024).toFixed(1)} MB)`);
+                        e.target.value = '';
+                        setTemplateFile(null);
+                        return;
+                      }
+                      setTemplateFile(f);
+                    }}
+                  />
+                  {templateFileErr && <p style={{ color: 'var(--red)', fontSize: '0.75rem', marginTop: 3 }}>{templateFileErr}</p>}
+                </div>
+              ) : (
+                <div className="form-group" style={{ margin: 0, flex: '2 1 240px' }}>
+                  <label className="form-label">URL</label>
+                  <input className="form-input" placeholder="https://docs.google.com/…" value={templateForm.url}
+                    onChange={e => setTemplateForm(f => ({ ...f, url: e.target.value }))} required />
+                </div>
+              )}
+
+              <button type="submit" className="btn btn-primary btn-sm"
+                disabled={saving || !templateForm.name.trim() || !!templateFileErr ||
+                  (FILE_TIPOS.includes(templateForm.tipo) ? !templateFile : !templateForm.url.trim())}>
+                {saving ? 'Adding…' : 'Add'}
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm"
+                onClick={() => { setAddingTemplate(false); setTemplateFile(null); setTemplateFileErr(''); setErr(''); }}>
+                Cancel
+              </button>
+              {err && <div className="error-banner" style={{ width: '100%', marginTop: 4 }}>{err}</div>}
+            </form>
+          )}
+
+          {(tt.templates ?? []).length === 0 && !addingTemplate ? (
+            <p className="text-muted text-sm">No templates yet. Templates are links or files shown to users when creating a task.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {(tt.templates ?? []).map(t => (
+                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: 'var(--orange-muted)', color: 'var(--orange)', textTransform: 'uppercase', flexShrink: 0 }}>{t.tipo}</span>
+                  <span style={{ fontWeight: 500, fontSize: '0.84rem', flex: 1 }}>{t.name}</span>
+                  <a href={t.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.url}</a>
+                  <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)', flexShrink: 0 }}
+                    onClick={async () => {
+                      setSaving(true);
+                      try {
+                        await taskTypesApi.removeTemplate(id!, t.id);
+                        qc.invalidateQueries({ queryKey: ['task-type', id] });
+                      } finally { setSaving(false); }
+                    }}
+                    disabled={saving}
+                  >
+                    <XIcon />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </main>
 
@@ -575,7 +715,8 @@ export default function TaskTypeDetail() {
                 {stepForm.assignmentStrategy === 'round_robin' ? 'Assigns to BPOs in rotation from the candidate pool.' : ''}
                 {stepForm.assignmentStrategy === 'brand_assignment' ? 'Assigns via Brand Assignment Rules (Settings). Reads KA Type + Country from the task\'s form values to find the right BPO pool.' : ''}
                 {stepForm.assignmentStrategy === 'by_weight' ? 'Assigns to the least-loaded BPO in the candidate pool.' : ''}
-                {stepForm.assignmentStrategy !== 'brand_assignment' && !stepToEdit && ' You can add BPOs to the candidate pool after saving.'}
+                {stepForm.assignmentStrategy === 'manual' ? 'Admin selects the BPO manually at runtime when the task is active.' : ''}
+                {stepForm.assignmentStrategy !== 'brand_assignment' && stepForm.assignmentStrategy !== 'manual' && !stepToEdit && ' You can add BPOs to the candidate pool after saving.'}
               </p>
             </div>
           )}

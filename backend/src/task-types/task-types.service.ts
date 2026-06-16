@@ -27,6 +27,7 @@ const TASK_TYPE_INCLUDE = {
     orderBy: { order: 'asc' as const },
     include: { filteredBy: { select: { id: true, label: true } } },
   },
+  templates: { orderBy: { createdAt: 'asc' as const } },
   section: { select: { id: true, name: true } },
 } as const;
 
@@ -137,10 +138,26 @@ export class TaskTypesService {
     return this.prisma.stepDefinition.update({ where: { id: stepId }, data: dto });
   }
 
+  async reorderSteps(taskTypeId: string, order: { id: string; order: number }[], roles: AccountRole[], sectionId: string | null) {
+    await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
+    // Use large temporary offsets to avoid unique constraint conflicts mid-transaction
+    await this.prisma.$transaction([
+      ...order.map(({ id, order: o }) =>
+        this.prisma.stepDefinition.update({ where: { id }, data: { order: o + 10000 } })
+      ),
+      ...order.map(({ id, order: o }) =>
+        this.prisma.stepDefinition.update({ where: { id }, data: { order: o } })
+      ),
+    ]);
+  }
+
   async removeStep(taskTypeId: string, stepId: string, roles: AccountRole[], sectionId: string | null) {
     await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
     await this.assertStepBelongs(stepId, taskTypeId);
-    return this.prisma.stepDefinition.delete({ where: { id: stepId } });
+    await this.prisma.$transaction([
+      this.prisma.stepInstance.deleteMany({ where: { stepDefinitionId: stepId } }),
+      this.prisma.stepDefinition.delete({ where: { id: stepId } }),
+    ]);
   }
 
   // ── Step candidates ───────────────────────────────────────────────────────
@@ -179,6 +196,18 @@ export class TaskTypesService {
 
   // ── FormField ─────────────────────────────────────────────────────────────
 
+  async reorderFields(taskTypeId: string, order: { id: string; order: number }[], roles: AccountRole[], sectionId: string | null) {
+    await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
+    await this.prisma.$transaction([
+      ...order.map(({ id, order: o }) =>
+        this.prisma.formField.update({ where: { id }, data: { order: o + 10000 } })
+      ),
+      ...order.map(({ id, order: o }) =>
+        this.prisma.formField.update({ where: { id }, data: { order: o } })
+      ),
+    ]);
+  }
+
   async createField(taskTypeId: string, dto: CreateFormFieldDto, roles: AccountRole[], sectionId: string | null) {
     await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
     const { options, type, ...rest } = dto;
@@ -209,6 +238,32 @@ export class TaskTypesService {
       this.prisma.formValue.deleteMany({ where: { formFieldId: fieldId } }),
       this.prisma.formField.delete({ where: { id: fieldId } }),
     ]);
+  }
+
+  // ── Templates ─────────────────────────────────────────────────────────────
+
+  async addTemplate(
+    taskTypeId: string,
+    dto: { name: string; url: string; tipo?: string },
+    roles: AccountRole[],
+    sectionId: string | null,
+  ) {
+    await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
+    return this.prisma.taskTypeTemplate.create({
+      data: { taskTypeId, name: dto.name, url: dto.url, tipo: dto.tipo ?? 'link' },
+    });
+  }
+
+  async removeTemplate(
+    taskTypeId: string,
+    templateId: string,
+    roles: AccountRole[],
+    sectionId: string | null,
+  ) {
+    await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
+    const tmpl = await this.prisma.taskTypeTemplate.findUnique({ where: { id: templateId } });
+    if (!tmpl || tmpl.taskTypeId !== taskTypeId) throw new NotFoundException('Template not found');
+    return this.prisma.taskTypeTemplate.delete({ where: { id: templateId } });
   }
 
   // ── Internal guards ───────────────────────────────────────────────────────

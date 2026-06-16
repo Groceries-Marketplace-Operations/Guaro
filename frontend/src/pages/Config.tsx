@@ -23,6 +23,8 @@ interface AccountRow {
   email: string;
   roles: string[];
   sectionId?: string | null;
+  adminModules?: string[];
+  bpoPermissions?: string[];
 }
 
 const PlusIcon = () => (
@@ -48,12 +50,28 @@ const CopyIcon = () => (
   </svg>
 );
 
+const ADMIN_MODULES = [
+  { key: 'applications', label: 'Applications' },
+  { key: 'bpo_team',     label: 'BPO Team' },
+  { key: 'webhooks',     label: 'Webhooks (Config)' },
+  { key: 'handlers',     label: 'Handlers (Config)' },
+] as const;
+
+const BPO_PERMISSIONS = [
+  { key: 'create_brand',       label: 'Create Brand' },
+  { key: 'create_application', label: 'Create Application' },
+] as const;
+
 export default function Config() {
   const qc = useQueryClient();
   const { account } = useAuth();
   const isSuperAdmin = account?.roles.includes('super_admin') ?? false;
   const isAdmin = account?.roles.includes('admin') ?? false;
-  const [tab, setTab] = useState<'handlers' | 'webhooks' | 'invitations' | 'users'>('handlers');
+  const adminMods = account?.adminModules ?? [];
+  const canSeeHandlers = isSuperAdmin || adminMods.includes('handlers');
+  const canSeeWebhooks = isSuperAdmin || adminMods.includes('webhooks');
+  const defaultTab = canSeeHandlers ? 'handlers' : canSeeWebhooks ? 'webhooks' : 'invitations';
+  const [tab, setTab] = useState<'handlers' | 'webhooks' | 'invitations' | 'users'>(defaultTab);
 
   const [openHandler, setOpenHandler] = useState(false);
   const [openWebhook, setOpenWebhook] = useState(false);
@@ -83,6 +101,8 @@ export default function Config() {
   const [editingUser, setEditingUser] = useState<AccountRow | null>(null);
   const [editUserSection, setEditUserSection] = useState('');
   const [editUserRoles, setEditUserRoles] = useState<string[]>([]);
+  const [editUserModules, setEditUserModules] = useState<string[]>([]);
+  const [editBpoPermissions, setEditBpoPermissions] = useState<string[]>([]);
 
   useEffect(() => {
     const t = setTimeout(() => { setDUserQ(userQ); setUserPage(1); }, 300);
@@ -113,15 +133,21 @@ export default function Config() {
     setEditingUser(u);
     setEditUserSection(u.sectionId ?? '');
     setEditUserRoles([...u.roles]);
+    setEditUserModules([...(u.adminModules ?? [])]);
+    setEditBpoPermissions([...(u.bpoPermissions ?? [])]);
     setErr('');
   };
 
   const saveEditUser = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
     try {
+      const isTargetAdmin = editingUser!.roles.includes('admin');
+      const isTargetBpo = editingUser!.roles.includes('bpo');
       await accountsApi.update(editingUser!.id, {
         sectionId: editUserSection || null,
         roles: editUserRoles,
+        ...(isSuperAdmin && isTargetAdmin ? { adminModules: editUserModules } : {}),
+        ...(isSuperAdmin && isTargetBpo ? { bpoPermissions: editBpoPermissions } : {}),
       });
       qc.invalidateQueries({ queryKey: ['accounts-all'] });
       setEditingUser(null);
@@ -232,8 +258,12 @@ export default function Config() {
         </div>
 
         <div className="tabs">
-          <div className={`tab ${tab === 'handlers' ? 'active' : ''}`} onClick={() => setTab('handlers')}>Handlers ({handlers.length})</div>
-          <div className={`tab ${tab === 'webhooks' ? 'active' : ''}`} onClick={() => setTab('webhooks')}>Webhooks ({webhooks.length})</div>
+          {canSeeHandlers && (
+            <div className={`tab ${tab === 'handlers' ? 'active' : ''}`} onClick={() => setTab('handlers')}>Handlers ({handlers.length})</div>
+          )}
+          {canSeeWebhooks && (
+            <div className={`tab ${tab === 'webhooks' ? 'active' : ''}`} onClick={() => setTab('webhooks')}>Webhooks ({webhooks.length})</div>
+          )}
           <div className={`tab ${tab === 'invitations' ? 'active' : ''}`} onClick={() => setTab('invitations')}>
             Invitations
           </div>
@@ -646,6 +676,50 @@ export default function Config() {
             </div>
             {editUserRoles.length === 0 && <p style={{ fontSize: '0.75rem', color: 'var(--red)', marginTop: 4 }}>At least one role is required.</p>}
           </div>
+          {isSuperAdmin && editingUser?.roles.includes('admin') && (
+            <div className="form-group">
+              <label className="form-label">Module access</label>
+              <p className="form-hint" style={{ marginBottom: 8 }}>Users and Invitations are always visible. Select additional modules this admin can access.</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8 }}>
+                {ADMIN_MODULES.map(({ key, label }) => (
+                  <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={editUserModules.includes(key)}
+                      onChange={e => {
+                        if (e.target.checked) setEditUserModules(m => [...m, key]);
+                        else setEditUserModules(m => m.filter(x => x !== key));
+                      }}
+                      style={{ accentColor: 'var(--orange)', width: 15, height: 15 }}
+                    />
+                    <span style={{ fontWeight: 500 }}>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+          {isSuperAdmin && editingUser?.roles.includes('bpo') && (
+            <div className="form-group">
+              <label className="form-label">BPO permissions</label>
+              <p className="form-hint" style={{ marginBottom: 8 }}>Select which create actions this BPO can perform.</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8 }}>
+                {BPO_PERMISSIONS.map(({ key, label }) => (
+                  <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={editBpoPermissions.includes(key)}
+                      onChange={e => {
+                        if (e.target.checked) setEditBpoPermissions(p => [...p, key]);
+                        else setEditBpoPermissions(p => p.filter(x => x !== key));
+                      }}
+                      style={{ accentColor: 'var(--orange)', width: 15, height: 15 }}
+                    />
+                    <span style={{ fontWeight: 500 }}>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </Modal>
       )}
     </>
