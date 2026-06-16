@@ -28,11 +28,12 @@ export const webhooksApi = {
 
 /* ── Task Types ─────────────────────────────────────────────── */
 export const taskTypesApi = {
-  list: () => client.get('/task-types'),
+  list: (params?: object) => client.get('/task-types', { params }),
   get: (id: string) => client.get(`/task-types/${id}`),
   create: (data: object) => client.post('/task-types', data),
   update: (id: string, data: object) => client.patch(`/task-types/${id}`, data),
   delete: (id: string) => client.delete(`/task-types/${id}`),
+  toggleActive: (id: string) => client.patch(`/task-types/${id}/toggle-active`),
   addStep: (id: string, data: object) => client.post(`/task-types/${id}/steps`, data),
   updateStep: (id: string, stepId: string, data: object) => client.patch(`/task-types/${id}/steps/${stepId}`, data),
   deleteStep: (id: string, stepId: string) => client.delete(`/task-types/${id}/steps/${stepId}`),
@@ -51,7 +52,8 @@ export const taskTypesApi = {
 
 /* ── Accounts ───────────────────────────────────────────────── */
 export const accountsApi = {
-  list: (role?: string) => client.get('/accounts', { params: role ? { role } : {} }),
+  list: (params?: { role?: string; page?: number; limit?: number }) => client.get('/accounts', { params }),
+  update: (id: string, data: object) => client.patch(`/accounts/${id}`, data),
   delete: (id: string) => client.delete(`/accounts/${id}`),
 };
 
@@ -71,6 +73,8 @@ export const shopsApi = {
   list: (params?: object) => client.get('/shops', { params }),
   get: (id: string) => client.get(`/shops/${id}`),
   create: (data: object) => client.post('/shops', data),
+  createBatch: (shops: object[]) => client.post('/shops/batch', { shops }),
+  batchStatus: (ids: string[], status: string) => client.patch('/shops/batch-status', { ids, status }),
   update: (id: string, data: object) => client.patch(`/shops/${id}`, data),
   delete: (id: string) => client.delete(`/shops/${id}`),
   addSchedule: (id: string, data: object) => client.post(`/shops/${id}/schedules`, data),
@@ -98,6 +102,8 @@ export const tasksApi = {
     client.patch(`/tasks/${taskId}/steps/${stepId}/fail`, data),
   retryStep: (taskId: string, stepId: string) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/retry`),
+  startStep: (taskId: string, stepId: string) =>
+    client.patch(`/tasks/${taskId}/steps/${stepId}/start`),
 };
 
 /* ── BPO Management ─────────────────────────────────────────── */
@@ -111,8 +117,32 @@ export const bpoApi = {
 
 /* ── Invitations ─────────────────────────────────────────────── */
 export const invitationsApi = {
-  list: () => client.get('/invitations'),
+  list: (params?: { page?: number; limit?: number }) => client.get('/invitations', { params }),
   create: (data: object) => client.post('/invitations', data),
   delete: (id: string) => client.delete(`/invitations/${id}`),
   use: (token: string, data: object) => client.post(`/invitations/${token}/use`, data),
 };
+
+/* ── App Config ──────────────────────────────────────────────── */
+export const appConfigApi = {
+  all: () => client.get<Record<string, AppConfigOptionRaw[]>>('/app-config'),
+  byCategory: (cat: string) => client.get<AppConfigOptionRaw[]>(`/app-config/${cat}`),
+  upsert: (data: object) => client.post('/app-config', data),
+  patch: (id: string, data: object) => client.patch(`/app-config/${id}`, data),
+  remove: (id: string) => client.delete(`/app-config/${id}`),
+};
+
+/* ── Brand Assignment Rules ──────────────────────────────────── */
+export const assignmentRulesApi = {
+  list: () => client.get('/brands/assignment-rules'),
+  update: (ruleId: string, modo: string) => client.patch(`/brands/assignment-rules/${ruleId}`, { modo }),
+  addCandidate: (ruleId: string, accountId: string) =>
+    client.post(`/brands/assignment-rules/${ruleId}/candidates`, { accountId }),
+  removeCandidate: (ruleId: string, accountId: string) =>
+    client.delete(`/brands/assignment-rules/${ruleId}/candidates/${accountId}`),
+};
+
+// Helper type (used inline, exported for api file self-containment)
+export interface AppConfigOptionRaw {
+  id: string; category: string; value: string; label: string; active: boolean; order: number;
+}

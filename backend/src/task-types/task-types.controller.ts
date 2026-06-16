@@ -1,11 +1,14 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AccountRole } from '@prisma/client';
@@ -32,8 +35,13 @@ export class TaskTypesController {
 
   @Get()
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.user, AccountRole.bpo, AccountRole.director)
-  findAll(@CurrentUser() u: JwtUser) {
-    return this.taskTypesService.findAll(u.roles, u.sectionId);
+  findAll(
+    @CurrentUser() u: JwtUser,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('q') q?: string,
+  ) {
+    return this.taskTypesService.findAll(u.roles, u.sectionId, { page, limit, q });
   }
 
   @Get(':id')
@@ -52,6 +60,12 @@ export class TaskTypesController {
   @Roles(AccountRole.admin, AccountRole.super_admin)
   update(@Param('id') id: string, @CurrentUser() u: JwtUser, @Body() dto: UpdateTaskTypeDto) {
     return this.taskTypesService.update(id, dto, u.roles, u.sectionId);
+  }
+
+  @Patch(':id/toggle-active')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  toggleActive(@Param('id') id: string, @CurrentUser() u: JwtUser) {
+    return this.taskTypesService.toggleActive(id, u.roles, u.sectionId);
   }
 
   @Delete(':id')

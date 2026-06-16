@@ -1,8 +1,8 @@
 export type AccountRole = 'user' | 'bpo' | 'admin' | 'super_admin' | 'director';
-export type TaskStatus = 'scheduled' | 'pending' | 'assigned' | 'in_progress' | 'done' | 'failed';
+export type TaskStatus = 'scheduled' | 'pending' | 'assigned' | 'in_progress' | 'blocked' | 'done' | 'failed';
 export type StepStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'blocked';
 export type ExecutionType = 'manual_internal' | 'manual_external' | 'automatic';
-export type AssignmentStrategy = 'fixed' | 'round_robin' | 'by_weight';
+export type AssignmentStrategy = 'fixed' | 'round_robin' | 'brand_assignment';
 export type ShopStatus = 'lead' | 'application' | 'integrated' | 'online';
 export type KaType = 'KA' | 'CKA' | 'SME';
 export type Country = 'MX' | 'CO' | 'CR';
@@ -44,8 +44,10 @@ export interface FormField {
   label: string;
   tipo: string;
   required: boolean;
+  multiple?: boolean;
   order: number;
   options?: string[];
+  filteredById?: string;
 }
 
 export interface StepDefinition {
@@ -65,12 +67,13 @@ export interface TaskType {
   name: string;
   description?: string;
   schedulable: boolean;
+  active: boolean;
   sectionId: string;
   section?: Section;
   stepDefinitions?: StepDefinition[];
   formFields?: FormField[];
   createdAt: string;
-  _count?: { tasks: number };
+  _count?: { tasks: number; stepDefinitions?: number; formFields?: number };
 }
 
 export type MenuIntegration = 'api' | 'api_whitelist' | 'sftp' | 'spreadsheets' | 'bapp';
@@ -135,14 +138,26 @@ export interface Application {
 export interface StepInstance {
   id: string;
   status: StepStatus;
-  order: number;
+  assignedToId?: string;
   stepDefinition?: StepDefinition;
   assignedTo?: Account;
   note?: string;
   failureReason?: string;
   result?: unknown;
+  startedAt?: string;
   completedAt?: string;
   createdAt: string;
+}
+
+export interface FormValue {
+  id: string;
+  formFieldId: string;
+  formField?: { id: string; label: string; tipo: string };
+  valor?: string;
+  brandId?: string;
+  brand?: { id: string; brandId: string; brandName: string };
+  shopId?: string;
+  shop?: { id: string; shopId: string; appShopId: string };
 }
 
 export interface Task {
@@ -154,7 +169,7 @@ export interface Task {
   scheduledStart?: string;
   scheduledEnd?: string;
   stepInstances?: StepInstance[];
-  formValues?: unknown[];
+  formValues?: FormValue[];
   createdAt: string;
 }
 
@@ -163,7 +178,16 @@ export interface BrandAssignmentRule {
   kaType: KaType;
   country: Country;
   modo: 'fixed' | 'round_robin';
-  account?: Account;
+  candidates: { accountId: string; account: Account }[];
+}
+
+export interface AppConfigOption {
+  id: string;
+  category: string;
+  value: string;
+  label: string;
+  active: boolean;
+  order: number;
 }
 
 export interface Invitation {

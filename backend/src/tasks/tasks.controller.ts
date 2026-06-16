@@ -36,7 +36,7 @@ export class TasksController {
   }
 
   @Post()
-  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  @Roles(AccountRole.user, AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateTaskDto) {
     return this.tasksService.create(dto, u.id);
   }
@@ -75,5 +75,11 @@ export class TasksController {
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   retryStep(@Param('id') id: string, @Param('stepId') stepId: string) {
     return this.tasksService.retryStep(id, stepId);
+  }
+
+  @Patch(':id/steps/:stepId/start')
+  @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  startStep(@Param('id') id: string, @Param('stepId') stepId: string) {
+    return this.tasksService.startStep(id, stepId);
   }
 }

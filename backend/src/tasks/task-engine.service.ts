@@ -28,8 +28,12 @@ export class TaskEngineService {
   ) {}
 
   // ── Activate a step (just-in-time assignment) ─────────────────────────────
+  // Manual steps: assign BPO + task→assigned (BPO must click "Start Review")
+  // Automatic steps: assign + step→in_progress + task→in_progress immediately
 
   async activateStep(stepInstanceId: string): Promise<void> {
+    let isAutomatic = false;
+
     await this.prisma.$transaction(async (tx) => {
       const step = await tx.stepInstance.findUnique({
         where: { id: stepInstanceId },
@@ -38,20 +42,67 @@ export class TaskEngineService {
       if (!step) throw new NotFoundException('StepInstance not found');
       if (step.status !== StepStatus.pending) return;
 
-      const assignedToId = await this.assignBpo(tx, step.stepDefinition);
+      const assignedToId = await this.assignBpo(tx, step.stepDefinition, step.taskId);
+      isAutomatic = step.stepDefinition.executionType === ExecutionType.automatic;
+
+      if (isAutomatic) {
+        await tx.stepInstance.update({
+          where: { id: stepInstanceId },
+          data: { status: StepStatus.in_progress, assignedToId, startedAt: new Date() },
+        });
+        await tx.task.update({
+          where: { id: step.taskId },
+          data: { status: TaskStatus.in_progress },
+        });
+      } else {
+        // Manual: assign BPO but keep step pending; task moves to assigned
+        await tx.stepInstance.update({
+          where: { id: stepInstanceId },
+          data: { assignedToId },
+        });
+        await tx.task.update({
+          where: { id: step.taskId },
+          data: { status: TaskStatus.assigned },
+        });
+      }
+    });
+
+    // on_start webhook only fires immediately for automatic steps
+    if (isAutomatic) {
+      const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
+      if (step) {
+        await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_start, step.taskId);
+      }
+    }
+  }
+
+  // ── BPO clicks "Start Review" ─────────────────────────────────────────────
+  // Manual step: pending → in_progress, task assigned → in_progress
+
+  async startStep(stepInstanceId: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const step = await tx.stepInstance.findUnique({
+        where: { id: stepInstanceId },
+        include: { stepDefinition: true },
+      });
+      if (!step) throw new NotFoundException('StepInstance not found');
+      if (step.status !== StepStatus.pending) {
+        throw new BadRequestException('Step must be pending to be started');
+      }
+      if (step.stepDefinition.executionType === ExecutionType.automatic) {
+        throw new BadRequestException('Automatic steps cannot be manually started');
+      }
 
       await tx.stepInstance.update({
         where: { id: stepInstanceId },
-        data: { status: StepStatus.in_progress, assignedToId },
+        data: { status: StepStatus.in_progress, startedAt: new Date() },
       });
-
       await tx.task.update({
         where: { id: step.taskId },
         data: { status: TaskStatus.in_progress },
       });
     });
 
-    // Webhook outside tx (best-effort)
     const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
     if (step) {
       await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_start, step.taskId);
@@ -70,13 +121,19 @@ export class TaskEngineService {
       throw new BadRequestException('Step must be in_progress to be completed');
     }
 
+    const now = new Date();
+    const currentPeriod = step.startedAt
+      ? Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)
+      : 0;
+
     await this.prisma.stepInstance.update({
       where: { id: stepInstanceId },
       data: {
         status: StepStatus.done,
-        completedAt: new Date(),
+        completedAt: now,
         result: result as Prisma.InputJsonValue ?? Prisma.JsonNull,
         note: note ?? null,
+        workedSeconds: (step.workedSeconds ?? 0) + currentPeriod,
       },
     });
 
@@ -94,10 +151,21 @@ export class TaskEngineService {
     const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
     if (!step) throw new NotFoundException('StepInstance not found');
 
+    const now = new Date();
+    const currentPeriod = step.startedAt
+      ? Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)
+      : 0;
+
     await this.prisma.$transaction([
       this.prisma.stepInstance.update({
         where: { id: stepInstanceId },
-        data: { status: StepStatus.failed, failureReason, note: note ?? null, completedAt: new Date() },
+        data: {
+          status: StepStatus.failed,
+          failureReason,
+          note: note ?? null,
+          completedAt: now,
+          workedSeconds: (step.workedSeconds ?? 0) + currentPeriod,
+        },
       }),
       this.prisma.task.update({
         where: { id: step.taskId },
@@ -123,10 +191,25 @@ export class TaskEngineService {
       throw new BadRequestException('Step must be in_progress to be blocked');
     }
 
-    await this.prisma.stepInstance.update({
-      where: { id: stepInstanceId },
-      data: { status: StepStatus.blocked, note: note ?? null },
-    });
+    const elapsedSeconds = step.startedAt
+      ? Math.floor((Date.now() - step.startedAt.getTime()) / 1000)
+      : 0;
+
+    await this.prisma.$transaction([
+      this.prisma.stepInstance.update({
+        where: { id: stepInstanceId },
+        data: {
+          status: StepStatus.blocked,
+          note: note ?? null,
+          workedSeconds: (step.workedSeconds ?? 0) + elapsedSeconds,
+          startedAt: null,
+        },
+      }),
+      this.prisma.task.update({
+        where: { id: step.taskId },
+        data: { status: TaskStatus.blocked },
+      }),
+    ]);
   }
 
   // ── Retry a blocked step ──────────────────────────────────────────────────
@@ -137,10 +220,16 @@ export class TaskEngineService {
     if (step.status !== StepStatus.blocked) {
       throw new BadRequestException('Only blocked steps can be retried');
     }
-    await this.prisma.stepInstance.update({
-      where: { id: stepInstanceId },
-      data: { status: StepStatus.in_progress, note: null },
-    });
+    await this.prisma.$transaction([
+      this.prisma.stepInstance.update({
+        where: { id: stepInstanceId },
+        data: { status: StepStatus.in_progress, note: null, startedAt: new Date() },
+      }),
+      this.prisma.task.update({
+        where: { id: step.taskId },
+        data: { status: TaskStatus.in_progress },
+      }),
+    ]);
   }
 
   // ── Advance task to next step ─────────────────────────────────────────────
@@ -161,16 +250,27 @@ export class TaskEngineService {
 
     // If automatic, publish to queue (queue module handles this)
     if (nextStep.stepDefinition.executionType === ExecutionType.automatic) {
-      this.emitAutoStep(nextStep.id, nextStep.stepDefinition.handlerId!);
+      this.emitAutoStep(nextStep.id, nextStep.stepDefinition.handlerId!, taskId);
     }
   }
 
   // Overridden by QueueModule to publish the job (avoids circular dep)
-  emitAutoStep: (stepInstanceId: string, handlerId: string) => void = () => undefined;
+  emitAutoStep: (stepInstanceId: string, handlerId: string, taskId: string) => void = () => undefined;
 
   // ── Just-in-time assignment ───────────────────────────────────────────────
 
-  private async assignBpo(tx: Tx, stepDef: { id: string; assignmentStrategy: AssignmentStrategy; weight: number }): Promise<string | undefined> {
+  private async assignBpo(
+    tx: Tx,
+    stepDef: { id: string; assignmentStrategy: AssignmentStrategy; weight: number },
+    taskId: string,
+  ): Promise<string | undefined> {
+
+    // ── Brand assignment: resolve BPO via BrandAssignmentRule ─────────────────
+    if (stepDef.assignmentStrategy === AssignmentStrategy.brand_assignment) {
+      return this.assignViaBrandRule(tx, taskId);
+    }
+
+    // ── Pool-based strategies ─────────────────────────────────────────────────
     const candidates = await tx.stepDefinitionAccount.findMany({
       where: { stepDefinitionId: stepDef.id },
     });
@@ -180,33 +280,65 @@ export class TaskEngineService {
       return candidates[0].accountId;
     }
 
-    if (stepDef.assignmentStrategy === AssignmentStrategy.round_robin) {
-      const rows = await tx.$queryRaw<{ id: string; contador_rr: number }[]>`
-        SELECT a.id, a.contador_rr
-        FROM step_definition_account sda
-        JOIN account a ON a.id = sda.account_id
-        WHERE sda.step_definition_id = ${stepDef.id}::uuid
-        ORDER BY a.contador_rr ASC
-        LIMIT 1
-        FOR UPDATE OF a
-      `;
-      if (!rows.length) return undefined;
-      await tx.account.update({ where: { id: rows[0].id }, data: { rrCounter: { increment: 1 } } });
-      return rows[0].id;
+    // round_robin (also fallback for by_weight)
+    return this.roundRobinFromStep(tx, stepDef.id);
+  }
+
+  private async assignViaBrandRule(tx: Tx, taskId: string): Promise<string | undefined> {
+    // Read ka_type and country from the task's form values
+    const formValues = await tx.formValue.findMany({
+      where: { taskId },
+      include: { formField: { select: { tipo: true } } },
+    });
+
+    const kaTypeValue = formValues.find(fv => fv.formField?.tipo === 'select_ka_type')?.valor;
+    const countryValue = formValues.find(fv => fv.formField?.tipo === 'select_country')?.valor;
+
+    if (!kaTypeValue || !countryValue) {
+      this.logger.warn(`brand_assignment: task ${taskId} missing ka_type or country form values`);
+      return undefined;
     }
 
-    // by_weight: lowest workload, increment by step weight
+    const rule = await tx.brandAssignmentRule.findUnique({
+      where: { kaType_country: { kaType: kaTypeValue as any, country: countryValue as any } },
+      include: { candidates: true },
+    });
+
+    if (!rule || !rule.candidates.length) {
+      this.logger.warn(`brand_assignment: no rule or candidates for ${kaTypeValue} × ${countryValue}`);
+      return undefined;
+    }
+
+    if (rule.modo === 'fixed') {
+      return rule.candidates[0].accountId;
+    }
+
+    // round_robin over BrandAssignmentRule pool (atomic, uses account.rrCounter)
+    const accountIds = rule.candidates.map(c => c.accountId);
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM account
+      WHERE id = ANY(${accountIds}::uuid[])
+      ORDER BY contador_rr ASC
+      LIMIT 1
+      FOR UPDATE
+    `;
+    if (!rows.length) return undefined;
+    await tx.account.update({ where: { id: rows[0].id }, data: { rrCounter: { increment: 1 } } });
+    return rows[0].id;
+  }
+
+  private async roundRobinFromStep(tx: Tx, stepDefId: string): Promise<string | undefined> {
     const rows = await tx.$queryRaw<{ id: string }[]>`
       SELECT a.id
       FROM step_definition_account sda
       JOIN account a ON a.id = sda.account_id
-      WHERE sda.step_definition_id = ${stepDef.id}::uuid
-      ORDER BY a.carga ASC
+      WHERE sda.step_definition_id = ${stepDefId}::uuid
+      ORDER BY a.contador_rr ASC
       LIMIT 1
       FOR UPDATE OF a
     `;
     if (!rows.length) return undefined;
-    await tx.account.update({ where: { id: rows[0].id }, data: { workload: { increment: stepDef.weight } } });
+    await tx.account.update({ where: { id: rows[0].id }, data: { rrCounter: { increment: 1 } } });
     return rows[0].id;
   }
 

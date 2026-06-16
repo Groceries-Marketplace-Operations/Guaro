@@ -15,6 +15,10 @@ import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { BpoManagementModule } from './bpo-management/bpo-management.module';
 import { AccountsModule } from './accounts/accounts.module';
+import { AppConfigModule } from './app-config/app-config.module';
+import { DevModule } from './dev/dev.module';
+
+const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
 
 @Module({
   imports: [
@@ -34,6 +38,8 @@ import { AccountsModule } from './accounts/accounts.module';
     SchedulerModule,
     BpoManagementModule,
     AccountsModule,
+    AppConfigModule,
+    ...devModules,
   ],
 })
 export class AppModule {}

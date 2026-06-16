@@ -184,10 +184,10 @@ export default function BpoManagement() {
                     <td>
                       <span style={{
                         fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                        background: b.account.workload > 5 ? 'var(--red-bg)' : b.account.workload > 2 ? 'var(--amber-bg)' : 'var(--green-bg)',
-                        color: b.account.workload > 5 ? 'var(--red)' : b.account.workload > 2 ? '#B54708' : '#027A48',
+                        background: b.stepsInProgress > 5 ? 'var(--red-bg)' : b.stepsInProgress > 2 ? 'var(--amber-bg)' : 'var(--green-bg)',
+                        color: b.stepsInProgress > 5 ? 'var(--red)' : b.stepsInProgress > 2 ? '#B54708' : '#027A48',
                       }}>
-                        {b.account.workload}
+                        {b.stepsInProgress}
                       </span>
                     </td>
                   </tr>
@@ -273,7 +273,7 @@ export default function BpoManagement() {
           </div>
 
           <div style={{ display: 'flex', gap: 16, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-            <span>Workload score: <strong style={{ color: 'var(--text-primary)' }}>{selected.account.workload}</strong></span>
+            <span>Active steps: <strong style={{ color: 'var(--text-primary)' }}>{selected.stepsInProgress}</strong></span>
             <span>Round-robin counter: <strong style={{ color: 'var(--text-primary)' }}>{selected.account.rrCounter}</strong></span>
           </div>
         </Modal>

@@ -37,6 +37,10 @@ export class AuthService {
     });
   }
 
+  findAccountById(id: string): Promise<Account | null> {
+    return this.prisma.account.findUnique({ where: { id, deletedAt: null } });
+  }
+
   issueToken(account: Account): string {
     const payload: JwtPayload = {
       sub: account.id,

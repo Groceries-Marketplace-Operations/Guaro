@@ -78,24 +78,37 @@ export class InvitationsService {
     return { id: account.id, name: account.name, roles: account.roles };
   }
 
-  async findAll(requesterId: string, requesterRoles: AccountRole[], requesterSectionId: string | null) {
+  async findAll(
+    requesterId: string,
+    requesterRoles: AccountRole[],
+    requesterSectionId: string | null,
+    { page = 1, limit = 25 }: { page?: number; limit?: number } = {},
+  ) {
     const where = requesterRoles.includes(AccountRole.super_admin)
       ? {}
       : { createdById: requesterId };
 
-    return this.prisma.invitation.findMany({
-      where,
-      select: {
-        id: true,
-        rol: true,
-        sectionId: true,
-        usedAt: true,
-        expiresAt: true,
-        createdAt: true,
-        account: { select: { id: true, name: true, email: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.prisma.invitation.findMany({
+        where,
+        select: {
+          id: true,
+          rol: true,
+          sectionId: true,
+          section: { select: { id: true, name: true } },
+          usedAt: true,
+          expiresAt: true,
+          createdAt: true,
+          account: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.invitation.count({ where }),
+    ]);
+    return { data, total, page, limit };
   }
 
   async delete(id: string, requesterId: string, requesterRoles: AccountRole[]) {

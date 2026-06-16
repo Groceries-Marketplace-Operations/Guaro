@@ -15,7 +15,13 @@ const TASK_INCLUDE = {
       assignedTo: { select: { id: true, name: true, email: true } },
     },
   },
-  formValues: { include: { formField: { select: { id: true, label: true, tipo: true } } } },
+  formValues: {
+    include: {
+      formField: { select: { id: true, label: true, tipo: true } },
+      brand: { select: { id: true, brandId: true, brandName: true } },
+      shop: { select: { id: true, shopId: true, appShopId: true } },
+    },
+  },
   taskShops: { include: { shop: { select: { id: true, shopId: true, appShopId: true } } } },
 } as const;
 
@@ -40,11 +46,15 @@ export class TasksService {
       throw new BadRequestException('This TaskType is not schedulable');
     }
 
+    // Derive brandId from a select_brand formValue if not provided directly
+    const resolvedBrandId =
+      dto.brandId ?? dto.formValues?.find((fv) => fv.brandId)?.brandId ?? null;
+
     const task = await this.prisma.$transaction(async (tx) => {
       const created = await tx.task.create({
         data: {
           taskTypeId: dto.taskTypeId,
-          brandId: dto.brandId ?? null,
+          brandId: resolvedBrandId,
           createdById,
           status: isScheduled ? TaskStatus.scheduled : TaskStatus.pending,
           scheduledStart: dto.scheduledStart ? new Date(dto.scheduledStart) : null,
@@ -89,7 +99,7 @@ export class TasksService {
       if (firstStep) {
         await this.engine.activateStep(firstStep.id);
         if (firstStep.stepDefinition.executionType === ExecutionType.automatic) {
-          this.engine.emitAutoStep(firstStep.id, firstStep.stepDefinition.handlerId!);
+          this.engine.emitAutoStep(firstStep.id, firstStep.stepDefinition.handlerId!, task.id);
         }
       }
     }
@@ -108,20 +118,35 @@ export class TasksService {
     const { page = 1, limit = 25, q, status, brandId } = filters;
     const skip = (page - 1) * limit;
 
-    const where: Prisma.TaskWhereInput = { deletedAt: null };
-    if (roles.includes(AccountRole.user) && !roles.includes(AccountRole.admin) && !roles.includes(AccountRole.super_admin)) {
-      where.createdById = accountId;
-    } else if (roles.includes(AccountRole.bpo) && !roles.includes(AccountRole.admin) && !roles.includes(AccountRole.super_admin)) {
-      where.stepInstances = { some: { assignedToId: accountId } };
-    } else if (roles.includes(AccountRole.admin) && !roles.includes(AccountRole.super_admin)) {
-      where.taskType = { sectionId: sectionId ?? undefined };
+    const AND: Prisma.TaskWhereInput[] = [{ deletedAt: null }];
+
+    // Role-based visibility
+    const isSuperAdmin = roles.includes(AccountRole.super_admin);
+    const isAdmin      = roles.includes(AccountRole.admin);
+    const isBpo        = roles.includes(AccountRole.bpo);
+    const isUser       = roles.includes(AccountRole.user);
+
+    if (!isSuperAdmin && !isAdmin) {
+      if (isUser && !isBpo) {
+        AND.push({ createdById: accountId });
+      } else if (isBpo && !isUser) {
+        AND.push({ stepInstances: { some: { assignedToId: accountId } } });
+      }
+      // user+bpo or director: no additional restriction
+    } else if (isAdmin && !isSuperAdmin) {
+      AND.push({ taskType: { sectionId: sectionId ?? undefined } });
     }
-    if (status) where.status = status;
-    if (brandId) where.brandId = brandId;
-    if (q) where.OR = [
-      { brand:    { brandName: { contains: q, mode: 'insensitive' } } },
-      { taskType: { name:      { contains: q, mode: 'insensitive' } } },
-    ];
+
+    if (status)  AND.push({ status });
+    if (brandId) AND.push({ brandId });
+    if (q) AND.push({
+      OR: [
+        { brand:    { brandName: { contains: q, mode: 'insensitive' } } },
+        { taskType: { name:      { contains: q, mode: 'insensitive' } } },
+      ],
+    });
+
+    const where: Prisma.TaskWhereInput = { AND };
 
     const [data, total] = await Promise.all([
       this.prisma.task.findMany({ where, include: TASK_INCLUDE, orderBy: { createdAt: 'desc' }, skip, take: limit }),
@@ -159,6 +184,12 @@ export class TasksService {
   async retryStep(taskId: string, stepId: string) {
     await this.assertStepOfTask(taskId, stepId);
     await this.engine.retryStep(stepId);
+    return this.findOne(taskId);
+  }
+
+  async startStep(taskId: string, stepId: string) {
+    await this.assertStepOfTask(taskId, stepId);
+    await this.engine.startStep(stepId);
     return this.findOne(taskId);
   }
 

@@ -36,7 +36,7 @@ export default function BpoQueue() {
   });
 
   const activeStep = (t: ActiveTask) =>
-    t.stepInstances?.find(s => s.status === 'in_progress' || s.status === 'blocked');
+    t.stepInstances?.find(s => s.status === 'in_progress' || s.status === 'blocked' || s.status === 'pending');
 
   return (
     <>
@@ -82,18 +82,17 @@ export default function BpoQueue() {
               <tr>
                 <th>Brand</th>
                 <th>Task Type</th>
-                <th>Task</th>
+                <th>Task Status</th>
                 <th>Current Step</th>
-                <th>Step</th>
                 <th>Last Update</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={6} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                <tr><td colSpan={5} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>Loading…</td></tr>
               )}
               {!isLoading && tasks.length === 0 && (
-                <tr><td colSpan={6}>
+                <tr><td colSpan={5}>
                   <div className="empty-state">
                     <h3>Queue is empty</h3>
                     <p>No tasks assigned to you right now.</p>
@@ -107,8 +106,14 @@ export default function BpoQueue() {
                     <td style={{ fontWeight: 600 }}>{t.brand?.brandName ?? '—'}</td>
                     <td className="text-muted">{t.taskType?.name ?? '—'}</td>
                     <td><StatusBadge status={t.status} /></td>
-                    <td>{step?.stepDefinition?.name ?? <span className="text-muted">—</span>}</td>
-                    <td>{step ? <StatusBadge status={step.status} /> : <span className="text-muted">—</span>}</td>
+                    <td>
+                      {step?.stepDefinition?.name
+                        ? <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {step.stepDefinition.name}
+                            <StatusBadge status={step.status} />
+                          </span>
+                        : <span className="text-muted">—</span>}
+                    </td>
                     <td className="text-sm text-muted">{new Date(t.updatedAt).toLocaleString()}</td>
                   </tr>
                 );

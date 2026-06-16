@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { taskTypesApi, handlersApi, webhooksApi, accountsApi } from '../../api';
-import type { TaskType, StepDefinition, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account } from '../../types';
+import { useAuth } from '../../auth/AuthContext';
+import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account } from '../../types';
 
 const PlusIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -18,10 +19,17 @@ const XIcon = () => (
   </svg>
 );
 
+const EditIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="13" height="13">
+    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+  </svg>
+);
+
 const EXECUTION_TYPES: ExecutionType[] = ['manual_internal', 'manual_external', 'automatic'];
-const STRATEGIES: AssignmentStrategy[] = ['fixed', 'round_robin', 'by_weight'];
+const STRATEGIES: AssignmentStrategy[] = ['fixed', 'round_robin', 'brand_assignment', 'by_weight'];
 const WH_EVENTS: WebhookEvent[] = ['on_start', 'on_complete', 'on_fail'];
-const FIELD_TYPES = ['texto', 'numero', 'link', 'link_spreadsheet', 'select', 'select_brand', 'select_store'];
+const FIELD_TYPES = ['texto', 'numero', 'link', 'link_spreadsheet', 'select', 'select_brand', 'select_store', 'select_ka_type', 'select_country'];
 
 function execLabel(t: ExecutionType) {
   return t === 'manual_internal' ? 'Manual Internal' : t === 'manual_external' ? 'Manual External' : 'Automatic';
@@ -40,18 +48,61 @@ function errMsg(ex: unknown) {
   return Array.isArray(msg) ? msg.join(', ') : (msg ?? 'Unexpected error');
 }
 
+const EMPTY_STEP_FORM = { name: '', order: 1, executionType: 'manual_internal' as ExecutionType, assignmentStrategy: 'round_robin' as AssignmentStrategy, handlerId: '' };
+const EMPTY_FIELD_FORM = { label: '', type: 'texto', required: true, multiple: false, order: 1, options: [] as string[], filteredById: '' };
+
 export default function TaskTypeDetail() {
   const { id } = useParams<{ id: string }>();
+  const nav = useNavigate();
   const qc = useQueryClient();
+  const { account } = useAuth();
+  const isAdmin = account?.roles.includes('admin') ?? false;
+  const isSA    = account?.roles.includes('super_admin') ?? false;
+  const canDelete = isAdmin || isSA;
 
   // Modal open state
   const [openStep, setOpenStep] = useState(false);
+  const [stepToEdit, setStepToEdit] = useState<StepDefinition | null>(null);
+
   const [openField, setOpenField] = useState(false);
+  const [fieldToEdit, setFieldToEdit] = useState<FormField | null>(null);
+
   const [openWebhook, setOpenWebhook] = useState<StepDefinition | null>(null);
   const [openBpos, setOpenBpos] = useState<StepDefinition | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+
+  // Edit task type header
+  const [openEditTT, setOpenEditTT] = useState(false);
+  const [ttForm, setTtForm] = useState({ name: '', description: '', schedulable: false });
+
+  const openEditTaskType = () => {
+    if (!tt) return;
+    setTtForm({ name: tt.name, description: tt.description ?? '', schedulable: tt.schedulable });
+    setOpenEditTT(true);
+  };
+  const deleteTaskType = async () => {
+    if (!tt) return;
+    if (!window.confirm(`Delete "${tt.name}"? This cannot be undone. Existing tasks of this type will not be affected.`)) return;
+    try {
+      await taskTypesApi.delete(id!);
+      qc.invalidateQueries({ queryKey: ['task-types'] });
+      nav('/task-types', { replace: true });
+    } catch { /* backend returns 403 if not in section */ }
+  };
+
+  const saveTaskType = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true); setErr('');
+    try {
+      await taskTypesApi.update(id!, ttForm);
+      qc.invalidateQueries({ queryKey: ['task-type', id] });
+      qc.invalidateQueries({ queryKey: ['task-types'] });
+      setOpenEditTT(false);
+    } catch (ex) { setErr(errMsg(ex)); }
+    finally { setSaving(false); }
+  };
 
   // Drag-and-drop for steps
   const [stepDragIndex, setStepDragIndex] = useState<number | null>(null);
@@ -60,25 +111,8 @@ export default function TaskTypeDetail() {
   const [fieldDragIndex, setFieldDragIndex] = useState<number | null>(null);
   const [fieldDragOver, setFieldDragOver] = useState<number | null>(null);
 
-  // Step form
-  const [stepForm, setStepForm] = useState({
-    name: '',
-    order: 1,
-    executionType: 'manual_internal' as ExecutionType,
-    assignmentStrategy: 'round_robin' as AssignmentStrategy,
-    handlerId: '',
-  });
-
-  // Field form — uses `type` (English) which maps to `tipo` in Prisma via the DTO
-  const [fieldForm, setFieldForm] = useState({
-    label: '',
-    type: 'text',
-    required: true,
-    multiple: false,
-    order: 1,
-    options: [] as string[],
-    filteredById: '',
-  });
+  const [stepForm, setStepForm] = useState(EMPTY_STEP_FORM);
+  const [fieldForm, setFieldForm] = useState(EMPTY_FIELD_FORM);
   const [optionInput, setOptionInput] = useState('');
 
   // Webhook form
@@ -90,28 +124,95 @@ export default function TaskTypeDetail() {
   const { data: tt } = useQuery<TaskType>({ queryKey: ['task-type', id], queryFn: () => taskTypesApi.get(id!).then(r => r.data) });
   const { data: handlers = [] } = useQuery<Handler[]>({ queryKey: ['handlers'], queryFn: () => handlersApi.list().then(r => r.data) });
   const { data: webhooks = [] } = useQuery<Webhook[]>({ queryKey: ['webhooks'], queryFn: () => webhooksApi.list().then(r => r.data) });
-  const { data: bpoAccounts = [] } = useQuery<Account[]>({
+  const { data: bpoAccountsResult } = useQuery<{ data: Account[] }>({
     queryKey: ['accounts', 'bpo'],
-    queryFn: () => accountsApi.list('bpo').then(r => r.data),
+    queryFn: () => accountsApi.list({ role: 'bpo', limit: 200 }).then(r => r.data as { data: Account[] }),
     enabled: !!openBpos,
   });
+  const bpoAccounts: Account[] = bpoAccountsResult?.data ?? [];
 
   const steps = [...(tt?.stepDefinitions ?? [])].sort((a, b) => a.order - b.order);
   const fields = [...(tt?.formFields ?? [])].sort((a, b) => a.order - b.order);
-  // select_brand fields available for filteredById on select_store fields
   const brandFields = fields.filter(f => f.tipo === 'select_brand');
 
-  const addStep = async (e: React.FormEvent) => {
+  // ── Step handlers ──────────────────────────────────────────────────────────
+
+  const openAddStep = () => {
+    setStepToEdit(null);
+    setStepForm({ ...EMPTY_STEP_FORM, order: steps.length + 1 });
+    setErr('');
+    setOpenStep(true);
+  };
+
+  const openEditStep = (s: StepDefinition) => {
+    setStepToEdit(s);
+    setStepForm({
+      name: s.name,
+      order: s.order,
+      executionType: s.executionType,
+      assignmentStrategy: s.assignmentStrategy,
+      handlerId: s.handlerId ?? '',
+    });
+    setErr('');
+    setOpenStep(true);
+  };
+
+  const closeStepModal = () => {
+    setOpenStep(false);
+    setStepToEdit(null);
+  };
+
+  const saveStep = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
     try {
-      await taskTypesApi.addStep(id!, { ...stepForm, handlerId: stepForm.handlerId || undefined });
+      const payload = { ...stepForm, handlerId: stepForm.handlerId || undefined };
+      if (stepToEdit) {
+        await taskTypesApi.updateStep(id!, stepToEdit.id, payload);
+      } else {
+        await taskTypesApi.addStep(id!, payload);
+      }
       qc.invalidateQueries({ queryKey: ['task-type', id] });
-      setOpenStep(false);
-      setStepForm({ name: '', order: steps.length + 2, executionType: 'manual_internal', assignmentStrategy: 'round_robin', handlerId: '' });
+      closeStepModal();
     } catch (ex) { setErr(errMsg(ex)); } finally { setSaving(false); }
   };
 
-  const addField = async (e: React.FormEvent) => {
+  const deleteStep = async (stepId: string) => {
+    await taskTypesApi.deleteStep(id!, stepId);
+    qc.invalidateQueries({ queryKey: ['task-type', id] });
+  };
+
+  // ── Field handlers ─────────────────────────────────────────────────────────
+
+  const openAddField = () => {
+    setFieldToEdit(null);
+    setFieldForm({ ...EMPTY_FIELD_FORM, order: fields.length + 1 });
+    setOptionInput('');
+    setErr('');
+    setOpenField(true);
+  };
+
+  const openEditField = (f: FormField) => {
+    setFieldToEdit(f);
+    setFieldForm({
+      label: f.label,
+      type: f.tipo,
+      required: f.required,
+      multiple: false,
+      order: f.order,
+      options: f.options ?? [],
+      filteredById: '',
+    });
+    setOptionInput('');
+    setErr('');
+    setOpenField(true);
+  };
+
+  const closeFieldModal = () => {
+    setOpenField(false);
+    setFieldToEdit(null);
+  };
+
+  const saveField = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
     try {
       const payload: Record<string, unknown> = {
@@ -124,16 +225,25 @@ export default function TaskTypeDetail() {
         payload.options = fieldForm.options;
         payload.multiple = fieldForm.multiple;
       }
-      if (fieldForm.type === 'shop' && fieldForm.filteredById) {
+      if (fieldForm.type === 'select_store' && fieldForm.filteredById) {
         payload.filteredById = fieldForm.filteredById;
       }
-      await taskTypesApi.addField(id!, payload);
+      if (fieldToEdit) {
+        await taskTypesApi.updateField(id!, fieldToEdit.id, payload);
+      } else {
+        await taskTypesApi.addField(id!, payload);
+      }
       qc.invalidateQueries({ queryKey: ['task-type', id] });
-      setOpenField(false);
-      setFieldForm({ label: '', type: 'text', required: true, multiple: false, order: fields.length + 2, options: [], filteredById: '' });
-      setOptionInput('');
+      closeFieldModal();
     } catch (ex) { setErr(errMsg(ex)); } finally { setSaving(false); }
   };
+
+  const deleteField = async (fieldId: string) => {
+    await taskTypesApi.deleteField(id!, fieldId);
+    qc.invalidateQueries({ queryKey: ['task-type', id] });
+  };
+
+  // ── Webhook / BPO handlers ─────────────────────────────────────────────────
 
   const addWebhook = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
@@ -152,7 +262,6 @@ export default function TaskTypeDetail() {
       await taskTypesApi.addCandidate(id!, openBpos.id, candidateId);
       qc.invalidateQueries({ queryKey: ['task-type', id] });
       setCandidateId('');
-      // Re-fetch step detail in openBpos from fresh data
     } catch (ex) { setErr(errMsg(ex)); } finally { setSaving(false); }
   };
 
@@ -165,6 +274,8 @@ export default function TaskTypeDetail() {
     } catch (ex) { setErr(errMsg(ex)); } finally { setSaving(false); }
   };
 
+  // ── Options helpers ────────────────────────────────────────────────────────
+
   const addOption = () => {
     const val = optionInput.trim();
     if (!val || fieldForm.options.includes(val)) return;
@@ -175,6 +286,8 @@ export default function TaskTypeDetail() {
   const removeOption = (opt: string) => {
     setFieldForm(f => ({ ...f, options: f.options.filter(o => o !== opt) }));
   };
+
+  // ── Drag & drop ────────────────────────────────────────────────────────────
 
   const dropStep = async (toIndex: number) => {
     if (stepDragIndex === null || stepDragIndex === toIndex) {
@@ -206,16 +319,6 @@ export default function TaskTypeDetail() {
     qc.invalidateQueries({ queryKey: ['task-type', id] });
   };
 
-  const deleteStep = async (stepId: string) => {
-    await taskTypesApi.deleteStep(id!, stepId);
-    qc.invalidateQueries({ queryKey: ['task-type', id] });
-  };
-
-  const deleteField = async (fieldId: string) => {
-    await taskTypesApi.deleteField(id!, fieldId);
-    qc.invalidateQueries({ queryKey: ['task-type', id] });
-  };
-
   const toggleEvent = (ev: WebhookEvent) => {
     setWhForm(f => ({
       ...f,
@@ -223,7 +326,6 @@ export default function TaskTypeDetail() {
     }));
   };
 
-  // Get the live step data from tt (updated after mutations)
   const liveStep = openBpos ? (tt?.stepDefinitions ?? []).find(s => s.id === openBpos.id) ?? openBpos : null;
   const existingCandidateIds = new Set((liveStep?.candidates ?? []).map(c => c.account.id));
   const availableBpos = bpoAccounts.filter(a => !existingCandidateIds.has(a.id));
@@ -245,6 +347,34 @@ export default function TaskTypeDetail() {
                 Schedulable
               </span>
             )}
+            {!tt.active && (
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '4px 10px', borderRadius: 999, background: 'rgba(180,40,40,0.12)', color: 'var(--red)' }}>
+                Hidden
+              </span>
+            )}
+            <button
+              className={`btn btn-sm ${tt.active ? 'btn-ghost' : 'btn-primary'}`}
+              onClick={async () => {
+                await taskTypesApi.toggleActive(id!);
+                qc.invalidateQueries({ queryKey: ['task-type', id] });
+                qc.invalidateQueries({ queryKey: ['task-types'] });
+              }}
+            >
+              {tt.active ? 'Hide' : 'Show'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={openEditTaskType}>
+              <EditIcon /> Edit
+            </button>
+            {canDelete && (
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color: 'var(--red)' }}
+                onClick={deleteTaskType}
+                title="Delete task type"
+              >
+                Delete
+              </button>
+            )}
           </div>
         </div>
 
@@ -253,7 +383,7 @@ export default function TaskTypeDetail() {
           <div className="card">
             <div className="card-header">
               <span className="card-title">Steps ({steps.length})</span>
-              <button className="btn btn-primary btn-sm" onClick={() => { setStepForm(f => ({ ...f, order: steps.length + 1 })); setErr(''); setOpenStep(true); }}>
+              <button className="btn btn-primary btn-sm" onClick={openAddStep}>
                 <PlusIcon /> Add Step
               </button>
             </div>
@@ -284,7 +414,6 @@ export default function TaskTypeDetail() {
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                        {/* Drag handle + step number */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                           <svg viewBox="0 0 10 16" width="10" height="16" fill="var(--border)" style={{ pointerEvents: 'none' }}>
                             <circle cx="3" cy="3" r="1.2"/><circle cx="7" cy="3" r="1.2"/>
@@ -321,6 +450,9 @@ export default function TaskTypeDetail() {
                           <button className="btn btn-ghost btn-sm" onClick={() => { setErr(''); setOpenWebhook(s); setWhForm({ webhookId: '', events: [] }); }}>
                             + Webhook
                           </button>
+                          <button className="btn btn-ghost btn-sm" title="Edit step" onClick={() => openEditStep(s)}>
+                            <EditIcon />
+                          </button>
                           <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => deleteStep(s.id)}>
                             <XIcon />
                           </button>
@@ -337,7 +469,7 @@ export default function TaskTypeDetail() {
           <div className="card">
             <div className="card-header">
               <span className="card-title">Form Fields ({fields.length})</span>
-              <button className="btn btn-primary btn-sm" onClick={() => { setFieldForm(f => ({ ...f, order: fields.length + 1 })); setErr(''); setOpenField(true); }}>
+              <button className="btn btn-primary btn-sm" onClick={openAddField}>
                 <PlusIcon /> Add Field
               </button>
             </div>
@@ -370,7 +502,6 @@ export default function TaskTypeDetail() {
                         transition: 'border-color 0.1s, background 0.1s',
                       }}
                     >
-                      {/* Drag handle */}
                       <svg viewBox="0 0 10 16" width="10" height="16" fill="var(--border)" style={{ flexShrink: 0, pointerEvents: 'none' }}>
                         <circle cx="3" cy="3" r="1.2"/><circle cx="7" cy="3" r="1.2"/>
                         <circle cx="3" cy="8" r="1.2"/><circle cx="7" cy="8" r="1.2"/>
@@ -385,6 +516,9 @@ export default function TaskTypeDetail() {
                         )}
                       </div>
                       {f.required && <span style={{ fontSize: '0.65rem', fontWeight: 700, background: 'var(--red-bg)', color: 'var(--red)', padding: '1px 6px', borderRadius: 999, flexShrink: 0 }}>req</span>}
+                      <button type="button" className="btn btn-ghost btn-sm" title="Edit field" style={{ flexShrink: 0 }} onClick={() => openEditField(f)}>
+                        <EditIcon />
+                      </button>
                       <button type="button" className="btn btn-ghost btn-sm" style={{ color: 'var(--red)', flexShrink: 0 }} onClick={() => deleteField(f.id)}>
                         <XIcon />
                       </button>
@@ -397,12 +531,16 @@ export default function TaskTypeDetail() {
         </div>
       </main>
 
-      {/* Add Step Modal */}
+      {/* Add / Edit Step Modal */}
       {openStep && (
-        <Modal title="Add Step" onClose={() => setOpenStep(false)}
+        <Modal
+          title={stepToEdit ? `Edit Step — ${stepToEdit.name}` : 'Add Step'}
+          onClose={closeStepModal}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenStep(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={addStep} disabled={saving}>{saving ? 'Adding…' : 'Add Step'}</button>
+            <button className="btn btn-ghost" onClick={closeStepModal}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveStep} disabled={saving}>
+              {saving ? 'Saving…' : stepToEdit ? 'Save Changes' : 'Add Step'}
+            </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
@@ -433,10 +571,11 @@ export default function TaskTypeDetail() {
                 {STRATEGIES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
               </select>
               <p className="form-hint">
-                {stepForm.assignmentStrategy === 'fixed' ? 'One specific BPO is always assigned.' : ''}
+                {stepForm.assignmentStrategy === 'fixed' ? 'One specific BPO is always assigned (first in the candidate pool).' : ''}
                 {stepForm.assignmentStrategy === 'round_robin' ? 'Assigns to BPOs in rotation from the candidate pool.' : ''}
+                {stepForm.assignmentStrategy === 'brand_assignment' ? 'Assigns via Brand Assignment Rules (Settings). Reads KA Type + Country from the task\'s form values to find the right BPO pool.' : ''}
                 {stepForm.assignmentStrategy === 'by_weight' ? 'Assigns to the least-loaded BPO in the candidate pool.' : ''}
-                {' '}You can add BPOs to the candidate pool after saving.
+                {stepForm.assignmentStrategy !== 'brand_assignment' && !stepToEdit && ' You can add BPOs to the candidate pool after saving.'}
               </p>
             </div>
           )}
@@ -461,11 +600,12 @@ export default function TaskTypeDetail() {
           {err && <div className="error-banner">{err}</div>}
 
           <p className="form-hint" style={{ marginBottom: 12 }}>
-            Strategy: <strong>{liveStep.assignmentStrategy.replace('_', ' ')}</strong>
-            {liveStep.assignmentStrategy === 'fixed' ? ' — first candidate in the list is used.' : '.'}
+            Strategy: <strong>{liveStep.assignmentStrategy.replace(/_/g, ' ')}</strong>
+            {liveStep.assignmentStrategy === 'fixed' ? ' — first candidate in the list is used.' : ''}
+            {liveStep.assignmentStrategy === 'brand_assignment' ? ' — BPO is resolved via Brand Assignment Rules (Settings). No candidate pool needed here.' : ''}
+            {liveStep.assignmentStrategy !== 'fixed' && liveStep.assignmentStrategy !== 'brand_assignment' ? '.' : ''}
           </p>
 
-          {/* Current candidates */}
           <div style={{ marginBottom: 16 }}>
             <label className="form-label">Current pool</label>
             {(liveStep.candidates?.length ?? 0) === 0 ? (
@@ -492,7 +632,6 @@ export default function TaskTypeDetail() {
             )}
           </div>
 
-          {/* Add BPO */}
           <div className="form-group">
             <label className="form-label">Add BPO</label>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -513,12 +652,16 @@ export default function TaskTypeDetail() {
         </Modal>
       )}
 
-      {/* Add Form Field Modal */}
+      {/* Add / Edit Form Field Modal */}
       {openField && (
-        <Modal title="Add Form Field" onClose={() => setOpenField(false)}
+        <Modal
+          title={fieldToEdit ? `Edit Field — ${fieldToEdit.label}` : 'Add Form Field'}
+          onClose={closeFieldModal}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenField(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={addField} disabled={saving}>{saving ? 'Adding…' : 'Add Field'}</button>
+            <button className="btn btn-ghost" onClick={closeFieldModal}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveField} disabled={saving}>
+              {saving ? 'Saving…' : fieldToEdit ? 'Save Changes' : 'Add Field'}
+            </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
@@ -547,7 +690,6 @@ export default function TaskTypeDetail() {
             <label htmlFor="req" style={{ fontSize: '0.83rem', cursor: 'pointer' }}>Required</label>
           </div>
 
-          {/* Select-specific options */}
           {fieldForm.type === 'select' && (
             <>
               <div className="form-check" style={{ marginBottom: 12 }}>
@@ -584,7 +726,6 @@ export default function TaskTypeDetail() {
             </>
           )}
 
-          {/* select_store — filteredById */}
           {fieldForm.type === 'select_store' && brandFields.length > 0 && (
             <div className="form-group">
               <label className="form-label">Filter stores by brand field</label>
@@ -597,10 +738,15 @@ export default function TaskTypeDetail() {
             </div>
           )}
 
-          {/* Info for brand/store picker fields */}
           {(fieldForm.type === 'select_brand' || fieldForm.type === 'select_store') && (
             <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--blue-bg)', border: '1px solid var(--blue)', fontSize: '0.78rem', color: 'var(--blue)' }}>
               <strong>{fieldForm.type === 'select_brand' ? 'Brand' : 'Store'} picker</strong> — when someone fills this task, the field renders a live {fieldForm.type === 'select_brand' ? 'brand' : 'store'} dropdown populated from the database. No extra configuration needed here.
+            </div>
+          )}
+
+          {(fieldForm.type === 'select_ka_type' || fieldForm.type === 'select_country') && (
+            <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--orange-muted)', border: '1px solid var(--orange)', fontSize: '0.78rem', color: 'var(--orange)' }}>
+              <strong>{fieldForm.type === 'select_ka_type' ? 'KA Type' : 'Country'} catalog</strong> — dropdown populated from the active values in Settings → Catalog. Required for <em>brand_assignment</em> strategy to work.
             </div>
           )}
         </Modal>
@@ -637,6 +783,36 @@ export default function TaskTypeDetail() {
               ))}
             </div>
           </div>
+        </Modal>
+      )}
+
+      {/* Edit Task Type Modal */}
+      {openEditTT && (
+        <Modal title="Edit Task Type" onClose={() => setOpenEditTT(false)}
+          footer={<>
+            <button className="btn btn-ghost" onClick={() => setOpenEditTT(false)}>Cancel</button>
+            <button className="btn btn-primary" form="edit-tt-form" type="submit" disabled={saving || !ttForm.name.trim()}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </>}
+        >
+          {err && <div className="error-banner">{err}</div>}
+          <form id="edit-tt-form" onSubmit={saveTaskType}>
+            <div className="form-group">
+              <label className="form-label">Name</label>
+              <input className="form-input" value={ttForm.name} onChange={e => setTtForm(f => ({ ...f, name: e.target.value }))} required />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Description</label>
+              <textarea className="form-textarea" rows={3} value={ttForm.description} onChange={e => setTtForm(f => ({ ...f, description: e.target.value }))} />
+            </div>
+            <div className="form-check">
+              <input type="checkbox" id="tt-schedulable" checked={ttForm.schedulable} onChange={e => setTtForm(f => ({ ...f, schedulable: e.target.checked }))} />
+              <label htmlFor="tt-schedulable" style={{ fontSize: '0.83rem', cursor: 'pointer' }}>
+                Schedulable — users can set a start/end window when creating a task
+              </label>
+            </div>
+          </form>
         </Modal>
       )}
     </>

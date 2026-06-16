@@ -1,16 +1,19 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
+import Paginator from '../../components/ui/Paginator';
 import { taskTypesApi, sectionsApi } from '../../api';
-import type { TaskType, Section } from '../../types';
+import type { TaskType, Section, Paginated } from '../../types';
 
 const PlusIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
     <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
   </svg>
 );
+
+const LIMIT = 50;
 
 export default function TaskTypesList() {
   const nav = useNavigate();
@@ -19,11 +22,24 @@ export default function TaskTypesList() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const [form, setForm] = useState({ name: '', description: '', sectionId: '', schedulable: false });
+  const [q, setQ] = useState('');
+  const [dq, setDq] = useState('');
+  const [page, setPage] = useState(1);
 
-  const { data: types = [], isLoading } = useQuery<TaskType[]>({
-    queryKey: ['task-types'],
-    queryFn: () => taskTypesApi.list().then(r => r.data),
+  useEffect(() => {
+    const t = setTimeout(() => { setDq(q); setPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  const params = { page, limit: LIMIT, ...(dq && { q: dq }) };
+
+  const { data: result, isLoading } = useQuery<Paginated<TaskType>>({
+    queryKey: ['task-types', params],
+    queryFn: () => taskTypesApi.list(params).then(r => r.data as Paginated<TaskType>),
   });
+
+  const types = result?.data ?? [];
+  const total = result?.total ?? 0;
   const { data: sections = [] } = useQuery<Section[]>({
     queryKey: ['sections'],
     queryFn: () => sectionsApi.list().then(r => r.data),
@@ -49,21 +65,32 @@ export default function TaskTypesList() {
         <div className="page-header">
           <div className="page-header-info">
             <h1>Task Types</h1>
-            <p>Workflow templates for your operations</p>
+            <p>{total} workflow template{total !== 1 ? 's' : ''}</p>
           </div>
           <button className="btn btn-primary" onClick={() => setOpen(true)}>
             <PlusIcon /> New Task Type
           </button>
         </div>
 
+        <div className="toolbar" style={{ marginBottom: 16 }}>
+          <input
+            className="form-input"
+            placeholder="Search task types…"
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            style={{ maxWidth: 280 }}
+          />
+        </div>
+
         {isLoading ? (
           <p className="text-muted">Loading…</p>
         ) : types.length === 0 ? (
           <div className="empty-state">
-            <h3>No task types yet</h3>
-            <p>Create a task type to define a workflow for your team.</p>
+            <h3>No task types found</h3>
+            <p>{dq ? 'Try a different search.' : 'Create a task type to define a workflow for your team.'}</p>
           </div>
         ) : (
+          <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
             {types.map(t => (
               <div key={t.id} className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.1s' }}
@@ -72,17 +99,24 @@ export default function TaskTypesList() {
                 onMouseOut={e => (e.currentTarget.style.boxShadow = 'none')}
               >
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{t.name}</div>
-                  {t.schedulable && (
-                    <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue)' }}>
-                      Schedulable
-                    </span>
-                  )}
+                  <div style={{ fontWeight: 700, fontSize: '0.95rem', color: t.active === false ? 'var(--text-muted)' : undefined }}>{t.name}</div>
+                  <div style={{ display: 'flex', gap: 5 }}>
+                    {t.schedulable && (
+                      <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue)' }}>
+                        Schedulable
+                      </span>
+                    )}
+                    {t.active === false && (
+                      <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'rgba(180,40,40,0.12)', color: 'var(--red)' }}>
+                        Hidden
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {t.description && <p className="text-muted text-sm">{t.description}</p>}
                 <div style={{ marginTop: 12, display: 'flex', gap: 16, fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                  <span>{t.stepDefinitions?.length ?? 0} steps</span>
-                  <span>{t.formFields?.length ?? 0} fields</span>
+                  <span>{t._count?.stepDefinitions ?? t.stepDefinitions?.length ?? 0} steps</span>
+                  <span>{t._count?.formFields ?? t.formFields?.length ?? 0} fields</span>
                   <span>{t._count?.tasks ?? 0} tasks</span>
                 </div>
                 <div style={{ marginTop: 8, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
@@ -91,6 +125,8 @@ export default function TaskTypesList() {
               </div>
             ))}
           </div>
+          <Paginator page={page} total={total} limit={LIMIT} onChange={setPage} />
+          </>
         )}
       </main>
 

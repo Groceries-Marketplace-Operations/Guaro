@@ -38,7 +38,7 @@ export class SchedulerService {
         if (firstStep) {
           await this.engine.activateStep(firstStep.id);
           if (firstStep.stepDefinition.executionType === ExecutionType.automatic) {
-            this.engine.emitAutoStep(firstStep.id, firstStep.stepDefinition.handlerId!);
+            this.engine.emitAutoStep(firstStep.id, firstStep.stepDefinition.handlerId!, task.id);
           }
         }
       } catch (err) {

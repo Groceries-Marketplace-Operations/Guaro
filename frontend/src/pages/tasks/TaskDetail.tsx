@@ -5,7 +5,8 @@ import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { tasksApi } from '../../api';
-import type { Task, StepInstance, StepStatus } from '../../types';
+import { useAuth } from '../../auth/AuthContext';
+import type { Task, StepInstance, StepStatus, FormValue } from '../../types';
 
 const CheckIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -30,19 +31,35 @@ const RefreshIcon = () => (
   </svg>
 );
 
+const PlayIcon = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
+    <polygon points="5 3 19 12 5 21 5 3"/>
+  </svg>
+);
+
 type ActionType = 'complete' | 'block' | 'fail' | null;
+
+function formValueDisplay(fv: FormValue): string {
+  if (fv.brand) return `${fv.brand.brandName} (${fv.brand.brandId})`;
+  if (fv.shop) return `${fv.shop.shopId} / ${fv.shop.appShopId}`;
+  return fv.valor ?? '—';
+}
 
 function pipeClass(status: StepStatus, isCurrent: boolean): string {
   if (status === 'done') return 'ps-done';
   if (status === 'failed') return 'ps-failed';
   if (status === 'blocked') return 'ps-blocked';
-  if (isCurrent) return 'ps-active';
+  if (status === 'in_progress' || isCurrent) return 'ps-active';
   return '';
 }
 
 export default function TaskDetail() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
+  const { account } = useAuth();
+  const roles = account?.roles ?? [];
+  const canActOnStep = roles.some(r => r === 'bpo' || r === 'admin' || r === 'super_admin');
+
   const [action, setAction] = useState<ActionType>(null);
   const [activeStep, setActiveStep] = useState<StepInstance | null>(null);
   const [note, setNote] = useState('');
@@ -76,6 +93,17 @@ export default function TaskDetail() {
     qc.invalidateQueries({ queryKey: ['task', id] });
   };
 
+  const handleStart = async (step: StepInstance) => {
+    setSaving(true); setErr('');
+    try {
+      await tasksApi.startStep(id!, step.id);
+      qc.invalidateQueries({ queryKey: ['task', id] });
+    } catch (ex: unknown) {
+      const e = ex as { response?: { data?: { message?: string } } };
+      setErr(e.response?.data?.message ?? 'Error starting step');
+    } finally { setSaving(false); }
+  };
+
   if (isLoading) return (
     <>
       <Topbar breadcrumb={[{ label: 'Tasks', href: '/tasks' }, { label: 'Loading…' }]} />
@@ -84,7 +112,7 @@ export default function TaskDetail() {
   );
   if (!task) return null;
 
-  const steps = [...(task.stepInstances ?? [])].sort((a, b) => a.order - b.order);
+  const steps = [...(task.stepInstances ?? [])].sort((a, b) => (a.stepDefinition?.order ?? 0) - (b.stepDefinition?.order ?? 0));
 
   return (
     <>
@@ -131,7 +159,18 @@ export default function TaskDetail() {
                     <td><StatusBadge status={s.status} /></td>
                     <td className="text-muted text-sm">{s.note ?? '—'}</td>
                     <td>
-                      {s.status === 'in_progress' && s.stepDefinition?.executionType !== 'automatic' && (
+                      {canActOnStep && s.status === 'pending' && s.stepDefinition?.executionType !== 'automatic' &&
+                        (s.assignedToId === account?.id || roles.some(r => r === 'admin' || r === 'super_admin')) && (
+                        <button
+                          className="btn btn-sm btn-primary"
+                          style={{ gap: 5 }}
+                          disabled={saving}
+                          onClick={() => handleStart(s)}
+                        >
+                          <PlayIcon /> Start Review
+                        </button>
+                      )}
+                      {canActOnStep && s.status === 'in_progress' && s.stepDefinition?.executionType !== 'automatic' && (
                         <div className="flex gap-2">
                           <button className="btn btn-sm btn-primary" title="Complete"
                             onClick={() => { setActiveStep(s); setAction('complete'); }}>
@@ -147,7 +186,7 @@ export default function TaskDetail() {
                           </button>
                         </div>
                       )}
-                      {s.status === 'blocked' && (
+                      {canActOnStep && s.status === 'blocked' && (
                         <div className="flex gap-2">
                           <button className="btn btn-sm btn-primary" title="Retry"
                             onClick={() => handleRetry(s)}>
@@ -166,6 +205,20 @@ export default function TaskDetail() {
             </table>
           </div>
         </div>
+
+        {task.formValues && task.formValues.length > 0 && (
+          <div className="card mt-2">
+            <div className="card-header"><span className="card-title">Form Inputs</span></div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: '0 16px 16px' }}>
+              {task.formValues.map((fv) => (
+                <div key={fv.id}>
+                  <div className="text-sm text-muted">{fv.formField?.label ?? fv.formFieldId}</div>
+                  <div style={{ fontWeight: 500, marginTop: 2 }}>{formValueDisplay(fv)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="card mt-2" style={{ background: 'var(--surface-2)' }}>
           <div className="card-header"><span className="card-title">Details</span></div>

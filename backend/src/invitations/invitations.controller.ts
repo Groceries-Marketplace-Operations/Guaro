@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, DefaultValuePipe, Get, HttpCode, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { AccountRole } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
@@ -23,8 +23,12 @@ export class InvitationsController {
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(AccountRole.admin, AccountRole.super_admin)
-  findAll(@CurrentUser() user: JwtUser) {
-    return this.invitationsService.findAll(user.id, user.roles, user.sectionId);
+  findAll(
+    @CurrentUser() user: JwtUser,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(25), ParseIntPipe) limit: number,
+  ) {
+    return this.invitationsService.findAll(user.id, user.roles, user.sectionId, { page, limit });
   }
 
   @Delete(':id')

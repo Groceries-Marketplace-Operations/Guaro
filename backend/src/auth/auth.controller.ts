@@ -20,14 +20,16 @@ export class AuthController {
   @UseGuards(AuthGuard('google'))
   async googleCallback(@Req() req: { user: Parameters<AuthService['issueToken']>[0] }, @Res() res: Response) {
     const token = this.authService.issueToken(req.user);
-    // In production, redirect to frontend with token as query param or cookie.
-    res.json({ access_token: token });
+    const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/auth/callback?token=${token}`);
   }
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
-  me(@CurrentUser() user: JwtUser) {
-    return user;
+  async me(@CurrentUser() user: JwtUser) {
+    const account = await this.authService.findAccountById(user.id);
+    if (!account) return user;
+    return { id: account.id, name: account.name, email: account.email, roles: account.roles, sectionId: account.sectionId };
   }
 
   // Only available in development — issues JWT by email without going through Google

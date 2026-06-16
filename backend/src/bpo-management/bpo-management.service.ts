@@ -9,22 +9,23 @@ export class BpoManagementService {
   // ── Active tasks for authenticated BPO ───────────────────────────────────
 
   myActiveTasks(accountId: string) {
+    // Show steps assigned to this BPO regardless of whether they clicked Start
+    const activeStepWhere = {
+      assignedToId: accountId,
+      status: { in: [StepStatus.pending, StepStatus.in_progress, StepStatus.blocked] as StepStatus[] },
+    };
+
     return this.prisma.task.findMany({
       where: {
         deletedAt: null,
-        status: { in: [TaskStatus.in_progress, TaskStatus.assigned] },
-        stepInstances: {
-          some: {
-            assignedToId: accountId,
-            status: { in: [StepStatus.in_progress, StepStatus.blocked] },
-          },
-        },
+        status: { notIn: [TaskStatus.done, TaskStatus.failed, TaskStatus.scheduled] },
+        stepInstances: { some: activeStepWhere },
       },
       include: {
         taskType: { select: { id: true, name: true } },
         brand: { select: { id: true, brandName: true, country: true } },
         stepInstances: {
-          where: { assignedToId: accountId, status: { in: [StepStatus.in_progress, StepStatus.blocked] } },
+          where: activeStepWhere,
           include: { stepDefinition: { select: { name: true, order: true, executionType: true } } },
         },
       },
@@ -115,15 +116,15 @@ export class BpoManagementService {
         where: { assignedToId: accountId, status: StepStatus.failed },
       }),
       this.prisma.stepInstance.count({
-        where: { assignedToId: accountId, status: { in: [StepStatus.in_progress, StepStatus.blocked] } },
+        where: { assignedToId: accountId, status: { in: [StepStatus.pending, StepStatus.in_progress, StepStatus.blocked] } },
       }),
     ]);
 
-    // Average completion time in hours
+    // Average active work time (excludes blocked periods)
     const avgResult = await this.prisma.$queryRaw<{ avg_hours: number | null }[]>`
-      SELECT EXTRACT(EPOCH FROM AVG(completado_en - created_at)) / 3600 AS avg_hours
+      SELECT AVG(worked_seconds) / 3600.0 AS avg_hours
       FROM step_instance
-      WHERE asignado_id = ${accountId}::uuid AND estado = 'done'
+      WHERE asignado_id = ${accountId}::uuid AND estado = 'done' AND worked_seconds IS NOT NULL
     `;
 
     return {

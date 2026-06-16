@@ -9,8 +9,11 @@ import type { Task, TaskStatus, Paginated } from '../../types';
 
 const STATUSES: { value: TaskStatus | ''; label: string }[] = [
   { value: '', label: 'All' },
+  { value: 'scheduled', label: 'Scheduled' },
   { value: 'pending', label: 'Pending' },
+  { value: 'assigned', label: 'Assigned' },
   { value: 'in_progress', label: 'In Progress' },
+  { value: 'blocked', label: 'Blocked' },
   { value: 'failed', label: 'Failed' },
   { value: 'done', label: 'Done' },
 ];
@@ -49,7 +52,10 @@ export default function TasksList() {
   const total = result?.total ?? 0;
 
   const activeStepFor = (t: Task) => {
-    const active = t.stepInstances?.find(s => s.status === 'in_progress' || s.status === 'blocked');
+    const sorted = [...(t.stepInstances ?? [])].sort(
+      (a, b) => (a.stepDefinition?.order ?? 0) - (b.stepDefinition?.order ?? 0),
+    );
+    const active = sorted.find(s => s.status === 'pending' || s.status === 'in_progress' || s.status === 'blocked');
     return active?.stepDefinition?.name ?? null;
   };
 

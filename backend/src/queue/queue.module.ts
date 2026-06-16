@@ -6,7 +6,11 @@ import { Queue } from 'bullmq';
 import { TasksModule } from '../tasks/tasks.module';
 import { TaskEngineService } from '../tasks/task-engine.service';
 import { HandlerProcessor } from './handler.processor';
+import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
+
+// Register all concrete handler implementations
+import './handlers/index';
 
 @Module({
   imports: [
@@ -28,6 +32,8 @@ import { PrismaService } from '../prisma/prisma.service';
     }),
     BullModule.registerQueue({ name: 'handlers' }),
     TasksModule,
+    PrismaModule,
+    ConfigModule,
   ],
   providers: [HandlerProcessor],
 })
@@ -39,13 +45,13 @@ export class QueueModule implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    this.engine.emitAutoStep = (stepInstanceId: string, handlerId: string) => {
+    this.engine.emitAutoStep = (stepInstanceId: string, handlerId: string, taskId: string) => {
       this.prisma.handler.findUnique({ where: { id: handlerId } })
         .then((handler) => {
           if (!handler) throw new Error(`Handler record not found: ${handlerId}`);
           return this.queue.add(
             'run-handler',
-            { stepInstanceId, handlerName: handler.name },
+            { stepInstanceId, handlerName: handler.name, taskId },
             { jobId: stepInstanceId },
           );
         })

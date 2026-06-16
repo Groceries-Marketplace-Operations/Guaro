@@ -66,6 +66,15 @@ export class ShopsService {
     });
   }
 
+  async batchUpdateStatus(ids: string[], status: ShopStatus) {
+    if (!ids?.length) return { updated: 0 };
+    const { count } = await this.prisma.shop.updateMany({
+      where: { id: { in: ids }, deletedAt: null },
+      data: { status },
+    });
+    return { updated: count };
+  }
+
   async remove(id: string) {
     await this.findOne(id);
     return this.prisma.shop.update({ where: { id }, data: { deletedAt: new Date() } });

@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../components/layout/Topbar';
 import Modal from '../components/ui/Modal';
+import Paginator from '../components/ui/Paginator';
 import { handlersApi, webhooksApi, invitationsApi, sectionsApi, accountsApi } from '../api';
 import { useAuth } from '../auth/AuthContext';
-import type { Handler, Webhook, Section, AccountRole } from '../types';
+import type { Handler, Webhook, Section, AccountRole, Paginated } from '../types';
 
 interface InvitationRow {
   id: string;
@@ -51,6 +52,7 @@ export default function Config() {
   const qc = useQueryClient();
   const { account } = useAuth();
   const isSuperAdmin = account?.roles.includes('super_admin') ?? false;
+  const isAdmin = account?.roles.includes('admin') ?? false;
   const [tab, setTab] = useState<'handlers' | 'webhooks' | 'invitations' | 'users'>('handlers');
 
   const [openHandler, setOpenHandler] = useState(false);
@@ -68,19 +70,67 @@ export default function Config() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [invForm, setInvForm] = useState({ role: 'bpo' as AccountRole, sectionId: '' });
 
-  // Users tab filters
+  // Invitations pagination
+  const [invPage, setInvPage] = useState(1);
+  const INV_LIMIT = 25;
+
+  // Users tab filters + edit + pagination
   const [userQ, setUserQ] = useState('');
+  const [dUserQ, setDUserQ] = useState('');
   const [userSection, setUserSection] = useState('');
+  const [userPage, setUserPage] = useState(1);
+  const USER_LIMIT = 25;
+  const [editingUser, setEditingUser] = useState<AccountRow | null>(null);
+  const [editUserSection, setEditUserSection] = useState('');
+  const [editUserRoles, setEditUserRoles] = useState<string[]>([]);
+
+  useEffect(() => {
+    const t = setTimeout(() => { setDUserQ(userQ); setUserPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [userQ]);
 
   const { data: handlers = [] } = useQuery<Handler[]>({ queryKey: ['handlers'], queryFn: () => handlersApi.list().then(r => r.data) });
   const { data: webhooks = [] } = useQuery<Webhook[]>({ queryKey: ['webhooks'], queryFn: () => webhooksApi.list().then(r => r.data) });
-  const { data: invitations = [] } = useQuery<InvitationRow[]>({ queryKey: ['invitations'], queryFn: () => invitationsApi.list().then(r => r.data) });
+  const { data: invResult } = useQuery<Paginated<InvitationRow>>({
+    queryKey: ['invitations', { page: invPage, limit: INV_LIMIT }],
+    queryFn: () => invitationsApi.list({ page: invPage, limit: INV_LIMIT }).then(r => r.data as Paginated<InvitationRow>),
+    enabled: tab === 'invitations',
+  });
+  const invitations = invResult?.data ?? [];
+  const invTotal = invResult?.total ?? 0;
+
   const { data: sections = [] } = useQuery<Section[]>({ queryKey: ['sections'], queryFn: () => sectionsApi.list().then(r => r.data) });
-  const { data: users = [] } = useQuery<AccountRow[]>({
-    queryKey: ['accounts-all'],
-    queryFn: () => accountsApi.list().then(r => r.data),
+  const usersParams = { page: userPage, limit: USER_LIMIT };
+  const { data: usersResult } = useQuery<Paginated<AccountRow>>({
+    queryKey: ['accounts-all', usersParams],
+    queryFn: () => accountsApi.list(usersParams).then(r => r.data as Paginated<AccountRow>),
     enabled: tab === 'users',
   });
+  const usersRaw: AccountRow[] = usersResult?.data ?? [];
+  const usersTotal = usersResult?.total ?? 0;
+
+  const openEditUser = (u: AccountRow) => {
+    setEditingUser(u);
+    setEditUserSection(u.sectionId ?? '');
+    setEditUserRoles([...u.roles]);
+    setErr('');
+  };
+
+  const saveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault(); setSaving(true); setErr('');
+    try {
+      await accountsApi.update(editingUser!.id, {
+        sectionId: editUserSection || null,
+        roles: editUserRoles,
+      });
+      qc.invalidateQueries({ queryKey: ['accounts-all'] });
+      setEditingUser(null);
+    } catch { setErr('Error saving account'); } finally { setSaving(false); }
+  };
+
+  const EDITABLE_ROLES = (isSuperAdmin
+    ? ['user', 'bpo', 'admin', 'director']
+    : ['user', 'bpo']) as readonly string[];
   const createHandler = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
     try {
@@ -185,7 +235,7 @@ export default function Config() {
           <div className={`tab ${tab === 'handlers' ? 'active' : ''}`} onClick={() => setTab('handlers')}>Handlers ({handlers.length})</div>
           <div className={`tab ${tab === 'webhooks' ? 'active' : ''}`} onClick={() => setTab('webhooks')}>Webhooks ({webhooks.length})</div>
           <div className={`tab ${tab === 'invitations' ? 'active' : ''}`} onClick={() => setTab('invitations')}>
-            Invitations ({invitations.filter(i => !i.usedAt).length} pending)
+            Invitations
           </div>
           <div className={`tab ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>Users</div>
         </div>
@@ -272,7 +322,8 @@ export default function Config() {
 
         {tab === 'invitations' && (
           <>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <span className="text-muted text-sm">{invTotal} invitation{invTotal !== 1 ? 's' : ''}</span>
               <button className="btn btn-primary" onClick={() => setOpenInvite(true)}><PlusIcon /> New Invitation</button>
             </div>
             <div className="table-wrap">
@@ -320,13 +371,14 @@ export default function Config() {
                 </tbody>
               </table>
             </div>
+            <Paginator page={invPage} total={invTotal} limit={INV_LIMIT} onChange={setInvPage} />
           </>
         )}
 
         {tab === 'users' && (() => {
-          const qLow = userQ.toLowerCase();
-          const filtered = users.filter(u => {
-            if (userQ && !u.name.toLowerCase().includes(qLow) && !u.email.toLowerCase().includes(qLow)) return false;
+          const qLow = dUserQ.toLowerCase();
+          const filtered = usersRaw.filter(u => {
+            if (dUserQ && !u.name.toLowerCase().includes(qLow) && !u.email.toLowerCase().includes(qLow)) return false;
             if (userSection && u.sectionId !== userSection) return false;
             return true;
           });
@@ -340,22 +392,24 @@ export default function Config() {
                 value={userQ}
                 onChange={e => setUserQ(e.target.value)}
               />
-              <select
-                className="form-select"
-                style={{ width: 180, margin: 0 }}
-                value={userSection}
-                onChange={e => setUserSection(e.target.value)}
-              >
-                <option value="">All sections</option>
-                {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              {isSuperAdmin && (
+                <select
+                  className="form-select"
+                  style={{ width: 180, margin: 0 }}
+                  value={userSection}
+                  onChange={e => setUserSection(e.target.value)}
+                >
+                  <option value="">All sections</option>
+                  {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              )}
               {(userQ || userSection) && (
-                <button className="btn btn-ghost btn-sm" onClick={() => { setUserQ(''); setUserSection(''); }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => { setUserQ(''); setUserSection(''); setUserPage(1); }}>
                   Clear
                 </button>
               )}
               <span className="text-muted text-sm" style={{ alignSelf: 'center', marginLeft: 'auto' }}>
-                {filtered.length} of {users.length}
+                {usersTotal} account{usersTotal !== 1 ? 's' : ''}
               </span>
             </div>
           <div className="table-wrap">
@@ -387,22 +441,36 @@ export default function Config() {
                       {sections.find(s => s.id === u.sectionId)?.name ?? '—'}
                     </td>
                     <td>
-                      {!u.roles.includes('super_admin') && (
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          style={{ color: 'var(--red)', padding: '3px 8px' }}
-                          onClick={() => deleteAccount(u.id, u.name)}
-                          title="Delete account"
-                        >
-                          <TrashIcon />
-                        </button>
-                      )}
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {(isSuperAdmin || (isAdmin && !u.roles.includes('admin') && !u.roles.includes('director'))) &&
+                          !u.roles.includes('super_admin') && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            style={{ padding: '3px 8px' }}
+                            onClick={() => openEditUser(u)}
+                            title="Edit roles"
+                          >
+                            <EditIcon />
+                          </button>
+                        )}
+                        {!u.roles.includes('super_admin') && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            style={{ color: 'var(--red)', padding: '3px 8px' }}
+                            onClick={() => deleteAccount(u.id, u.name)}
+                            title="Delete account"
+                          >
+                            <TrashIcon />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          <Paginator page={userPage} total={usersTotal} limit={USER_LIMIT} onChange={setUserPage} />
           </>
           );
         })()}
@@ -534,6 +602,49 @@ export default function Config() {
             >
               {copied ? '✓ Copied' : 'Copy'}
             </button>
+          </div>
+        </Modal>
+      )}
+      {editingUser && (
+        <Modal
+          title={`Edit — ${editingUser.name}`}
+          onClose={() => setEditingUser(null)}
+          footer={<>
+            <button className="btn btn-ghost" onClick={() => setEditingUser(null)}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveEditUser} disabled={saving || editUserRoles.length === 0}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </>}
+        >
+          {err && <div className="error-banner">{err}</div>}
+          {isSuperAdmin && (
+            <div className="form-group">
+              <label className="form-label">Section / Team</label>
+              <select className="form-select" value={editUserSection} onChange={e => setEditUserSection(e.target.value)}>
+                <option value="">No section</option>
+                {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="form-group">
+            <label className="form-label">Roles</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8 }}>
+              {EDITABLE_ROLES.map(role => (
+                <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={editUserRoles.includes(role)}
+                    onChange={e => {
+                      if (e.target.checked) setEditUserRoles(r => [...r, role]);
+                      else setEditUserRoles(r => r.filter(x => x !== role));
+                    }}
+                    style={{ accentColor: 'var(--orange)', width: 15, height: 15 }}
+                  />
+                  <span style={{ fontWeight: 500 }}>{role}</span>
+                </label>
+              ))}
+            </div>
+            {editUserRoles.length === 0 && <p style={{ fontSize: '0.75rem', color: 'var(--red)', marginTop: 4 }}>At least one role is required.</p>}
           </div>
         </Modal>
       )}

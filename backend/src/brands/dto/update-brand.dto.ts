@@ -7,6 +7,10 @@ export class UpdateBrandDto {
   brandName?: string;
 
   @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
   @IsEnum(KaType)
   kaType?: KaType;
 

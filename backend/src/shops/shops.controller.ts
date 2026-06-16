@@ -34,9 +34,21 @@ export class ShopsController {
   }
 
   @Post()
-  @Roles(AccountRole.admin, AccountRole.super_admin)
+  @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.bpo)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateShopDto) {
     return this.shopsService.create(dto, u.id);
+  }
+
+  @Post('batch')
+  @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.bpo)
+  createBatch(@CurrentUser() u: JwtUser, @Body() body: { shops: CreateShopDto[] }) {
+    return Promise.all(body.shops.map(dto => this.shopsService.create(dto, u.id)));
+  }
+
+  @Patch('batch-status')
+  @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.bpo)
+  batchStatus(@Body() body: { ids: string[]; status: ShopStatus }) {
+    return this.shopsService.batchUpdateStatus(body.ids, body.status);
   }
 
   @Patch(':id')

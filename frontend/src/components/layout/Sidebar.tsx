@@ -63,6 +63,11 @@ const IconLogOut = () => (
     <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
   </svg>
 );
+const IconPlus = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+  </svg>
+);
 
 function hasAny(roles: AccountRole[], ...check: AccountRole[]) {
   return check.some((r) => roles.includes(r));
@@ -72,9 +77,11 @@ export default function Sidebar() {
   const { account, logout } = useAuth();
   const roles = account?.roles ?? [];
 
-  const isAdmin = hasAny(roles, 'admin', 'super_admin');
-  const isBpo   = hasAny(roles, 'bpo');
-  const isSA    = roles.includes('super_admin');
+  const isAdmin    = hasAny(roles, 'admin', 'super_admin');
+  const isBpo      = hasAny(roles, 'bpo');
+  const isSA       = roles.includes('super_admin');
+  const isDirector = roles.includes('director');
+  const canCreate  = !isDirector && !(isBpo && !isAdmin);
 
   return (
     <aside className="sidebar">
@@ -85,6 +92,18 @@ export default function Sidebar() {
           <span className="lt-sub">Internal Panel</span>
         </div>
       </div>
+
+      {canCreate && (
+        <div style={{ padding: '12px 12px 0' }}>
+          <NavLink
+            to="/tasks/new"
+            className="btn btn-primary"
+            style={{ width: '100%', justifyContent: 'center', gap: 6, textDecoration: 'none' }}
+          >
+            <IconPlus /> New Task
+          </NavLink>
+        </div>
+      )}
 
       <div className="sidebar-section">
         <div className="sidebar-section-label">Overview</div>
@@ -141,6 +160,11 @@ export default function Sidebar() {
           <NavLink to="/config" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconSettings /> Config
           </NavLink>
+          {isSA && (
+            <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+              <IconGrid /> Settings
+            </NavLink>
+          )}
         </div>
       )}
 

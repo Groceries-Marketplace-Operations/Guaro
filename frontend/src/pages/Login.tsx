@@ -4,10 +4,18 @@ import { authApi } from '../api';
 import { useAuth } from '../auth/AuthContext';
 
 const DEV_ACCOUNTS = [
-  { label: 'Super Admin', email: 'superadmin@didi-labs.com' },
-  { label: 'Admin',       email: 'admin@didi-labs.com' },
-  { label: 'BPO 1',       email: 'bpo1@didi-labs.com' },
-  { label: 'User 1',      email: 'user1@didi-labs.com' },
+  { label: 'Super Admin',    email: 'superadmin@didi-labs.com' },
+  { label: 'Admin (Ops)',    email: 'admin@didi-labs.com' },
+  { label: 'Admin (Growth)', email: 'admin.growth@didi-labs.com' },
+  { label: 'Director',       email: 'director@didi-labs.com' },
+  { label: 'BPO 1',          email: 'bpo1@didi-labs.com' },
+  { label: 'BPO 2',          email: 'bpo2@didi-labs.com' },
+  { label: 'BPO 3',          email: 'bpo3@didi-labs.com' },
+  { label: 'BPO 4',          email: 'bpo4@didi-labs.com' },
+  { label: 'BPO 5 (Growth)', email: 'bpo5@didi-labs.com' },
+  { label: 'User 1',         email: 'user1@didi-labs.com' },
+  { label: 'User 2 (Ops)',   email: 'user2@didi-labs.com' },
+  { label: 'User 3 (Growth)',email: 'user3@didi-labs.com' },
 ];
 
 const GoogleIcon = () => (

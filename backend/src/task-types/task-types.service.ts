@@ -36,16 +36,43 @@ export class TaskTypesService {
 
   // ── TaskType ──────────────────────────────────────────────────────────────
 
-  findAll(roles: AccountRole[], sectionId: string | null) {
-    const where = roles.includes(AccountRole.super_admin)
-      ? { deletedAt: null }
-      : { deletedAt: null, sectionId: sectionId ?? undefined };
+  async findAll(
+    roles: AccountRole[],
+    sectionId: string | null,
+    { page = 1, limit = 50, q }: { page?: number; limit?: number; q?: string } = {},
+  ) {
+    const restrictToSection =
+      roles.includes(AccountRole.admin) &&
+      !roles.includes(AccountRole.super_admin);
 
-    return this.prisma.taskType.findMany({
-      where,
-      include: TASK_TYPE_INCLUDE,
-      orderBy: { name: 'asc' },
-    });
+    const where = {
+      deletedAt: null,
+      ...(restrictToSection && { sectionId: sectionId ?? undefined }),
+      ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
+    };
+
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.prisma.taskType.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          descripcion: true,
+          active: true,
+          schedulable: true,
+          sectionId: true,
+          section: { select: { id: true, name: true } },
+          _count: { select: { stepDefinitions: true, formFields: true, tasks: true } },
+        },
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.taskType.count({ where }),
+    ]);
+    const mapped = data.map(({ descripcion, ...rest }) => ({ ...rest, description: descripcion }));
+    return { data: mapped, total, page, limit };
   }
 
   async findOne(id: string) {
@@ -72,6 +99,15 @@ export class TaskTypesService {
     return this.prisma.taskType.update({
       where: { id: tt.id },
       data: { ...rest, ...(description !== undefined && { descripcion: description }) },
+      include: TASK_TYPE_INCLUDE,
+    });
+  }
+
+  async toggleActive(id: string, roles: AccountRole[], sectionId: string | null) {
+    const tt = await this.assertTaskTypeAccess(id, roles, sectionId);
+    return this.prisma.taskType.update({
+      where: { id: tt.id },
+      data: { active: !tt.active },
       include: TASK_TYPE_INCLUDE,
     });
   }
@@ -169,7 +205,10 @@ export class TaskTypesService {
   async removeField(taskTypeId: string, fieldId: string, roles: AccountRole[], sectionId: string | null) {
     await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
     await this.assertFieldBelongs(fieldId, taskTypeId);
-    return this.prisma.formField.delete({ where: { id: fieldId } });
+    return this.prisma.$transaction([
+      this.prisma.formValue.deleteMany({ where: { formFieldId: fieldId } }),
+      this.prisma.formField.delete({ where: { id: fieldId } }),
+    ]);
   }
 
   // ── Internal guards ───────────────────────────────────────────────────────
