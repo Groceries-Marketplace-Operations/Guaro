@@ -20,6 +20,7 @@ RUN npm run build
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
+RUN apk add --no-cache openssl
 WORKDIR /app
 
 COPY backend/package*.json ./
