@@ -12,7 +12,7 @@ COPY backend/package*.json ./
 RUN npm ci
 
 # Generate Prisma client
-RUN npx prisma generate
+RUN npx prisma generate --schema=./prisma/schema.prisma
 
 # Backend source
 COPY backend/. .
@@ -37,4 +37,4 @@ RUN mkdir -p /app/uploads
 EXPOSE 3000
 
 # Run migrations then start the app
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+CMD ["sh", "-c", "npx prisma migrate deploy --schema=./prisma/schema.prisma && node dist/main"]
