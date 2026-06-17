@@ -49,6 +49,9 @@ services:
       APP_SECRET_ENCRYPTION_KEY: ${APP_SECRET_ENCRYPTION_KEY}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL}
       NODE_ENV: production
+    networks:
+      - internal
+      - grocerytools_webnet
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,12 +65,26 @@ services:
       args:
         VITE_API_URL: ${FRONTEND_URL}/api
     restart: unless-stopped
-    ports:
-      - '127.0.0.1:8080:80'
+    networks:
+      - grocerytools_webnet
     depends_on:
       - backend
+
+  postgres:
+    networks:
+      - internal
+
+  redis:
+    networks:
+      - internal
 
 volumes:
   postgres_data:
   redis_data:
   uploads_data:
+
+networks:
+  internal:
+    driver: bridge
+  grocerytools_webnet:
+    external: true

@@ -31,6 +31,3 @@ lerna-debug.log*
 # AI
 CLAUDE.md
 /.claude
-
-# prisma
-/prisma

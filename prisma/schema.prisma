@@ -1,0 +1,588 @@
+// ============================================================================
+// Prisma Schema — Task / Workflows System
+// Source of truth. Equivalent to schema.sql + 002.
+//
+// Notes:
+//   - updated_at is managed with @updatedAt (app-level), not a DB trigger.
+//   - CHECK constraints and the composite FK for country (same country app<->brand)
+//     are not expressed by Prisma: they go in constraints.sql, run AFTER migrate.
+//   - step_definition_account added: pool of candidates to assign a step
+//     (1 if fixed, multiple if RR / by_weight).
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../backend/node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------- Enums ----------------------------------------
+enum Country {
+  CO
+  MX
+  CR
+}
+
+enum AccountRole {
+  user
+  bpo
+  admin
+  super_admin
+  director
+
+  @@map("AccountRol")
+}
+
+enum ExecutionType {
+  manual_external
+  manual_internal
+  automatic
+
+  @@map("TipoEjecucion")
+}
+
+enum AssignmentStrategy {
+  fixed
+  round_robin
+  by_weight      // on hold — not used in code; kept for DB compatibility
+  brand_assignment // assign via BrandAssignmentRule (ka_type × country)
+  manual        // admin selects BPO at runtime
+
+  @@map("EstrategiaAsignacion")
+}
+
+enum AssignmentMode {
+  fixed
+  round_robin
+
+  @@map("AsignacionModo")
+}
+
+enum FormFieldTipo {
+  link
+  link_spreadsheet
+  texto
+  numero
+  select
+  select_brand
+  select_store
+  select_ka_type   // dropdown populated from AppConfig category=ka_type
+  select_country   // dropdown populated from AppConfig category=country
+}
+
+enum WebhookEvent {
+  on_start
+  on_complete
+  on_fail
+  on_assignment
+
+  @@map("WebhookEvento")
+}
+
+enum TaskStatus {
+  scheduled
+  pending
+  assigned
+  in_progress
+  blocked
+  failed
+  done
+
+  @@map("TaskEstado")
+}
+
+enum StepStatus {
+  pending
+  in_progress
+  blocked
+  failed
+  done
+
+  @@map("StepEstado")
+}
+
+enum StepFailureReason {
+  system_timed_out
+  bpo_timed_out
+  no_bpo
+  error_handler
+
+  @@map("StepMotivoFallo")
+}
+
+enum KaType {
+  KA
+  CKA
+  SME
+}
+
+enum MenuIntegration {
+  api
+  api_whitelist
+  sftp
+  spreadsheets
+  bapp
+}
+
+enum PickingMode {
+  merchant_picking_bapp
+  merchant_picking_dapp
+  dos_en_uno
+}
+
+enum PaymentMode {
+  food_mode
+  prepaid_card
+  qr_code
+}
+
+enum ShopStatus {
+  lead
+  application
+  integrated
+  online
+}
+
+enum DayOfWeek {
+  monday
+  tuesday
+  wednesday
+  thursday
+  friday
+  saturday
+  sunday
+
+  @@map("DiaSemana")
+}
+
+// ---------------------------- Actors ---------------------------------------
+model Account {
+  id         String       @id @default(uuid()) @db.Uuid
+  name       String       @map("nombre")
+  email      String       @unique
+  googleSub  String?      @unique @map("google_sub")
+  roles        AccountRole[]
+  adminModules   String[]    @default([]) @map("admin_modules")
+  bpoPermissions String[]    @default([]) @map("bpo_permissions")
+  sectionId    String?     @map("section_id") @db.Uuid
+  workload     Int         @default(0) @map("carga")
+  rrCounter    Int         @default(0) @map("contador_rr")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+  deletedAt  DateTime?    @map("deleted_at")
+
+  section            Section?                     @relation(fields: [sectionId], references: [id])
+  createdTasks       Task[]                       @relation("TaskCreador")
+  ownedBrands        Brand[]                      @relation("BrandResponsable")
+  createdBrands      Brand[]                      @relation("BrandCreador")
+  createdShops       Shop[]                       @relation("ShopCreador")
+  createdApps        Application[]                @relation("AppCreador")
+  assignedSteps      StepInstance[]
+  stepCandidate      StepDefinitionAccount[]
+  ruleCandidate      BrandAssignmentRuleAccount[]
+  createdInvitations Invitation[]                 @relation("InvitacionCreador")
+  usedInvitation     Invitation?                  @relation("InvitacionCuenta")
+
+  @@index([sectionId])
+  @@map("account")
+}
+
+// ---------------------- Templates (admin config) ---------------------------
+model TaskTypeTemplate {
+  id         String   @id @default(uuid()) @db.Uuid
+  taskTypeId String   @map("task_type_id") @db.Uuid
+  name       String
+  url        String
+  tipo       String   @default("link")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  taskType TaskType @relation(fields: [taskTypeId], references: [id], onDelete: Cascade)
+
+  @@map("task_type_template")
+}
+
+model Section {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @map("nombre")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  accounts    Account[]
+  taskTypes   TaskType[]
+  invitations Invitation[]
+
+  @@map("section")
+}
+
+model TaskType {
+  id          String    @id @default(uuid()) @db.Uuid
+  sectionId   String    @map("section_id") @db.Uuid
+  name        String    @map("nombre")
+  descripcion String?
+  schedulable Boolean   @default(false) @map("programable")
+  active      Boolean   @default(true) @map("activo")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  section         Section            @relation(fields: [sectionId], references: [id])
+  stepDefinitions StepDefinition[]
+  formFields      FormField[]
+  tasks           Task[]
+  templates       TaskTypeTemplate[]
+
+  @@index([sectionId])
+  @@map("task_type")
+}
+
+model Handler {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique @map("nombre")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  stepDefinitions StepDefinition[]
+
+  @@map("handler")
+}
+
+model StepDefinition {
+  id                 String             @id @default(uuid()) @db.Uuid
+  taskTypeId         String             @map("task_type_id") @db.Uuid
+  name               String             @map("nombre")
+  order              Int                @map("orden")
+  executionType      ExecutionType      @map("tipo_ejecucion")
+  action             String?            @map("accion")
+  assignmentStrategy AssignmentStrategy @map("estrategia_asignacion")
+  weight             Int                @default(1) @map("peso")
+  handlerId          String?            @map("handler_id") @db.Uuid
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  taskType      TaskType                @relation(fields: [taskTypeId], references: [id], onDelete: Cascade)
+  handler       Handler?                @relation(fields: [handlerId], references: [id])
+  stepWebhooks  StepWebhook[]
+  candidates    StepDefinitionAccount[]
+  stepInstances StepInstance[]
+
+  @@unique([taskTypeId, order])
+  @@index([taskTypeId])
+  @@map("step_definition")
+}
+
+// Pool of candidates to assign the step (1 if fixed, multiple if RR / by weight).
+model StepDefinitionAccount {
+  stepDefinitionId String @map("step_definition_id") @db.Uuid
+  accountId        String @map("account_id") @db.Uuid
+
+  stepDefinition StepDefinition @relation(fields: [stepDefinitionId], references: [id], onDelete: Cascade)
+  account        Account        @relation(fields: [accountId], references: [id])
+
+  @@id([stepDefinitionId, accountId])
+  @@map("step_definition_account")
+}
+
+model FormField {
+  id          String        @id @default(uuid()) @db.Uuid
+  taskTypeId  String        @map("task_type_id") @db.Uuid
+  label       String        @map("etiqueta")
+  tipo        FormFieldTipo
+  required    Boolean       @default(false) @map("requerido")
+  multiple    Boolean       @default(false)
+  options     Json?         @map("opciones")
+  order       Int           @map("orden")
+  filteredById String?      @map("filtra_por_field") @db.Uuid
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  taskType   TaskType    @relation(fields: [taskTypeId], references: [id], onDelete: Cascade)
+  filteredBy FormField?  @relation("FormFieldFiltro", fields: [filteredById], references: [id])
+  filtered   FormField[] @relation("FormFieldFiltro")
+  formValues FormValue[]
+
+  @@unique([taskTypeId, order])
+  @@index([taskTypeId])
+  @@map("form_field")
+}
+
+// ---------------------------- Webhooks -------------------------------------
+model Webhook {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @map("nombre")
+  url       String
+  isAlerts  Boolean  @default(false) @map("es_alertas")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  stepWebhooks  StepWebhook[]
+  brandWebhooks BrandWebhook[]
+
+  @@map("webhook")
+}
+
+model StepWebhook {
+  id               String         @id @default(uuid()) @db.Uuid
+  stepDefinitionId String         @map("step_definition_id") @db.Uuid
+  webhookId        String         @map("webhook_id") @db.Uuid
+  events           WebhookEvent[]
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  stepDefinition StepDefinition @relation(fields: [stepDefinitionId], references: [id], onDelete: Cascade)
+  webhook        Webhook        @relation(fields: [webhookId], references: [id])
+
+  @@unique([stepDefinitionId, webhookId])
+  @@index([stepDefinitionId])
+  @@map("step_webhook")
+}
+
+// ---------------------------- Catalog -------------------------------------
+model Application {
+  id          String    @id @default(uuid()) @db.Uuid
+  appId       String    @unique @map("app_id")
+  appName     String    @map("app_name")
+  country     Country
+  appSecret   String    @map("app_secret")   // ENCRYPTED at rest; never expose
+  createdById String?   @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  createdBy Account? @relation("AppCreador", fields: [createdById], references: [id])
+  brands    Brand[]
+
+  @@unique([id, country])   // target of composite FK (see constraints.sql)
+  @@map("application")
+}
+
+model Brand {
+  id              String           @id @default(uuid()) @db.Uuid
+  brandId         String           @unique @map("brand_id")
+  brandName       String           @map("brand_name")
+  country         Country
+  kaType          KaType           @map("ka_type")
+  category        String?
+  menuIntegration MenuIntegration? @map("menu_integration")
+  pickingMode     PickingMode?     @map("picking_mode")
+  paymentMode     PaymentMode?     @map("payment_mode")
+  ownerId         String?          @map("responsable_id") @db.Uuid
+  applicationId   String?          @map("application_id") @db.Uuid
+  createdById     String?          @map("created_by") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  deletedAt       DateTime?        @map("deleted_at")
+
+  owner       Account?     @relation("BrandResponsable", fields: [ownerId], references: [id])
+  createdBy   Account?     @relation("BrandCreador", fields: [createdById], references: [id])
+  application Application? @relation(fields: [applicationId], references: [id])
+  webhooks    BrandWebhook[]
+  shops       Shop[]
+  tasks       Task[]
+  formValues  FormValue[]
+
+  @@index([ownerId])
+  @@index([applicationId])
+  @@map("brand")
+}
+
+model BrandWebhook {
+  id        String   @id @default(uuid()) @db.Uuid
+  brandId   String   @map("brand_id") @db.Uuid
+  webhookId String   @map("webhook_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  brand   Brand   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  webhook Webhook @relation(fields: [webhookId], references: [id])
+
+  @@unique([brandId, webhookId])
+  @@map("brand_webhook")
+}
+
+model Shop {
+  id          String     @id @default(uuid()) @db.Uuid
+  shopId      String     @unique @map("shop_id")
+  appShopId   String     @map("app_shop_id")
+  brandId     String     @map("brand_id") @db.Uuid
+  latitude    Decimal?   @db.Decimal(9, 6)
+  longitude   Decimal?   @db.Decimal(9, 6)
+  city        String?
+  status      ShopStatus @default(lead)
+  createdById String?    @map("created_by") @db.Uuid
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  deletedAt   DateTime?  @map("deleted_at")
+
+  brand      Brand      @relation(fields: [brandId], references: [id])
+  createdBy  Account?   @relation("ShopCreador", fields: [createdById], references: [id])
+  schedules  Schedule[]
+  taskShops  TaskShop[]
+  formValues FormValue[]
+
+  @@unique([brandId, appShopId])
+  @@index([brandId])
+  @@map("shop")
+}
+
+model Schedule {
+  id        String    @id @default(uuid()) @db.Uuid
+  shopId    String    @map("shop_id") @db.Uuid
+  day       DayOfWeek @map("dia")
+  openTime  DateTime  @map("apertura") @db.Time
+  closeTime DateTime  @map("cierre") @db.Time
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId])
+  @@map("schedule")
+}
+
+// ---------------- Brand owner assignment -----------------------------------
+model BrandAssignmentRule {
+  id        String         @id @default(uuid()) @db.Uuid
+  kaType    KaType         @map("ka_type")
+  country   Country
+  modo      AssignmentMode
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  candidates BrandAssignmentRuleAccount[]
+
+  @@unique([kaType, country])
+  @@map("brand_assignment_rule")
+}
+
+model BrandAssignmentRuleAccount {
+  ruleId    String @map("rule_id") @db.Uuid
+  accountId String @map("account_id") @db.Uuid
+
+  rule    BrandAssignmentRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  account Account             @relation(fields: [accountId], references: [id])
+
+  @@id([ruleId, accountId])
+  @@map("brand_assignment_rule_account")
+}
+
+// ---------------------------- Execution ------------------------------------
+model Task {
+  id             String     @id @default(uuid()) @db.Uuid
+  taskTypeId     String     @map("task_type_id") @db.Uuid
+  brandId        String?    @map("brand_id") @db.Uuid
+  createdById    String     @map("created_by") @db.Uuid
+  status         TaskStatus @default(pending) @map("estado")
+  scheduledStart DateTime?  @map("programado_inicio")
+  scheduledEnd   DateTime?  @map("programado_fin")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+  deletedAt      DateTime?  @map("deleted_at")
+
+  taskType      TaskType       @relation(fields: [taskTypeId], references: [id])
+  brand         Brand?         @relation(fields: [brandId], references: [id])
+  createdBy     Account        @relation("TaskCreador", fields: [createdById], references: [id])
+  stepInstances StepInstance[]
+  formValues    FormValue[]
+  taskShops     TaskShop[]
+
+  @@index([taskTypeId])
+  @@index([brandId])
+  @@index([createdById])
+  @@index([status])
+  @@map("task")
+}
+
+model TaskShop {
+  taskId String @map("task_id") @db.Uuid
+  shopId String @map("shop_id") @db.Uuid
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  shop Shop @relation(fields: [shopId], references: [id])
+
+  @@id([taskId, shopId])
+  @@map("task_shop")
+}
+
+model StepInstance {
+  id               String            @id @default(uuid()) @db.Uuid
+  taskId           String            @map("task_id") @db.Uuid
+  stepDefinitionId String            @map("step_definition_id") @db.Uuid
+  status           StepStatus        @default(pending) @map("estado")
+  assignedToId     String?           @map("asignado_id") @db.Uuid
+  result           Json?             @map("resultado")
+  note             String?           @map("nota")
+  failureReason    StepFailureReason? @map("motivo_fallo")
+  startedAt        DateTime?         @map("started_at")
+  workedSeconds    Int?              @map("worked_seconds")
+  completedAt      DateTime?         @map("completado_en")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  task           Task           @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  stepDefinition StepDefinition @relation(fields: [stepDefinitionId], references: [id])
+  assignedTo     Account?       @relation(fields: [assignedToId], references: [id])
+
+  @@index([taskId])
+  @@index([assignedToId])
+  @@map("step_instance")
+}
+
+model FormValue {
+  id          String   @id @default(uuid()) @db.Uuid
+  taskId      String   @map("task_id") @db.Uuid
+  formFieldId String   @map("form_field_id") @db.Uuid
+  valor       String?
+  brandId     String?  @map("brand_id") @db.Uuid
+  shopId      String?  @map("shop_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  task      Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  formField FormField @relation(fields: [formFieldId], references: [id])
+  brand     Brand?    @relation(fields: [brandId], references: [id])
+  shop      Shop?     @relation(fields: [shopId], references: [id])
+
+  @@index([taskId])
+  @@map("form_value")
+}
+
+// -------------------- App-level configuration --------------------------------
+// Stores which enum values are active + display labels.
+// Categories: country, menu_integration, picking_mode, payment_mode, ka_type
+model AppConfigOption {
+  id        String   @id @default(uuid()) @db.Uuid
+  category  String   @map("categoria")
+  value     String   @map("valor")
+  label     String   @map("etiqueta")
+  active    Boolean  @default(true) @map("activo")
+  order     Int      @default(0) @map("orden")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([category, value])
+  @@index([category])
+  @@map("app_config_option")
+}
+
+// -------------------------- Auth / invitations -----------------------------
+model Invitation {
+  id          String      @id @default(uuid()) @db.Uuid
+  token       String      @unique
+  rol         AccountRole
+  sectionId   String?     @map("section_id") @db.Uuid
+  createdById String      @map("created_by") @db.Uuid
+  accountId   String?     @unique @map("account_id") @db.Uuid
+  usedAt      DateTime?   @map("used_at")
+  expiresAt   DateTime?   @map("expires_at")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  section   Section? @relation(fields: [sectionId], references: [id])
+  createdBy Account  @relation("InvitacionCreador", fields: [createdById], references: [id])
+  account   Account? @relation("InvitacionCuenta", fields: [accountId], references: [id])
+
+  @@index([sectionId])
+  @@map("invitation")
+}
