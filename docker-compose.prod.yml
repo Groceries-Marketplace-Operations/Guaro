@@ -1,7 +1,5 @@
-version: '3.9'
-
 services:
-  postgres:
+  guaro-db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -18,7 +16,7 @@ services:
     networks:
       - internal
 
-  redis:
+  guaro-redis:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --appendonly yes
@@ -40,8 +38,8 @@ services:
     volumes:
       - uploads_data:/app/uploads
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_HOST: redis
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@guaro-db:5432/${POSTGRES_DB}
+      REDIS_HOST: guaro-redis
       REDIS_PORT: 6379
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
@@ -57,9 +55,9 @@ services:
       - internal
       - grocerytools_webnet
     depends_on:
-      postgres:
+      guaro-db:
         condition: service_healthy
-      redis:
+      guaro-redis:
         condition: service_healthy
 
   frontend:
