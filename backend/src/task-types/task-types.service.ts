@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -183,6 +184,10 @@ export class TaskTypesService {
   async addStepWebhook(taskTypeId: string, stepId: string, dto: AddStepWebhookDto, roles: AccountRole[], sectionId: string | null) {
     await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
     await this.assertStepBelongs(stepId, taskTypeId);
+    const existing = await this.prisma.stepWebhook.findUnique({
+      where: { stepDefinitionId_webhookId: { stepDefinitionId: stepId, webhookId: dto.webhookId } },
+    });
+    if (existing) throw new ConflictException('This webhook is already configured on this step');
     return this.prisma.stepWebhook.create({
       data: { stepDefinitionId: stepId, webhookId: dto.webhookId, events: dto.events },
     });

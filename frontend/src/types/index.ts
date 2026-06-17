@@ -6,7 +6,7 @@ export type AssignmentStrategy = 'fixed' | 'round_robin' | 'brand_assignment' | 
 export type ShopStatus = 'lead' | 'application' | 'integrated' | 'online';
 export type KaType = 'KA' | 'CKA' | 'SME';
 export type Country = 'MX' | 'CO' | 'CR';
-export type WebhookEvent = 'on_start' | 'on_complete' | 'on_fail';
+export type WebhookEvent = 'on_start' | 'on_complete' | 'on_fail' | 'on_assignment';
 
 export interface Account {
   id: string;
@@ -61,7 +61,7 @@ export interface StepDefinition {
   handlerId?: string;
   handler?: Handler;
   candidates?: { account: Account; weight?: number }[];
-  webhooks?: { webhook: Webhook; events: WebhookEvent[] }[];
+  stepWebhooks?: { id: string; webhookId: string; events: WebhookEvent[]; webhook: Webhook }[];
 }
 
 export interface TaskTypeTemplate {

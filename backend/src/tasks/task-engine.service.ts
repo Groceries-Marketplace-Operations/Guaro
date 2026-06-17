@@ -67,11 +67,13 @@ export class TaskEngineService {
       }
     });
 
-    // on_start webhook only fires immediately for automatic steps
-    if (isAutomatic) {
-      const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
-      if (step) {
+    const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
+    if (step) {
+      if (isAutomatic) {
         await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_start, step.taskId);
+      } else {
+        // Manual step: BPO just got assigned, fire on_assignment
+        await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_assignment, step.taskId);
       }
     }
   }
@@ -282,6 +284,12 @@ export class TaskEngineService {
         data: { status: TaskStatus.assigned },
       });
     });
+
+    // Fire on_assignment webhook after manual assignment
+    const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
+    if (step) {
+      await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_assignment, step.taskId);
+    }
   }
 
   // ── Just-in-time assignment ───────────────────────────────────────────────
@@ -377,22 +385,66 @@ export class TaskEngineService {
   // ── Webhook helper ────────────────────────────────────────────────────────
 
   private async sendStepWebhook(stepDefinitionId: string, event: WebhookEvent, taskId: string) {
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
-      include: { brand: true, taskType: true },
-    });
+    const [task, stepInstance] = await Promise.all([
+      this.prisma.task.findUnique({
+        where: { id: taskId },
+        include: {
+          brand: true,
+          taskType: true,
+          createdBy: { select: { email: true, name: true } },
+        },
+      }),
+      this.prisma.stepInstance.findFirst({
+        where: { taskId, stepDefinitionId },
+        include: {
+          assignedTo:     { select: { email: true, name: true } },
+          stepDefinition: { select: { name: true, order: true } },
+        },
+      }),
+    ]);
+
+    if (!task) return;
+
+    const handle = (email: string | null | undefined) => email?.split('@')[0] ?? null;
+    const bpoHandle     = handle(stepInstance?.assignedTo?.email);
+    const creatorHandle = handle(task.createdBy?.email);
+
+    const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+    const taskUrl     = `${frontendUrl}/tasks/${taskId}`;
 
     const colorMap: Record<WebhookEvent, string> = {
-      on_start: '#2196F3',
-      on_complete: '#4CAF50',
-      on_fail: '#F44336',
+      on_start:      '#2196F3',
+      on_complete:   '#4CAF50',
+      on_fail:       '#F44336',
+      on_assignment: '#9C27B0',
+    };
+    const eventLabel: Record<WebhookEvent, string> = {
+      on_start:      'started',
+      on_complete:   'completed',
+      on_fail:       'failed',
+      on_assignment: 'assigned',
     };
 
+    const mentions = [bpoHandle && `@${bpoHandle}`, creatorHandle && `@${creatorHandle}`]
+      .filter(Boolean).join(' ');
+
+    const stepLabel = stepInstance?.stepDefinition
+      ? `Step ${stepInstance.stepDefinition.order}: ${stepInstance.stepDefinition.name}`
+      : null;
+
+    const lines = [
+      task.brand ? `🏷️ ${task.brand.brandName} (${task.brand.country})` : null,
+      stepLabel     ? `📋 ${stepLabel}`                    : null,
+      bpoHandle     ? `👤 BPO: @${bpoHandle}`              : null,
+      creatorHandle ? `✏️ Created by: @${creatorHandle}`   : null,
+      `🔗 ${taskUrl}`,
+    ].filter(Boolean).join('\n');
+
     const payload = {
-      text: `[${task?.taskType.name ?? 'Task'}] ${event.replace('on_', '')} — ${task?.brand?.brandName ?? ''}`,
+      text: `${mentions ? mentions + ' — ' : ''}**${task.taskType.name}** ${eventLabel[event]}${stepLabel ? ` (${stepLabel})` : ''}`,
       attachments: [{
-        title: task?.taskType.name ?? '',
-        text: task?.brand ? `Brand: ${task.brand.brandName} (${task.brand.country})` : '',
+        title: task.taskType.name,
+        text:  lines,
         color: colorMap[event],
       }],
     };

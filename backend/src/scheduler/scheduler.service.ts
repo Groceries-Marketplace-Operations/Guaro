@@ -51,6 +51,7 @@ export class SchedulerService {
   @Cron('*/5 * * * *')
   async checkBpoTimeouts() {
     const now = new Date();
+    const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
     const steps = await this.prisma.stepInstance.findMany({
       where: {
@@ -58,15 +59,35 @@ export class SchedulerService {
         stepDefinition: { executionType: { in: [ExecutionType.manual_external, ExecutionType.manual_internal] } },
         task: { scheduledEnd: { lte: now }, status: TaskStatus.in_progress },
       },
-      include: { stepDefinition: true, task: true },
+      include: {
+        stepDefinition: true,
+        assignedTo: { select: { email: true, name: true } },
+        task: {
+          include: {
+            brand: true,
+            taskType: true,
+            createdBy: { select: { email: true, name: true } },
+          },
+        },
+      },
     });
 
     for (const step of steps) {
       try {
         await this.engine.failStep(step.id, StepFailureReason.bpo_timed_out);
+        const bpoHandle     = step.assignedTo?.email?.split('@')[0];
+        const creatorHandle = step.task.createdBy?.email?.split('@')[0];
+        const taskUrl       = `${frontendUrl}/tasks/${step.taskId}`;
+        const lines = [
+          `📋 Step: ${step.stepDefinition.name}`,
+          step.task.brand ? `🏷️ ${step.task.brand.brandName} (${step.task.brand.country})` : null,
+          bpoHandle     ? `👤 BPO: @${bpoHandle}`          : null,
+          creatorHandle ? `✏️ Created by: @${creatorHandle}` : null,
+          `🔗 ${taskUrl}`,
+        ].filter(Boolean).join('\n');
         await this.webhookSender.sendAlert({
-          text: `⏰ BPO timeout on task ${step.taskId} step ${step.stepDefinitionId}`,
-          attachments: [{ title: 'BPO Timeout', text: `Step: ${step.stepDefinition.name}`, color: '#FF9800' }],
+          text: `⏰ BPO timeout — **${step.task.taskType.name}**`,
+          attachments: [{ title: 'BPO Timeout', text: lines, color: '#FF9800' }],
         });
       } catch (err) {
         this.logger.error(`Error on bpo timeout ${step.id}: ${(err as Error).message}`);
@@ -78,6 +99,7 @@ export class SchedulerService {
   @Cron('*/10 * * * *')
   async checkAutoTimeouts() {
     const cutoff = new Date(Date.now() - AUTO_STEP_TIMEOUT_MS);
+    const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
     const steps = await this.prisma.stepInstance.findMany({
       where: {
@@ -85,15 +107,33 @@ export class SchedulerService {
         stepDefinition: { executionType: ExecutionType.automatic },
         updatedAt: { lte: cutoff },
       },
-      include: { stepDefinition: true },
+      include: {
+        stepDefinition: true,
+        task: {
+          include: {
+            brand: true,
+            taskType: true,
+            createdBy: { select: { email: true, name: true } },
+          },
+        },
+      },
     });
 
     for (const step of steps) {
       try {
         await this.engine.failStep(step.id, StepFailureReason.system_timed_out);
+        const creatorHandle = step.task.createdBy?.email?.split('@')[0];
+        const taskUrl       = `${frontendUrl}/tasks/${step.taskId}`;
+        const lines = [
+          `📋 Step: ${step.stepDefinition.name}`,
+          `🔧 Handler: ${step.stepDefinition.handlerId ?? 'unknown'}`,
+          step.task.brand ? `🏷️ ${step.task.brand.brandName} (${step.task.brand.country})` : null,
+          creatorHandle ? `✏️ Created by: @${creatorHandle}` : null,
+          `🔗 ${taskUrl}`,
+        ].filter(Boolean).join('\n');
         await this.webhookSender.sendAlert({
-          text: `🚨 System timeout on automatic step ${step.id}`,
-          attachments: [{ title: 'System Timeout', text: `Handler: ${step.stepDefinition.handlerId}`, color: '#F44336' }],
+          text: `🚨 System timeout — **${step.task.taskType.name}**`,
+          attachments: [{ title: 'System Timeout', text: lines, color: '#F44336' }],
         });
       } catch (err) {
         this.logger.error(`Error on system timeout ${step.id}: ${(err as Error).message}`);

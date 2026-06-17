@@ -38,7 +38,7 @@ const TIPO_OPTIONS = [
 const FILE_TIPOS = ['xlsx', 'csv', 'docx', 'pdf'];
 const FILE_ACCEPT = '.xlsx,.csv,.docx,.pdf';
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
-const WH_EVENTS: WebhookEvent[] = ['on_start', 'on_complete', 'on_fail'];
+const WH_EVENTS: WebhookEvent[] = ['on_assignment', 'on_start', 'on_complete', 'on_fail'];
 const FIELD_TYPES = ['texto', 'numero', 'link', 'link_spreadsheet', 'select', 'select_brand', 'select_store', 'select_ka_type', 'select_country'];
 
 function execLabel(t: ExecutionType) {
@@ -273,6 +273,13 @@ export default function TaskTypeDetail() {
     } catch (ex) { setErr(errMsg(ex)); } finally { setSaving(false); }
   };
 
+  const removeWebhook = async (stepId: string, stepWebhookId: string) => {
+    try {
+      await taskTypesApi.removeWebhook(id!, stepId, stepWebhookId);
+      qc.invalidateQueries({ queryKey: ['task-type', id] });
+    } catch (ex) { setErr(errMsg(ex)); }
+  };
+
   const addCandidate = async () => {
     if (!openBpos || !candidateId) return;
     setSaving(true); setErr('');
@@ -460,6 +467,28 @@ export default function TaskTypeDetail() {
                                 <span key={c.account.id} style={{ fontSize: '0.67rem', padding: '1px 7px', borderRadius: 999, background: 'var(--surface-2)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
                                   {c.account.name}
                                 </span>
+                              ))}
+                            </div>
+                          )}
+                          {(s.stepWebhooks?.length ?? 0) > 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
+                              {(s.stepWebhooks ?? []).map(sw => (
+                                <div key={sw.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.7rem' }}>
+                                  <span style={{ padding: '1px 7px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue)', fontWeight: 600, border: '1px solid var(--border)' }}>
+                                    {sw.webhook.name}
+                                  </span>
+                                  <span style={{ color: 'var(--text-muted)' }}>
+                                    {sw.events.map(e => e.replace('on_', '')).join(', ')}
+                                  </span>
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    style={{ padding: '0 4px', color: 'var(--red)', fontSize: '0.65rem', height: 16, lineHeight: 1 }}
+                                    onClick={() => removeWebhook(s.id, sw.id)}
+                                    title="Remove webhook"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
                               ))}
                             </div>
                           )}

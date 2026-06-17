@@ -541,10 +541,14 @@ export default function Config() {
             <input className="form-input" type="url" placeholder="https://hooks.slack.com/…" value={whForm.url}
               onChange={e => setWhForm(f => ({ ...f, url: e.target.value }))} required />
           </div>
-          <div className="form-check">
-            <input type="checkbox" id="isalerts" checked={whForm.isAlerts}
-              onChange={e => setWhForm(f => ({ ...f, isAlerts: e.target.checked }))} />
-            <label htmlFor="isalerts" style={{ fontSize: '0.83rem', cursor: 'pointer' }}>Alerts webhook (receives system/timeout alerts)</label>
+          <div className="form-group">
+            <label className="form-label">Type</label>
+            <select className="form-select"
+              value={whForm.isAlerts ? 'alerts' : 'task'}
+              onChange={e => setWhForm(f => ({ ...f, isAlerts: e.target.value === 'alerts' }))}>
+              <option value="task">Task notification — fires on step start / complete / fail</option>
+              <option value="alerts">System alerts — receives timeout and system error alerts</option>
+            </select>
           </div>
         </Modal>
       )}
@@ -567,10 +571,14 @@ export default function Config() {
             <input className="form-input" type="url" value={editWhForm.url}
               onChange={e => setEditWhForm(f => ({ ...f, url: e.target.value }))} required />
           </div>
-          <div className="form-check">
-            <input type="checkbox" id="edit-isalerts" checked={editWhForm.isAlerts}
-              onChange={e => setEditWhForm(f => ({ ...f, isAlerts: e.target.checked }))} />
-            <label htmlFor="edit-isalerts" style={{ fontSize: '0.83rem', cursor: 'pointer' }}>Alerts webhook</label>
+          <div className="form-group">
+            <label className="form-label">Type</label>
+            <select className="form-select"
+              value={editWhForm.isAlerts ? 'alerts' : 'task'}
+              onChange={e => setEditWhForm(f => ({ ...f, isAlerts: e.target.value === 'alerts' }))}>
+              <option value="task">Task notification — fires on step start / complete / fail</option>
+              <option value="alerts">System alerts — receives timeout and system error alerts</option>
+            </select>
           </div>
         </Modal>
       )}
