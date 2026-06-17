@@ -83,7 +83,7 @@ export default function Dashboard() {
                 </thead>
                 <tbody>
                   {recent.map((t) => (
-                    <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => window.location.href = `/tasks/${t.id}`}>
+                    <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => window.location.href = `${import.meta.env.BASE_URL}tasks/${t.id}`}>
                       <td style={{ fontWeight: 600 }}>{t.brand?.brandName ?? '—'}</td>
                       <td className="text-muted">{t.taskType?.name ?? '—'}</td>
                       <td><StatusBadge status={t.status} /></td>

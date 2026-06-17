@@ -214,7 +214,7 @@ export default function Config() {
       const res = await invitationsApi.create(invForm);
       qc.invalidateQueries({ queryKey: ['invitations'] });
       setOpenInvite(false);
-      setInviteLink(`${window.location.origin}/invite/${res.data.token}`);
+      setInviteLink(`${window.location.origin}${import.meta.env.BASE_URL}invite/${res.data.token}`);
       setCopied(false);
     } catch { setErr('Error creating invitation'); } finally { setSaving(false); }
   };
