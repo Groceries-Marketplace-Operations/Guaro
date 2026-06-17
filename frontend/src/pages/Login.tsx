@@ -1,23 +1,3 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { authApi } from '../api';
-import { useAuth } from '../auth/AuthContext';
-
-const DEV_ACCOUNTS = [
-  { label: 'Super Admin',    email: 'superadmin@didi-labs.com' },
-  { label: 'Admin (Ops)',    email: 'admin@didi-labs.com' },
-  { label: 'Admin (Growth)', email: 'admin.growth@didi-labs.com' },
-  { label: 'Director',       email: 'director@didi-labs.com' },
-  { label: 'BPO 1',          email: 'bpo1@didi-labs.com' },
-  { label: 'BPO 2',          email: 'bpo2@didi-labs.com' },
-  { label: 'BPO 3',          email: 'bpo3@didi-labs.com' },
-  { label: 'BPO 4',          email: 'bpo4@didi-labs.com' },
-  { label: 'BPO 5 (Growth)', email: 'bpo5@didi-labs.com' },
-  { label: 'User 1',         email: 'user1@didi-labs.com' },
-  { label: 'User 2 (Ops)',   email: 'user2@didi-labs.com' },
-  { label: 'User 3 (Growth)',email: 'user3@didi-labs.com' },
-];
-
 const GoogleIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24">
     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -28,27 +8,6 @@ const GoogleIcon = () => (
 );
 
 export default function Login() {
-  const { login } = useAuth();
-  const nav = useNavigate();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const devLogin = async (email: string) => {
-    setLoading(true); setError('');
-    try {
-      const res = await authApi.devLogin(email);
-      localStorage.setItem('token', res.data.access_token);
-      const meRes = await authApi.me();
-      login(res.data.access_token, meRes.data);
-      nav('/');
-    } catch {
-      localStorage.removeItem('token');
-      setError('Login failed. Make sure the backend is running.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const googleLogin = () => {
     window.location.href = `${import.meta.env.VITE_API_URL ?? 'http://localhost:3000'}/auth/google`;
   };
@@ -72,27 +31,7 @@ export default function Login() {
           Continue with Google
         </button>
 
-        <div className="divider"><span>dev shortcuts</span></div>
-
-        {error && <div className="error-banner">{error}</div>}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {DEV_ACCOUNTS.map((a) => (
-            <button
-              key={a.email}
-              className="btn btn-ghost w-full"
-              style={{ justifyContent: 'space-between' }}
-              onClick={() => devLogin(a.email)}
-              disabled={loading}
-            >
-              <span>{a.label}</span>
-              <span className="text-sm text-muted">{a.email}</span>
-            </button>
-          ))}
-        </div>
-
         <p style={{ marginTop: 32, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          Dev shortcuts are disabled in production.
           Google login is restricted to <strong>@didi-labs.com</strong> accounts.
         </p>
       </div>
