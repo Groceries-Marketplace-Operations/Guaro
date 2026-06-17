@@ -5,7 +5,7 @@ import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { taskTypesApi, handlersApi, webhooksApi, accountsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
-import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account, TaskTypeTemplate } from '../../types';
+import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account } from '../../types';
 
 const PlusIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
