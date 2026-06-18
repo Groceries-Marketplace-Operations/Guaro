@@ -29,25 +29,67 @@ export class BpoManagementController {
   // Admin: performance de todo el team
   @Get('team')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.director)
-  teamPerformance(@CurrentUser() u: JwtUser) {
-    return this.bpoManagementService.teamPerformance(u.roles, u.sectionId);
+  teamPerformance(
+    @CurrentUser() u: JwtUser,
+    @Query('taskTypeId') taskTypeId?: string,
+    @Query('year',  new DefaultValuePipe(0), ParseIntPipe) year?:  number,
+    @Query('month', new DefaultValuePipe(0), ParseIntPipe) month?: number,
+    @Query('week',  new DefaultValuePipe(0), ParseIntPipe) week?:  number,
+  ) {
+    return this.bpoManagementService.teamPerformance(u.roles, u.sectionId, {
+      taskTypeId: taskTypeId || undefined,
+      year:  year  || undefined,
+      month: month || undefined,
+      week:  week  || undefined,
+    });
   }
 
-  // Admin: histórico completo del team
+  // Admin: opciones de filtro con datos reales
+  @Get('filter-options')
+  @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.director)
+  filterOptions(
+    @CurrentUser() u: JwtUser,
+    @Query('year', new DefaultValuePipe(0), ParseIntPipe) year?: number,
+  ) {
+    return this.bpoManagementService.filterOptions(u.roles, u.sectionId, year || undefined);
+  }
+
+  // Admin: histórico completo del team (desde task_archive)
   @Get('team/history')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.director)
   teamHistory(
     @CurrentUser() u: JwtUser,
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(25), ParseIntPipe) limit: number,
+    @Query('page',       new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+    @Query('limit',      new DefaultValuePipe(25), ParseIntPipe) limit: number,
+    @Query('taskTypeId') taskTypeId?: string,
+    @Query('year',       new DefaultValuePipe(0),  ParseIntPipe) year?:  number,
+    @Query('month',      new DefaultValuePipe(0),  ParseIntPipe) month?: number,
+    @Query('week',       new DefaultValuePipe(0),  ParseIntPipe) week?:  number,
   ) {
-    return this.bpoManagementService.teamHistory(u.roles, u.sectionId, { page, limit });
+    return this.bpoManagementService.teamHistory(u.roles, u.sectionId, {
+      page, limit,
+      taskTypeId: taskTypeId || undefined,
+      year:  year  || undefined,
+      month: month || undefined,
+      week:  week  || undefined,
+    });
   }
 
   // Admin: performance de un BPO específico
   @Get('team/:accountId')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.director)
-  bpoPerformance(@Param('accountId') accountId: string) {
-    return this.bpoManagementService.bpoPerformance(accountId);
+  bpoPerformance(
+    @Param('accountId') accountId: string,
+    @Query('taskTypeId') taskTypeId?: string,
+    @Query('year',  new DefaultValuePipe(0), ParseIntPipe) year?:  number,
+    @Query('month', new DefaultValuePipe(0), ParseIntPipe) month?: number,
+    @Query('week',  new DefaultValuePipe(0), ParseIntPipe) week?:  number,
+  ) {
+    return this.bpoManagementService.bpoPerformance(accountId, {
+      taskTypeId: taskTypeId || undefined,
+      year:  year  || undefined,
+      month: month || undefined,
+      week:  week  || undefined,
+    });
   }
 }

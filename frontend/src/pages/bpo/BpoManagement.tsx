@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
 import Topbar from '../../components/layout/Topbar';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
 import Paginator from '../../components/ui/Paginator';
-import { bpoApi } from '../../api';
+import { bpoApi, taskTypesApi } from '../../api';
 import { useT } from '../../i18n';
-import type { Paginated } from '../../types';
+import type { Paginated, TaskType } from '../../types';
 
 interface BpoAccount {
   id: string;
@@ -25,21 +24,21 @@ interface BpoPerf {
   avgCompletionHours: number | null;
 }
 
-interface HistoryStep {
+interface HistoryArchive {
   id: string;
+  taskId: string;
+  taskTypeName: string;
+  taskTypeId: string;
+  brandName: string | null;
+  brandRef: string | null;
+  country: string | null;
+  createdByName: string | null;
   status: string;
-  stepDefinition?: { name: string; order: number };
-  assignedTo?: { id: string; name: string };
-}
-
-interface HistoryTask {
-  id: string;
-  status: string;
-  createdAt: string;
-  brand?: { brandName: string; country: string };
-  taskType?: { name: string };
-  createdBy?: { name: string };
-  stepInstances?: HistoryStep[];
+  stepsTotal: number;
+  stepsDone: number;
+  stepsFailed: number;
+  taskCreatedAt: string;
+  archivedAt: string;
 }
 
 const COUNTRY_EMOJI: Record<string, string> = { MX: '🇲🇽', CO: '🇨🇴', CR: '🇨🇷' };
@@ -61,20 +60,56 @@ function completionBar(completed: number, failed: number) {
 const HISTORY_LIMIT = 25;
 
 export default function BpoManagement() {
-  const nav = useNavigate();
   const t = useT();
   const [tab, setTab] = useState<'team' | 'history'>('team');
   const [selected, setSelected] = useState<BpoPerf | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
 
+  // Shared filters (used by both tabs)
+  const [filterTaskTypeId, setFilterTaskTypeId] = useState('');
+  const [filterYear,  setFilterYear]  = useState('');
+  const [filterMonth, setFilterMonth] = useState('');
+  const [filterWeek,  setFilterWeek]  = useState('');
+
+  const sharedFilters = {
+    taskTypeId: filterTaskTypeId || undefined,
+    year:  filterYear  ? Number(filterYear)  : undefined,
+    month: filterMonth ? Number(filterMonth) : undefined,
+    week:  filterWeek  ? Number(filterWeek)  : undefined,
+  };
+
+  const clearFilters = () => {
+    setFilterTaskTypeId(''); setFilterYear(''); setFilterMonth(''); setFilterWeek('');
+    setHistoryPage(1);
+  };
+
   const { data: team = [], isLoading: loadingTeam } = useQuery<BpoPerf[]>({
-    queryKey: ['bpo-team'],
-    queryFn: () => bpoApi.team().then(r => r.data),
+    queryKey: ['bpo-team', sharedFilters],
+    queryFn: () => bpoApi.team(sharedFilters).then(r => r.data),
   });
 
-  const { data: historyResult, isLoading: loadingHistory } = useQuery<Paginated<HistoryTask>>({
-    queryKey: ['bpo-team-history', historyPage],
-    queryFn: () => bpoApi.teamHistory(historyPage, HISTORY_LIMIT).then(r => r.data),
+  const { data: taskTypesResult } = useQuery<{ data: TaskType[] }>({
+    queryKey: ['task-types', { limit: 200 }],
+    queryFn: () => taskTypesApi.list({ limit: 200 }).then(r => r.data as { data: TaskType[] }),
+  });
+
+  const { data: yearOptions = [] } = useQuery<number[]>({
+    queryKey: ['bpo-filter-years'],
+    queryFn: () => bpoApi.filterOptions().then(r => r.data.years),
+  });
+
+  const { data: subOptions } = useQuery<{ months: number[]; weeks: number[] }>({
+    queryKey: ['bpo-filter-sub', filterYear],
+    queryFn: () => bpoApi.filterOptions(Number(filterYear)).then(r => ({ months: r.data.months, weeks: r.data.weeks })),
+    enabled: !!filterYear,
+  });
+  const monthOptions = subOptions?.months ?? [];
+  const weekOptions  = subOptions?.weeks  ?? [];
+  const taskTypes: TaskType[] = taskTypesResult?.data ?? [];
+
+  const { data: historyResult, isLoading: loadingHistory } = useQuery<Paginated<HistoryArchive>>({
+    queryKey: ['bpo-team-history', historyPage, sharedFilters],
+    queryFn: () => bpoApi.teamHistory(historyPage, HISTORY_LIMIT, sharedFilters).then(r => r.data),
     enabled: tab === 'history',
   });
   const history = historyResult?.data ?? [];
@@ -116,6 +151,38 @@ export default function BpoManagement() {
             <div className="s-value" style={{ color: 'var(--red)' }}>{totalFailed}</div>
             <div className="s-meta">{t('common.allTime')}</div>
           </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select className="form-select" style={{ width: 200, margin: 0 }}
+            value={filterTaskTypeId} onChange={e => { setFilterTaskTypeId(e.target.value); setHistoryPage(1); }}>
+            <option value="">{t('pages.bpoMgmt.filterAllTaskTypes')}</option>
+            {taskTypes.map(tt => <option key={tt.id} value={tt.id}>{tt.name}</option>)}
+          </select>
+          {yearOptions.length > 0 && (
+            <select className="form-select" style={{ width: 110, margin: 0 }}
+              value={filterYear} onChange={e => { setFilterYear(e.target.value); setFilterMonth(''); setFilterWeek(''); setHistoryPage(1); }}>
+              <option value="">{t('pages.bpoMgmt.filterYear')}</option>
+              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          )}
+          {filterYear && monthOptions.length > 0 && (
+            <select className="form-select" style={{ width: 130, margin: 0 }}
+              value={filterMonth} onChange={e => { setFilterMonth(e.target.value); setFilterWeek(''); setHistoryPage(1); }}>
+              <option value="">{t('pages.bpoMgmt.filterMonth')}</option>
+              {monthOptions.map(m => <option key={m} value={m}>{m.toString().padStart(2, '0')}</option>)}
+            </select>
+          )}
+          {filterYear && !filterMonth && weekOptions.length > 0 && (
+            <select className="form-select" style={{ width: 130, margin: 0 }}
+              value={filterWeek} onChange={e => { setFilterWeek(e.target.value); setHistoryPage(1); }}>
+              <option value="">{t('pages.bpoMgmt.filterWeek')}</option>
+              {weekOptions.map(w => <option key={w} value={w}>W{w.toString().padStart(2, '0')}</option>)}
+            </select>
+          )}
+          {(filterTaskTypeId || filterYear) && (
+            <button className="btn btn-ghost btn-sm" onClick={clearFilters}>{t('common.clear')}</button>
+          )}
         </div>
 
         <div className="tabs">
@@ -182,53 +249,60 @@ export default function BpoManagement() {
         )}
 
         {tab === 'history' && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t('pages.bpoMgmt.histColBrand')}</th>
-                  <th>{t('pages.bpoMgmt.histColTaskType')}</th>
-                  <th>{t('pages.bpoMgmt.histColStatus')}</th>
-                  <th>{t('pages.bpoMgmt.histColSteps')}</th>
-                  <th>{t('pages.bpoMgmt.histColCreatedBy')}</th>
-                  <th>{t('pages.bpoMgmt.histColDate')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loadingHistory && (
-                  <tr><td colSpan={6} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>
-                )}
-                {!loadingHistory && history.length === 0 && (
-                  <tr><td colSpan={6}><div className="empty-state"><p>{t('pages.bpoMgmt.histNoTasks')}</p></div></td></tr>
-                )}
-                {history.map(tk => (
-                  <tr key={tk.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/tasks/${tk.id}`)}>
-                    <td>
-                      <span style={{ fontWeight: 600 }}>{tk.brand?.brandName ?? '—'}</span>
-                      {tk.brand?.country && (
-                        <span style={{ marginLeft: 6, fontSize: '0.75rem' }}>{COUNTRY_EMOJI[tk.brand.country] ?? ''}</span>
-                      )}
-                    </td>
-                    <td className="text-muted">{tk.taskType?.name ?? '—'}</td>
-                    <td><StatusBadge status={tk.status} /></td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-                        {(tk.stepInstances ?? []).map(s => (
-                          <span key={s.id} title={`${s.stepDefinition?.name ?? '?'} → ${s.assignedTo?.name ?? 'unassigned'}`} style={{
-                            width: 8, height: 8, borderRadius: '50%', display: 'inline-block', flexShrink: 0,
-                            background: s.status === 'done' ? 'var(--green)' : s.status === 'failed' ? 'var(--red)' : s.status === 'in_progress' ? 'var(--amber)' : s.status === 'blocked' ? 'var(--purple, #7C3AED)' : 'var(--border)',
-                          }} />
-                        ))}
-                      </div>
-                    </td>
-                    <td className="text-muted text-sm">{tk.createdBy?.name ?? '—'}</td>
-                    <td className="text-muted text-sm">{new Date(tk.createdAt).toLocaleDateString()}</td>
+          <>
+            <div style={{ textAlign: 'right', marginBottom: 10, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+              {historyTotal} {t('pages.bpoMgmt.histArchivedTasks')}
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t('pages.bpoMgmt.histColBrand')}</th>
+                    <th>{t('pages.bpoMgmt.histColTaskType')}</th>
+                    <th>{t('pages.bpoMgmt.histColStatus')}</th>
+                    <th>{t('pages.bpoMgmt.histColSteps')}</th>
+                    <th>{t('pages.bpoMgmt.histColCreatedBy')}</th>
+                    <th>{t('pages.bpoMgmt.histColDate')}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            <Paginator page={historyPage} total={historyTotal} limit={HISTORY_LIMIT} onChange={setHistoryPage} />
-          </div>
+                </thead>
+                <tbody>
+                  {loadingHistory && (
+                    <tr><td colSpan={6} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>
+                  )}
+                  {!loadingHistory && history.length === 0 && (
+                    <tr><td colSpan={6}><div className="empty-state"><p>{t('pages.bpoMgmt.histNoTasks')}</p></div></td></tr>
+                  )}
+                  {history.map(tk => (
+                    <tr key={tk.id}>
+                      <td>
+                        <span style={{ fontWeight: 600 }}>{tk.brandName ?? '—'}</span>
+                        {tk.country && (
+                          <span style={{ marginLeft: 6, fontSize: '0.75rem' }}>{COUNTRY_EMOJI[tk.country] ?? ''}</span>
+                        )}
+                        {tk.brandRef && (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{tk.brandRef}</div>
+                        )}
+                      </td>
+                      <td className="text-muted">{tk.taskTypeName}</td>
+                      <td><StatusBadge status={tk.status} /></td>
+                      <td>
+                        <span style={{ fontSize: '0.8rem' }}>
+                          <span style={{ color: 'var(--green)', fontWeight: 600 }}>{tk.stepsDone}</span>
+                          <span style={{ color: 'var(--text-muted)' }}>/{tk.stepsTotal}</span>
+                          {tk.stepsFailed > 0 && (
+                            <span style={{ color: 'var(--red)', marginLeft: 4 }}>({tk.stepsFailed} ✗)</span>
+                          )}
+                        </span>
+                      </td>
+                      <td className="text-muted text-sm">{tk.createdByName ?? '—'}</td>
+                      <td className="text-muted text-sm">{tk.taskCreatedAt ? new Date(tk.taskCreatedAt).toLocaleDateString() : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <Paginator page={historyPage} total={historyTotal} limit={HISTORY_LIMIT} onChange={setHistoryPage} />
+            </div>
+          </>
         )}
       </main>
 

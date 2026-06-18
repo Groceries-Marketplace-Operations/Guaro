@@ -5,6 +5,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from '../tasks/task-engine.service';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 
+const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+
 const AUTO_STEP_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 @Injectable()
@@ -93,6 +95,72 @@ export class SchedulerService {
         this.logger.error(`Error on bpo timeout ${step.id}: ${(err as Error).message}`);
       }
     }
+  }
+
+  // Archive tasks older than 1 year — runs daily at 3 AM
+  @Cron('0 3 * * *')
+  async archiveOldTasks(cutoffOverride?: Date) {
+    const cutoff = cutoffOverride ?? new Date(Date.now() - ONE_YEAR_MS);
+
+    const tasks = await this.prisma.task.findMany({
+      where: { createdAt: { lte: cutoff }, deletedAt: null },
+      include: {
+        taskType: { select: { id: true, name: true, sectionId: true } },
+        brand: { select: { brandName: true, brandId: true, country: true } },
+        createdBy: { select: { name: true } },
+        stepInstances: { select: { status: true } },
+      },
+    });
+
+    if (tasks.length === 0) return;
+
+    for (const task of tasks) {
+      try {
+        const activeStatuses: TaskStatus[] = [TaskStatus.pending, TaskStatus.assigned, TaskStatus.in_progress, TaskStatus.scheduled];
+        const isActive = activeStatuses.includes(task.status);
+
+        if (isActive) {
+          await this.prisma.task.update({
+            where: { id: task.id },
+            data: { status: TaskStatus.failed },
+          });
+          await this.prisma.stepInstance.updateMany({
+            where: { taskId: task.id, status: { in: [StepStatus.pending, StepStatus.in_progress, StepStatus.blocked] } },
+            data: { status: StepStatus.failed, failureReason: StepFailureReason.system_timed_out },
+          });
+        }
+
+        const stepsTotal  = task.stepInstances.length;
+        const stepsDone   = task.stepInstances.filter(s => s.status === StepStatus.done).length;
+        const stepsFailed = task.stepInstances.filter(s => s.status === StepStatus.failed).length;
+        const finalStatus = isActive ? TaskStatus.failed : task.status;
+
+        await this.prisma.taskArchive.create({
+          data: {
+            taskId:        task.id,
+            taskTypeName:  task.taskType.name,
+            taskTypeId:    task.taskType.id,
+            sectionId:     task.taskType.sectionId,
+            brandName:     task.brand?.brandName ?? null,
+            brandRef:      task.brand?.brandId   ?? null,
+            country:       task.brand?.country   ?? null,
+            createdByName: task.createdBy?.name  ?? null,
+            status:        finalStatus,
+            stepsTotal,
+            stepsDone,
+            stepsFailed,
+            taskCreatedAt: task.createdAt,
+            taskUpdatedAt: task.updatedAt,
+          },
+        });
+
+        await this.prisma.task.delete({ where: { id: task.id } });
+      } catch (err) {
+        this.logger.error(`Error archiving task ${task.id}: ${(err as Error).message}`);
+      }
+    }
+
+    this.logger.log(`Archived ${tasks.length} task(s) older than 1 year`);
   }
 
   // Automatic steps running for more than 2h

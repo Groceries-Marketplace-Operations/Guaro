@@ -124,8 +124,12 @@ export const tasksApi = {
 export const bpoApi = {
   myTasks: () => client.get('/bpo-management/my-tasks'),
   myPerformance: () => client.get('/bpo-management/my-performance'),
-  team: () => client.get('/bpo-management/team'),
-  teamHistory: (page = 1, limit = 25) => client.get('/bpo-management/team/history', { params: { page, limit } }),
+  team: (filters?: { taskTypeId?: string; year?: number; month?: number; week?: number }) =>
+    client.get('/bpo-management/team', { params: filters }),
+  filterOptions: (year?: number) =>
+    client.get<{ years: number[]; months: number[]; weeks: number[] }>('/bpo-management/filter-options', { params: year ? { year } : {} }),
+  teamHistory: (page = 1, limit = 25, filters?: { taskTypeId?: string; year?: number; month?: number; week?: number }) =>
+    client.get('/bpo-management/team/history', { params: { page, limit, ...filters } }),
   bpoPerf: (id: string) => client.get(`/bpo-management/team/${id}`),
 };
 

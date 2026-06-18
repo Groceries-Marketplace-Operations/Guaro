@@ -29,4 +29,11 @@ export class DevSchedulerController {
     await this.scheduler.checkAutoTimeouts();
     return { ok: true, ran: 'checkAutoTimeouts' };
   }
+
+  @Post('archive')
+  async archive() {
+    // Pass "now" as cutoff so ALL existing tasks get archived (dev only)
+    await this.scheduler.archiveOldTasks(new Date());
+    return { ok: true, ran: 'archiveOldTasks' };
+  }
 }

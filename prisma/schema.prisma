@@ -548,6 +548,31 @@ model FormValue {
   @@map("form_value")
 }
 
+// -------------------- Task archive ------------------------------------------
+model TaskArchive {
+  id            String   @id @default(uuid()) @db.Uuid
+  taskId        String   @map("task_id") @db.Uuid
+  taskTypeName  String   @map("task_type_name")
+  taskTypeId    String   @map("task_type_id") @db.Uuid
+  sectionId     String?  @map("section_id") @db.Uuid
+  brandName     String?  @map("brand_name")
+  brandRef      String?  @map("brand_ref")
+  country       String?
+  createdByName String?  @map("created_by_name")
+  status        String
+  stepsTotal    Int      @default(0) @map("steps_total")
+  stepsDone     Int      @default(0) @map("steps_done")
+  stepsFailed   Int      @default(0) @map("steps_failed")
+  taskCreatedAt DateTime @map("task_created_at") @db.Timestamptz
+  taskUpdatedAt DateTime @map("task_updated_at") @db.Timestamptz
+  archivedAt    DateTime @default(now()) @map("archived_at") @db.Timestamptz
+
+  @@index([taskTypeId])
+  @@index([sectionId])
+  @@index([taskCreatedAt])
+  @@map("task_archive")
+}
+
 // -------------------- App-level configuration --------------------------------
 // Stores which enum values are active + display labels.
 // Categories: country, menu_integration, picking_mode, payment_mode, ka_type
