@@ -1,9 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { ExecutionType, StepFailureReason, StepStatus, TaskStatus } from '@prisma/client';
+import { readdirSync, statSync, unlinkSync, existsSync } from 'fs';
+import { join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from '../tasks/task-engine.service';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
+
+const ERROR_LOGS_DIR = join(process.cwd(), 'uploads', 'errors');
+const ERROR_LOG_TTL_MS = 15 * 24 * 60 * 60 * 1000; // 15 days
 
 const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -161,6 +166,24 @@ export class SchedulerService {
     }
 
     this.logger.log(`Archived ${tasks.length} task(s) older than 1 year`);
+  }
+
+  // Purge error log files older than 15 days — runs daily at 3:30 AM
+  @Cron('30 3 * * *')
+  async purgeOldErrorLogs() {
+    if (!existsSync(ERROR_LOGS_DIR)) return;
+    const cutoff = Date.now() - ERROR_LOG_TTL_MS;
+    let removed = 0;
+    for (const file of readdirSync(ERROR_LOGS_DIR)) {
+      const filePath = join(ERROR_LOGS_DIR, file);
+      try {
+        if (statSync(filePath).mtimeMs < cutoff) {
+          unlinkSync(filePath);
+          removed++;
+        }
+      } catch { /* skip locked/missing files */ }
+    }
+    if (removed > 0) this.logger.log(`Purged ${removed} error log(s) older than 15 days`);
   }
 
   // Automatic steps running for more than 2h
