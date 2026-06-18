@@ -94,6 +94,7 @@ export class InvitationsService {
         where,
         select: {
           id: true,
+          token: true,
           rol: true,
           sectionId: true,
           section: { select: { id: true, name: true } },

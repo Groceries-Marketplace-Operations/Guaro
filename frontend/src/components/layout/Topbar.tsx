@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 
 interface Props {
@@ -18,7 +19,7 @@ export default function Topbar({ breadcrumb = [] }: Props) {
             <span className="bc-sep">/</span>
             {i === breadcrumb.length - 1
               ? <span className="bc-current">{b.label}</span>
-              : <a href={b.href ?? '#'} className="bc-root" style={{ color: 'var(--text-muted)' }}>{b.label}</a>}
+              : <Link to={b.href ?? '/'} className="bc-root" style={{ color: 'var(--text-muted)' }}>{b.label}</Link>}
           </span>
         ))}
       </nav>

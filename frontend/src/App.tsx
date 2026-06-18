@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './auth/AuthContext';
 import PrivateRoute from './auth/PrivateRoute';
@@ -21,6 +21,8 @@ import SettingsPage from './pages/settings/SettingsPage';
 import ApplicationsPage from './pages/ApplicationsPage';
 import InvitePage from './pages/InvitePage';
 import AuthCallback from './pages/AuthCallback';
+import AuthError from './pages/AuthError';
+import NotFound from './pages/NotFound';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
 
@@ -32,7 +34,9 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/auth/error" element={<AuthError />} />
             <Route path="/invite/:token" element={<InvitePage />} />
+            <Route path="*" element={<NotFound />} />
             <Route path="/" element={<PrivateRoute><AppLayout /></PrivateRoute>}>
               <Route index element={<Dashboard />} />
               <Route path="brands" element={<BrandsList />} />
@@ -49,7 +53,7 @@ export default function App() {
               <Route path="config" element={<Config />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="applications" element={<ApplicationsPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
         </BrowserRouter>

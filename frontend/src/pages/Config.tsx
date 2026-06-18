@@ -9,6 +9,7 @@ import type { Handler, Webhook, Section, AccountRole, Paginated } from '../types
 
 interface InvitationRow {
   id: string;
+  token: string;
   rol: string;
   section?: { name: string };
   usedAt?: string | null;
@@ -86,6 +87,7 @@ export default function Config() {
   const [editingWebhook, setEditingWebhook] = useState<Webhook | null>(null);
   const [editWhForm, setEditWhForm] = useState({ name: '', url: '', isAlerts: false });
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedInvId, setCopiedInvId] = useState<string | null>(null);
   const [invForm, setInvForm] = useState({ role: 'bpo' as AccountRole, sectionId: '' });
 
   // Invitations pagination
@@ -224,6 +226,14 @@ export default function Config() {
     navigator.clipboard.writeText(inviteLink).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
+    });
+  };
+
+  const copyInviteLink = (inv: InvitationRow) => {
+    const link = `${window.location.origin}${import.meta.env.BASE_URL}invite/${inv.token}`;
+    navigator.clipboard.writeText(link).then(() => {
+      setCopiedInvId(inv.id);
+      setTimeout(() => setCopiedInvId(null), 2500);
     });
   };
 
@@ -385,14 +395,24 @@ export default function Config() {
                         <td className="text-muted text-sm">{new Date(inv.expiresAt).toLocaleDateString()}</td>
                         <td>
                           {isPending && (
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              style={{ color: 'var(--red)', padding: '3px 8px' }}
-                              onClick={() => deleteInvitation(inv.id)}
-                              title="Delete invitation"
-                            >
-                              <TrashIcon />
-                            </button>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                style={{ padding: '3px 8px', color: copiedInvId === inv.id ? 'var(--green)' : undefined }}
+                                onClick={() => copyInviteLink(inv)}
+                                title="Copy invite link"
+                              >
+                                {copiedInvId === inv.id ? '✓' : <CopyIcon />}
+                              </button>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                style={{ color: 'var(--red)', padding: '3px 8px' }}
+                                onClick={() => deleteInvitation(inv.id)}
+                                title="Delete invitation"
+                              >
+                                <TrashIcon />
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>

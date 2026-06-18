@@ -35,8 +35,8 @@ export class TasksController {
 
   @Get(':id')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
-  findOne(@Param('id') id: string) {
-    return this.tasksService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() u: JwtUser) {
+    return this.tasksService.findOne(id, { roles: u.roles, accountId: u.id, sectionId: u.sectionId });
   }
 
   @Post()

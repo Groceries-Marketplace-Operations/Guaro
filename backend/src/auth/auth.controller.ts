@@ -1,10 +1,22 @@
-import { Body, Controller, ForbiddenException, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
+import {
+  ArgumentsHost, Body, Catch, Controller, ExceptionFilter,
+  ForbiddenException, Get, HttpException, Post, Req, Res, UseFilters, UseGuards,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Response } from 'express';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { JwtUser } from './types/jwt-user.interface';
+
+@Catch(HttpException)
+class OAuthFailureFilter implements ExceptionFilter {
+  catch(_: HttpException, host: ArgumentsHost) {
+    const res = host.switchToHttp().getResponse<Response>();
+    const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/auth/error?reason=not_invited`);
+  }
+}
 
 @Controller('auth')
 export class AuthController {
@@ -17,6 +29,7 @@ export class AuthController {
   }
 
   @Get('google/callback')
+  @UseFilters(OAuthFailureFilter)
   @UseGuards(AuthGuard('google'))
   async googleCallback(@Req() req: { user: Parameters<AuthService['issueToken']>[0] }, @Res() res: Response) {
     const token = this.authService.issueToken(req.user);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { invitationsApi } from '../api';
 
@@ -9,6 +9,13 @@ export default function InvitePage() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    if (done) {
+      const t = setTimeout(() => nav('/login', { replace: true }), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [done, nav]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,10 +49,10 @@ export default function InvitePage() {
           <>
             <h2 style={{ marginBottom: 8 }}>Account created</h2>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: 24 }}>
-              Your account is ready. Sign in with your Google account (<strong>{form.email}</strong>) to continue.
+              Your account is ready. Redirecting you to sign in…
             </p>
-            <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => nav('/login')}>
-              Go to sign in
+            <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => nav('/login', { replace: true })}>
+              Go to sign in now
             </button>
           </>
         ) : (

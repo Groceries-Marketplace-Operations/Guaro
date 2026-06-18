@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AccountRole, ExecutionType, Prisma, StepFailureReason, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from './task-engine.service';
@@ -155,9 +155,34 @@ export class TasksService {
     return { data, total, page, limit };
   }
 
-  async findOne(id: string) {
+  async findOne(
+    id: string,
+    viewer?: { roles: AccountRole[]; accountId: string; sectionId: string | null },
+  ) {
     const task = await this.prisma.task.findUnique({ where: { id }, include: TASK_INCLUDE });
     if (!task || task.deletedAt) throw new NotFoundException('Task not found');
+
+    if (viewer) {
+      const { roles, accountId, sectionId } = viewer;
+      const isSuperAdmin = roles.includes(AccountRole.super_admin);
+      const isAdmin      = roles.includes(AccountRole.admin);
+      const isBpo        = roles.includes(AccountRole.bpo);
+      const isUser       = roles.includes(AccountRole.user);
+      const isDirector   = roles.includes(AccountRole.director);
+
+      if (!isSuperAdmin && !isAdmin && !isDirector) {
+        if (isUser && !isBpo) {
+          if (task.createdById !== accountId) throw new ForbiddenException('Task not found');
+        } else if (isBpo && !isUser) {
+          const assigned = task.stepInstances.some((s: { assignedToId: string | null }) => s.assignedToId === accountId);
+          if (!assigned) throw new ForbiddenException('Task not found');
+        }
+      } else if (isAdmin && !isSuperAdmin) {
+        const taskSectionId = (task as { taskType?: { sectionId?: string } }).taskType?.sectionId;
+        if (taskSectionId && taskSectionId !== sectionId) throw new ForbiddenException('Task not found');
+      }
+    }
+
     return task;
   }
 
