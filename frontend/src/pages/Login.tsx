@@ -56,7 +56,7 @@ export default function Login() {
           {Array.from({ length: 64 }).map((_, i) => <span key={i} />)}
         </div>
         <div className="login-aside-logo">
-          <div className="big-d">D</div>
+          <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 80, height: 80, objectFit: 'contain', borderRadius: 16, marginBottom: 16 }} />
           <p>Operations Panel<br />Task &amp; Workflow Management<br />for Delivery Brands</p>
         </div>
       </div>
