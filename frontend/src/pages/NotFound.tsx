@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
+import { useT } from '../i18n';
 
 export default function NotFound() {
+  const t = useT();
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -18,12 +20,12 @@ export default function NotFound() {
         }}>
           404
         </div>
-        <h2 style={{ marginBottom: 10 }}>Page not found</h2>
+        <h2 style={{ marginBottom: 10 }}>{t('pages.notFound.title')}</h2>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', lineHeight: 1.6, marginBottom: 28 }}>
-          The page you're looking for doesn't exist or has been moved.
+          {t('pages.notFound.body')}
         </p>
         <Link to="/" className="btn btn-primary" style={{ textDecoration: 'none' }}>
-          Back to dashboard
+          {t('pages.notFound.backToDashboard')}
         </Link>
       </div>
     </div>

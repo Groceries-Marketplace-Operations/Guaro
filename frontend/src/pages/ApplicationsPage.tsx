@@ -6,6 +6,7 @@ import Modal from '../components/ui/Modal';
 import Paginator from '../components/ui/Paginator';
 import { applicationsApi } from '../api';
 import { useAuth } from '../auth/AuthContext';
+import { useT } from '../i18n';
 import type { Application, Country, Paginated } from '../types';
 
 const COUNTRY_EMOJI: Record<Country, string> = { MX: '🇲🇽', CO: '🇨🇴', CR: '🇨🇷' };
@@ -32,22 +33,20 @@ const EditIcon = () => (
 export default function ApplicationsPage() {
   const qc = useQueryClient();
   const { account } = useAuth();
+  const t = useT();
   const isAdmin = account?.roles.includes('admin') || account?.roles.includes('super_admin');
   const isBpoOnly = account?.roles.includes('bpo') && !isAdmin;
   const hasAppPermission = (account?.bpoPermissions ?? []).includes('create_application');
   const canAccessApps = isAdmin || (isBpoOnly && hasAppPermission);
   const canCreateApp = canAccessApps;
 
-  // filters
   const [q, setQ] = useState('');
   const [country, setCountry] = useState<Country | ''>('');
   const [page, setPage] = useState(1);
 
-  // create modal
   const [openCreate, setOpenCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ appId: '', appName: '', country: 'MX' as Country, appSecret: '' });
 
-  // edit modal
   const [editApp, setEditApp] = useState<Application | null>(null);
   const [editForm, setEditForm] = useState({ appName: '', appSecret: '' });
 
@@ -105,7 +104,7 @@ export default function ApplicationsPage() {
   };
 
   const handleDelete = async (a: Application) => {
-    if (!window.confirm(`Delete application "${a.appName}"?`)) return;
+    if (!window.confirm(t('pages.applications.deleteConfirm').replace('{name}', a.appName))) return;
     try {
       await applicationsApi.delete(a.id);
       qc.invalidateQueries({ queryKey: ['applications'] });
@@ -114,30 +113,33 @@ export default function ApplicationsPage() {
 
   if (!canAccessApps) return <Navigate to="/" replace />;
 
+  const subtitle = total === 1
+    ? t('pages.applications.subtitle').replace('{total}', String(total))
+    : t('pages.applications.subtitlePlural').replace('{total}', String(total));
+
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Applications' }]} />
+      <Topbar breadcrumb={[{ label: t('nav.applications') }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
-            <h1>Applications</h1>
-            <p>{total} application{total !== 1 ? 's' : ''}</p>
+            <h1>{t('pages.applications.title')}</h1>
+            <p>{subtitle}</p>
           </div>
           <div className="page-actions">
             {canCreateApp && (
               <button className="btn btn-primary" onClick={() => { setOpenCreate(true); setErr(''); }}>
-                <PlusIcon /> New Application
+                <PlusIcon /> {t('pages.applications.newApplication')}
               </button>
             )}
           </div>
         </div>
 
-        {/* Filters */}
         <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
           <input
             className="form-input"
             style={{ width: 260, margin: 0 }}
-            placeholder="Search by name or App ID…"
+            placeholder={t('pages.applications.searchPlaceholder')}
             value={q}
             onChange={e => { setQ(e.target.value); setPage(1); }}
           />
@@ -147,26 +149,32 @@ export default function ApplicationsPage() {
             value={country}
             onChange={e => { setCountry(e.target.value as Country | ''); setPage(1); }}
           >
-            <option value="">All countries</option>
+            <option value="">{t('pages.applications.allCountries')}</option>
             {COUNTRIES.map(c => <option key={c} value={c}>{COUNTRY_EMOJI[c]} {c}</option>)}
           </select>
           {(q || country) && (
-            <button className="btn btn-ghost btn-sm" onClick={resetFilters}>Clear filters</button>
+            <button className="btn btn-ghost btn-sm" onClick={resetFilters}>{t('pages.applications.clearFilters')}</button>
           )}
         </div>
 
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Name</th><th>App ID</th><th>Country</th><th>Created</th><th></th></tr>
+              <tr>
+                <th>{t('pages.applications.colName')}</th>
+                <th>{t('pages.applications.colAppId')}</th>
+                <th>{t('pages.applications.colCountry')}</th>
+                <th>{t('pages.applications.colCreated')}</th>
+                <th></th>
+              </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={5} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>Loading…</td></tr>}
+              {isLoading && <tr><td colSpan={5} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>}
               {!isLoading && apps.length === 0 && (
                 <tr><td colSpan={5}>
                   <div className="empty-state">
-                    <h3>No applications</h3>
-                    <p>Create an application to link it to brands during setup.</p>
+                    <h3>{t('pages.applications.noApplications')}</h3>
+                    <p>{t('pages.applications.noApplicationsHint')}</p>
                   </div>
                 </td></tr>
               )}
@@ -179,11 +187,11 @@ export default function ApplicationsPage() {
                   <td>
                     <div style={{ display: 'flex', gap: 4 }}>
                       <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px' }}
-                        onClick={() => openEdit(a)} title="Edit">
+                        onClick={() => openEdit(a)} title={t('common.edit')}>
                         <EditIcon />
                       </button>
                       <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px', color: 'var(--red)' }}
-                        onClick={() => handleDelete(a)} title="Delete">
+                        onClick={() => handleDelete(a)} title={t('common.delete')}>
                         <TrashIcon />
                       </button>
                     </div>
@@ -199,71 +207,72 @@ export default function ApplicationsPage() {
         )}
       </main>
 
-      {/* Create modal */}
       {openCreate && (
-        <Modal title="New Application" onClose={() => { setOpenCreate(false); setErr(''); }}
+        <Modal title={t('pages.applications.modalCreate')} onClose={() => { setOpenCreate(false); setErr(''); }}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => { setOpenCreate(false); setErr(''); }}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => { setOpenCreate(false); setErr(''); }}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
-              {saving ? 'Creating…' : 'Create'}
+              {saving ? t('pages.applications.creating') : t('common.create')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">App ID <span style={{ color: 'var(--red)' }}>*</span></label>
+              <label className="form-label">{t('pages.applications.appIdLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
               <input className="form-input" placeholder="APP-MX-001" value={createForm.appId}
                 onChange={e => setCreateForm(f => ({ ...f, appId: e.target.value }))} required autoFocus />
             </div>
             <div className="form-group">
-              <label className="form-label">App Name <span style={{ color: 'var(--red)' }}>*</span></label>
+              <label className="form-label">{t('pages.applications.appNameLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
               <input className="form-input" placeholder="DiDi Mexico" value={createForm.appName}
                 onChange={e => setCreateForm(f => ({ ...f, appName: e.target.value }))} required />
             </div>
           </div>
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Country <span style={{ color: 'var(--red)' }}>*</span></label>
+              <label className="form-label">{t('pages.applications.countryLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
               <select className="form-select" value={createForm.country}
                 onChange={e => setCreateForm(f => ({ ...f, country: e.target.value as Country }))}>
                 {COUNTRIES.map(c => <option key={c} value={c}>{COUNTRY_EMOJI[c]} {c}</option>)}
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">App Secret <span style={{ color: 'var(--red)' }}>*</span></label>
+              <label className="form-label">{t('pages.applications.appSecretLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
               <input className="form-input" type="password" placeholder="••••••••" value={createForm.appSecret}
                 onChange={e => setCreateForm(f => ({ ...f, appSecret: e.target.value }))} required />
-              <p className="form-hint">Stored encrypted — never exposed in responses.</p>
+              <p className="form-hint">{t('pages.applications.appSecretHint')}</p>
             </div>
           </div>
         </Modal>
       )}
 
-      {/* Edit modal */}
       {editApp && (
-        <Modal title={`Edit — ${editApp.appName}`} onClose={() => { setEditApp(null); setErr(''); }}
+        <Modal title={t('pages.applications.modalEdit').replace('{name}', editApp.appName)} onClose={() => { setEditApp(null); setErr(''); }}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => { setEditApp(null); setErr(''); }}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => { setEditApp(null); setErr(''); }}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={handleEdit} disabled={saving}>
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? t('pages.applications.saving') : t('common.save')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <p className="text-muted text-sm" style={{ marginBottom: 14 }}>
-            App ID (<span className="td-mono">{editApp.appId}</span>) and country ({COUNTRY_EMOJI[editApp.country]} {editApp.country}) cannot be changed.
+            {t('pages.applications.editHint')
+              .replace('{appId}', editApp.appId)
+              .replace('{flag}', COUNTRY_EMOJI[editApp.country])
+              .replace('{country}', editApp.country)}
           </p>
           <div className="form-group">
-            <label className="form-label">App Name</label>
+            <label className="form-label">{t('pages.applications.editAppName')}</label>
             <input className="form-input" value={editForm.appName}
               onChange={e => setEditForm(f => ({ ...f, appName: e.target.value }))} autoFocus />
           </div>
           <div className="form-group">
-            <label className="form-label">New App Secret <span className="text-muted">(leave blank to keep current)</span></label>
+            <label className="form-label">{t('pages.applications.editSecretLabel')} <span className="text-muted">{t('pages.applications.editSecretNote')}</span></label>
             <input className="form-input" type="password" placeholder="••••••••" value={editForm.appSecret}
               onChange={e => setEditForm(f => ({ ...f, appSecret: e.target.value }))} />
-            <p className="form-hint">Stored encrypted. Only fill to rotate the secret.</p>
+            <p className="form-hint">{t('pages.applications.editSecretHint')}</p>
           </div>
         </Modal>
       )}

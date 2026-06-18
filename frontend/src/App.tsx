@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './auth/AuthContext';
+import { LangProvider } from './i18n';
 import PrivateRoute from './auth/PrivateRoute';
 import AppLayout from './components/layout/AppLayout';
 import Login from './pages/Login';
@@ -29,6 +30,7 @@ const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 3
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
+      <LangProvider>
       <AuthProvider>
         <BrowserRouter basename="/guaro">
           <Routes>
@@ -58,6 +60,7 @@ export default function App() {
           </Routes>
         </BrowserRouter>
       </AuthProvider>
+      </LangProvider>
     </QueryClientProvider>
   );
 }

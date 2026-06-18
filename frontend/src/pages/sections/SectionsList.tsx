@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { sectionsApi } from '../../api';
+import { useT } from '../../i18n';
 import type { Section } from '../../types';
 
 const PlusIcon = () => (
@@ -13,6 +14,7 @@ const PlusIcon = () => (
 
 export default function SectionsList() {
   const qc = useQueryClient();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -37,25 +39,30 @@ export default function SectionsList() {
 
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Sections' }]} />
+      <Topbar breadcrumb={[{ label: t('nav.sections') }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
-            <h1>Sections</h1>
-            <p>Teams that group task types and accounts</p>
+            <h1>{t('pages.sections.title')}</h1>
+            <p>{t('pages.sections.subtitle')}</p>
           </div>
-          <button className="btn btn-primary" onClick={() => setOpen(true)}><PlusIcon /> New Section</button>
+          <button className="btn btn-primary" onClick={() => setOpen(true)}><PlusIcon /> {t('pages.sections.newSection')}</button>
         </div>
 
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Name</th><th>Task Types</th><th>Members</th><th>Created</th></tr>
+              <tr>
+                <th>{t('pages.sections.colName')}</th>
+                <th>{t('pages.sections.colTaskTypes')}</th>
+                <th>{t('pages.sections.colMembers')}</th>
+                <th>{t('pages.sections.colCreated')}</th>
+              </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={4} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>Loading…</td></tr>}
+              {isLoading && <tr><td colSpan={4} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>}
               {!isLoading && sections.length === 0 && (
-                <tr><td colSpan={4}><div className="empty-state"><h3>No sections</h3><p>Create your first section to organize teams.</p></div></td></tr>
+                <tr><td colSpan={4}><div className="empty-state"><h3>{t('pages.sections.noSections')}</h3><p>{t('pages.sections.noSectionsHint')}</p></div></td></tr>
               )}
               {sections.map(s => (
                 <tr key={s.id}>
@@ -71,15 +78,15 @@ export default function SectionsList() {
       </main>
 
       {open && (
-        <Modal title="New Section" onClose={() => setOpen(false)}
+        <Modal title={t('pages.sections.modalTitle')} onClose={() => setOpen(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>{saving ? 'Creating…' : 'Create'}</button>
+            <button className="btn btn-ghost" onClick={() => setOpen(false)}>{t('common.cancel')}</button>
+            <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>{saving ? t('pages.sections.creating') : t('common.create')}</button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Section Name</label>
+            <label className="form-label">{t('pages.sections.sectionNameLabel')}</label>
             <input className="form-input" placeholder="Operations MX" value={name}
               onChange={e => setName(e.target.value)} required autoFocus />
           </div>

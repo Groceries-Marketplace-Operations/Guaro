@@ -5,6 +5,7 @@ import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { taskTypesApi, handlersApi, webhooksApi, accountsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
+import { useT } from '../../i18n';
 import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account } from '../../types';
 
 const PlusIcon = () => (
@@ -41,12 +42,12 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 const WH_EVENTS: WebhookEvent[] = ['on_assignment', 'on_start', 'on_complete', 'on_fail'];
 const FIELD_TYPES = ['texto', 'numero', 'link', 'link_spreadsheet', 'select', 'select_brand', 'select_store', 'select_ka_type', 'select_country'];
 
-function execLabel(t: ExecutionType) {
-  return t === 'manual_internal' ? 'Manual Internal' : t === 'manual_external' ? 'Manual External' : 'Automatic';
+function execLabel(et: ExecutionType) {
+  return et === 'manual_internal' ? 'Manual Internal' : et === 'manual_external' ? 'Manual External' : 'Automatic';
 }
-function execColor(t: ExecutionType) {
-  if (t === 'automatic') return { bg: 'var(--blue-bg)', color: 'var(--blue)' };
-  if (t === 'manual_external') return { bg: 'var(--amber-bg)', color: '#B54708' };
+function execColor(et: ExecutionType) {
+  if (et === 'automatic') return { bg: 'var(--blue-bg)', color: 'var(--blue)' };
+  if (et === 'manual_external') return { bg: 'var(--amber-bg)', color: '#B54708' };
   return { bg: 'var(--green-bg)', color: '#027A48' };
 }
 
@@ -66,6 +67,7 @@ export default function TaskTypeDetail() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { account } = useAuth();
+  const t = useT();
   const isAdmin = account?.roles.includes('admin') ?? false;
   const isSA    = account?.roles.includes('super_admin') ?? false;
   const canDelete = isAdmin || isSA;
@@ -94,7 +96,7 @@ export default function TaskTypeDetail() {
   };
   const deleteTaskType = async () => {
     if (!tt) return;
-    if (!window.confirm(`Delete "${tt.name}"? This cannot be undone. Existing tasks of this type will not be affected.`)) return;
+    if (!window.confirm(t('pages.taskTypeDetail.deleteConfirm').replace('{name}', tt.name))) return;
     try {
       await taskTypesApi.delete(id!);
       qc.invalidateQueries({ queryKey: ['task-types'] });
@@ -365,7 +367,7 @@ export default function TaskTypeDetail() {
 
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Task Types', href: '/task-types' }, { label: tt.name }]} />
+      <Topbar breadcrumb={[{ label: t('nav.taskTypes'), href: '/task-types' }, { label: tt.name }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
@@ -375,12 +377,12 @@ export default function TaskTypeDetail() {
           <div className="page-actions">
             {tt.schedulable && (
               <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '4px 10px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue)' }}>
-                Schedulable
+                {t('pages.taskTypeDetail.schedulable')}
               </span>
             )}
             {!tt.active && (
               <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '4px 10px', borderRadius: 999, background: 'rgba(180,40,40,0.12)', color: 'var(--red)' }}>
-                Hidden
+                {t('pages.taskTypeDetail.hidden')}
               </span>
             )}
             <button
@@ -391,19 +393,19 @@ export default function TaskTypeDetail() {
                 qc.invalidateQueries({ queryKey: ['task-types'] });
               }}
             >
-              {tt.active ? 'Hide' : 'Show'}
+              {tt.active ? t('pages.taskTypeDetail.btnHide') : t('pages.taskTypeDetail.btnShow')}
             </button>
             <button className="btn btn-ghost btn-sm" onClick={openEditTaskType}>
-              <EditIcon /> Edit
+              <EditIcon /> {t('pages.taskTypeDetail.btnEdit')}
             </button>
             {canDelete && (
               <button
                 className="btn btn-ghost btn-sm"
                 style={{ color: 'var(--red)' }}
                 onClick={deleteTaskType}
-                title="Delete task type"
+                title={t('pages.taskTypeDetail.btnDelete')}
               >
-                Delete
+                {t('pages.taskTypeDetail.btnDelete')}
               </button>
             )}
           </div>
@@ -413,13 +415,13 @@ export default function TaskTypeDetail() {
           {/* Steps */}
           <div className="card">
             <div className="card-header">
-              <span className="card-title">Steps ({steps.length})</span>
+              <span className="card-title">{t('pages.taskTypeDetail.cardSteps').replace('{count}', String(steps.length))}</span>
               <button className="btn btn-primary btn-sm" onClick={openAddStep}>
-                <PlusIcon /> Add Step
+                <PlusIcon /> {t('pages.taskTypeDetail.addStep')}
               </button>
             </div>
             {steps.length === 0 ? (
-              <p className="text-muted text-sm">No steps yet. Steps define the sequence of actions in this workflow.</p>
+              <p className="text-muted text-sm">{t('pages.taskTypeDetail.noSteps')}</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {steps.map((s, i) => {
@@ -496,13 +498,13 @@ export default function TaskTypeDetail() {
                         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                           {isManual && (
                             <button className="btn btn-ghost btn-sm" onClick={() => { setErr(''); setCandidateId(''); setOpenBpos(s); }}>
-                              + BPOs {(s.candidates?.length ?? 0) > 0 ? `(${s.candidates!.length})` : ''}
+                              {t('pages.taskTypeDetail.addBpos')} {(s.candidates?.length ?? 0) > 0 ? `(${s.candidates!.length})` : ''}
                             </button>
                           )}
                           <button className="btn btn-ghost btn-sm" onClick={() => { setErr(''); setOpenWebhook(s); setWhForm({ webhookId: '', events: [] }); }}>
-                            + Webhook
+                            {t('pages.taskTypeDetail.addWebhook')}
                           </button>
-                          <button className="btn btn-ghost btn-sm" title="Edit step" onClick={() => openEditStep(s)}>
+                          <button className="btn btn-ghost btn-sm" title={t('pages.taskTypeDetail.btnEdit')} onClick={() => openEditStep(s)}>
                             <EditIcon />
                           </button>
                           <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => deleteStep(s.id)}>
@@ -520,13 +522,13 @@ export default function TaskTypeDetail() {
           {/* Form Fields */}
           <div className="card">
             <div className="card-header">
-              <span className="card-title">Form Fields ({fields.length})</span>
+              <span className="card-title">{t('pages.taskTypeDetail.cardFields').replace('{count}', String(fields.length))}</span>
               <button className="btn btn-primary btn-sm" onClick={openAddField}>
-                <PlusIcon /> Add Field
+                <PlusIcon /> {t('pages.taskTypeDetail.addField')}
               </button>
             </div>
             {fields.length === 0 ? (
-              <p className="text-muted text-sm">No fields yet. Form fields collect information when a task is created.</p>
+              <p className="text-muted text-sm">{t('pages.taskTypeDetail.noFields')}</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {fields.map((f, i) => {
@@ -584,9 +586,9 @@ export default function TaskTypeDetail() {
         {/* Templates */}
         <div className="card" style={{ marginTop: 16 }}>
           <div className="card-header">
-            <span className="card-title">Templates ({(tt.templates ?? []).length})</span>
-            <button className="btn btn-primary btn-sm" onClick={() => setAddingTemplate(t => !t)}>
-              <PlusIcon /> Add Template
+            <span className="card-title">{t('pages.taskTypeDetail.cardTemplates').replace('{count}', String((tt.templates ?? []).length))}</span>
+            <button className="btn btn-primary btn-sm" onClick={() => setAddingTemplate(prev => !prev)}>
+              <PlusIcon /> {t('pages.taskTypeDetail.addTemplate')}
             </button>
           </div>
 
@@ -596,7 +598,7 @@ export default function TaskTypeDetail() {
                 e.preventDefault();
                 setTemplateFileErr('');
                 const isFile = FILE_TIPOS.includes(templateForm.tipo);
-                if (isFile && !templateFile) { setTemplateFileErr('Select a file to upload.'); return; }
+                if (isFile && !templateFile) { setTemplateFileErr(t('pages.taskTypeDetail.templateFileRequired')); return; }
                 setSaving(true); setErr('');
                 try {
                   if (isFile && templateFile) {
@@ -612,13 +614,13 @@ export default function TaskTypeDetail() {
               }}
             >
               <div className="form-group" style={{ margin: 0, flex: '1 1 160px' }}>
-                <label className="form-label">Name</label>
+                <label className="form-label">{t('pages.taskTypeDetail.templateNameLabel')}</label>
                 <input className="form-input" placeholder="Integration SOP" value={templateForm.name}
                   onChange={e => setTemplateForm(f => ({ ...f, name: e.target.value }))} required autoFocus />
               </div>
 
               <div className="form-group" style={{ margin: 0 }}>
-                <label className="form-label">Type</label>
+                <label className="form-label">{t('pages.taskTypeDetail.templateTypeLabel')}</label>
                 <select className="form-select" value={templateForm.tipo}
                   onChange={e => {
                     setTemplateForm(f => ({ ...f, tipo: e.target.value, url: '' }));
@@ -631,7 +633,7 @@ export default function TaskTypeDetail() {
 
               {FILE_TIPOS.includes(templateForm.tipo) ? (
                 <div className="form-group" style={{ margin: 0, flex: '2 1 240px' }}>
-                  <label className="form-label">File <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(max 10 MB)</span></label>
+                  <label className="form-label">{t('pages.taskTypeDetail.templateFileLabel')} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{t('pages.taskTypeDetail.templateFileSizeHint')}</span></label>
                   <input
                     type="file"
                     accept={FILE_ACCEPT}
@@ -653,7 +655,7 @@ export default function TaskTypeDetail() {
                 </div>
               ) : (
                 <div className="form-group" style={{ margin: 0, flex: '2 1 240px' }}>
-                  <label className="form-label">URL</label>
+                  <label className="form-label">{t('pages.taskTypeDetail.templateUrlLabel')}</label>
                   <input className="form-input" placeholder="https://docs.google.com/…" value={templateForm.url}
                     onChange={e => setTemplateForm(f => ({ ...f, url: e.target.value }))} required />
                 </div>
@@ -662,18 +664,18 @@ export default function TaskTypeDetail() {
               <button type="submit" className="btn btn-primary btn-sm"
                 disabled={saving || !templateForm.name.trim() || !!templateFileErr ||
                   (FILE_TIPOS.includes(templateForm.tipo) ? !templateFile : !templateForm.url.trim())}>
-                {saving ? 'Adding…' : 'Add'}
+                {saving ? t('pages.taskTypeDetail.templateAdding') : t('pages.taskTypeDetail.templateAddBtn')}
               </button>
               <button type="button" className="btn btn-ghost btn-sm"
                 onClick={() => { setAddingTemplate(false); setTemplateFile(null); setTemplateFileErr(''); setErr(''); }}>
-                Cancel
+                {t('pages.taskTypeDetail.templateCancelBtn')}
               </button>
               {err && <div className="error-banner" style={{ width: '100%', marginTop: 4 }}>{err}</div>}
             </form>
           )}
 
           {(tt.templates ?? []).length === 0 && !addingTemplate ? (
-            <p className="text-muted text-sm">No templates yet. Templates are links or files shown to users when creating a task.</p>
+            <p className="text-muted text-sm">{t('pages.taskTypeDetail.noTemplates')}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {(tt.templates ?? []).map(t => (
@@ -703,58 +705,58 @@ export default function TaskTypeDetail() {
       {/* Add / Edit Step Modal */}
       {openStep && (
         <Modal
-          title={stepToEdit ? `Edit Step — ${stepToEdit.name}` : 'Add Step'}
+          title={stepToEdit ? t('pages.taskTypeDetail.modalEditStep').replace('{name}', stepToEdit.name) : t('pages.taskTypeDetail.modalAddStep')}
           onClose={closeStepModal}
           footer={<>
-            <button className="btn btn-ghost" onClick={closeStepModal}>Cancel</button>
+            <button className="btn btn-ghost" onClick={closeStepModal}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={saveStep} disabled={saving}>
-              {saving ? 'Saving…' : stepToEdit ? 'Save Changes' : 'Add Step'}
+              {saving ? t('common.saving') : stepToEdit ? t('pages.taskTypeDetail.saveChangesBtn') : t('pages.taskTypeDetail.addStepBtn')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Step Name</label>
+            <label className="form-label">{t('pages.taskTypeDetail.stepNameLabel')}</label>
             <input className="form-input" placeholder="Review credentials" value={stepForm.name}
               onChange={e => setStepForm(f => ({ ...f, name: e.target.value }))} required autoFocus />
           </div>
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Order</label>
+              <label className="form-label">{t('pages.taskTypeDetail.stepOrderLabel')}</label>
               <input className="form-input" type="number" min={1} value={stepForm.order}
                 onChange={e => setStepForm(f => ({ ...f, order: parseInt(e.target.value) }))} />
             </div>
             <div className="form-group">
-              <label className="form-label">Execution Type</label>
+              <label className="form-label">{t('pages.taskTypeDetail.stepExecTypeLabel')}</label>
               <select className="form-select" value={stepForm.executionType}
                 onChange={e => setStepForm(f => ({ ...f, executionType: e.target.value as ExecutionType, handlerId: '' }))}>
-                {EXECUTION_TYPES.map(t => <option key={t} value={t}>{execLabel(t)}</option>)}
+                {EXECUTION_TYPES.map(et => <option key={et} value={et}>{execLabel(et)}</option>)}
               </select>
             </div>
           </div>
           {stepForm.executionType !== 'automatic' && (
             <div className="form-group">
-              <label className="form-label">Assignment Strategy</label>
+              <label className="form-label">{t('pages.taskTypeDetail.stepStrategyLabel')}</label>
               <select className="form-select" value={stepForm.assignmentStrategy}
                 onChange={e => setStepForm(f => ({ ...f, assignmentStrategy: e.target.value as AssignmentStrategy }))}>
                 {STRATEGIES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
               </select>
               <p className="form-hint">
-                {stepForm.assignmentStrategy === 'fixed' ? 'One specific BPO is always assigned (first in the candidate pool).' : ''}
-                {stepForm.assignmentStrategy === 'round_robin' ? 'Assigns to BPOs in rotation from the candidate pool.' : ''}
-                {stepForm.assignmentStrategy === 'brand_assignment' ? 'Assigns via Brand Assignment Rules (Settings). Reads KA Type + Country from the task\'s form values to find the right BPO pool.' : ''}
-                {stepForm.assignmentStrategy === 'by_weight' ? 'Assigns to the least-loaded BPO in the candidate pool.' : ''}
-                {stepForm.assignmentStrategy === 'manual' ? 'Admin selects the BPO manually at runtime when the task is active.' : ''}
-                {stepForm.assignmentStrategy !== 'brand_assignment' && stepForm.assignmentStrategy !== 'manual' && !stepToEdit && ' You can add BPOs to the candidate pool after saving.'}
+                {stepForm.assignmentStrategy === 'fixed' ? t('pages.taskTypeDetail.strategyFixed') : ''}
+                {stepForm.assignmentStrategy === 'round_robin' ? t('pages.taskTypeDetail.strategyRoundRobin') : ''}
+                {stepForm.assignmentStrategy === 'brand_assignment' ? t('pages.taskTypeDetail.strategyBrandAssignment') : ''}
+                {stepForm.assignmentStrategy === 'by_weight' ? t('pages.taskTypeDetail.strategyByWeight') : ''}
+                {stepForm.assignmentStrategy === 'manual' ? t('pages.taskTypeDetail.strategyManual') : ''}
+                {stepForm.assignmentStrategy !== 'brand_assignment' && stepForm.assignmentStrategy !== 'manual' && !stepToEdit && t('pages.taskTypeDetail.strategyAddNote')}
               </p>
             </div>
           )}
           {stepForm.executionType === 'automatic' && (
             <div className="form-group">
-              <label className="form-label">Handler</label>
+              <label className="form-label">{t('pages.taskTypeDetail.stepHandlerLabel')}</label>
               <select className="form-select" value={stepForm.handlerId}
                 onChange={e => setStepForm(f => ({ ...f, handlerId: e.target.value }))}>
-                <option value="">Select handler…</option>
+                <option value="">{t('pages.taskTypeDetail.stepHandlerPlaceholder')}</option>
                 {handlers.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
               </select>
             </div>
@@ -764,22 +766,22 @@ export default function TaskTypeDetail() {
 
       {/* Manage BPO Candidates Modal */}
       {openBpos && liveStep && (
-        <Modal title={`BPO Candidates — ${liveStep.name}`} onClose={() => setOpenBpos(null)}
-          footer={<button className="btn btn-ghost" onClick={() => setOpenBpos(null)}>Close</button>}
+        <Modal title={t('pages.taskTypeDetail.modalBpoCandidates').replace('{name}', liveStep.name)} onClose={() => setOpenBpos(null)}
+          footer={<button className="btn btn-ghost" onClick={() => setOpenBpos(null)}>{t('common.close')}</button>}
         >
           {err && <div className="error-banner">{err}</div>}
 
           <p className="form-hint" style={{ marginBottom: 12 }}>
-            Strategy: <strong>{liveStep.assignmentStrategy.replace(/_/g, ' ')}</strong>
-            {liveStep.assignmentStrategy === 'fixed' ? ' — first candidate in the list is used.' : ''}
-            {liveStep.assignmentStrategy === 'brand_assignment' ? ' — BPO is resolved via Brand Assignment Rules (Settings). No candidate pool needed here.' : ''}
+            {t('pages.taskTypeDetail.bpoStrategyLabel')}<strong>{liveStep.assignmentStrategy.replace(/_/g, ' ')}</strong>
+            {liveStep.assignmentStrategy === 'fixed' ? t('pages.taskTypeDetail.bpoFixedNote') : ''}
+            {liveStep.assignmentStrategy === 'brand_assignment' ? t('pages.taskTypeDetail.bpoBrandAssignmentNote') : ''}
             {liveStep.assignmentStrategy !== 'fixed' && liveStep.assignmentStrategy !== 'brand_assignment' ? '.' : ''}
           </p>
 
           <div style={{ marginBottom: 16 }}>
-            <label className="form-label">Current pool</label>
+            <label className="form-label">{t('pages.taskTypeDetail.currentPool')}</label>
             {(liveStep.candidates?.length ?? 0) === 0 ? (
-              <p className="text-muted text-sm">No BPOs added yet.</p>
+              <p className="text-muted text-sm">{t('pages.taskTypeDetail.noBpos')}</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {(liveStep.candidates ?? []).map(c => (
@@ -803,20 +805,20 @@ export default function TaskTypeDetail() {
           </div>
 
           <div className="form-group">
-            <label className="form-label">Add BPO</label>
+            <label className="form-label">{t('pages.taskTypeDetail.addBpoLabel')}</label>
             <div style={{ display: 'flex', gap: 8 }}>
               <select className="form-select" value={candidateId} onChange={e => setCandidateId(e.target.value)} style={{ flex: 1 }}>
-                <option value="">Select account…</option>
+                <option value="">{t('pages.taskTypeDetail.selectAccount')}</option>
                 {availableBpos.map(a => (
                   <option key={a.id} value={a.id}>{a.name} — {a.email}</option>
                 ))}
               </select>
               <button className="btn btn-primary btn-sm" onClick={addCandidate} disabled={!candidateId || saving}>
-                Add
+                {t('pages.taskTypeDetail.addBpoBtn')}
               </button>
             </div>
             {availableBpos.length === 0 && bpoAccounts.length > 0 && (
-              <p className="form-hint">All BPO accounts are already in the pool.</p>
+              <p className="form-hint">{t('pages.taskTypeDetail.allInPool')}</p>
             )}
           </div>
         </Modal>
@@ -825,31 +827,31 @@ export default function TaskTypeDetail() {
       {/* Add / Edit Form Field Modal */}
       {openField && (
         <Modal
-          title={fieldToEdit ? `Edit Field — ${fieldToEdit.label}` : 'Add Form Field'}
+          title={fieldToEdit ? t('pages.taskTypeDetail.modalEditField').replace('{name}', fieldToEdit.label) : t('pages.taskTypeDetail.modalAddField')}
           onClose={closeFieldModal}
           footer={<>
-            <button className="btn btn-ghost" onClick={closeFieldModal}>Cancel</button>
+            <button className="btn btn-ghost" onClick={closeFieldModal}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={saveField} disabled={saving}>
-              {saving ? 'Saving…' : fieldToEdit ? 'Save Changes' : 'Add Field'}
+              {saving ? t('common.saving') : fieldToEdit ? t('pages.taskTypeDetail.saveFieldBtn') : t('pages.taskTypeDetail.addFieldBtn')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Label</label>
+            <label className="form-label">{t('pages.taskTypeDetail.fieldLabelLabel')}</label>
             <input className="form-input" placeholder="Contract URL" value={fieldForm.label}
               onChange={e => setFieldForm(f => ({ ...f, label: e.target.value }))} required autoFocus />
           </div>
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Type</label>
+              <label className="form-label">{t('pages.taskTypeDetail.fieldTypeLabel')}</label>
               <select className="form-select" value={fieldForm.type}
                 onChange={e => setFieldForm(f => ({ ...f, type: e.target.value, options: [], filteredById: '' }))}>
-                {FIELD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                {FIELD_TYPES.map(ft => <option key={ft} value={ft}>{ft}</option>)}
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Order</label>
+              <label className="form-label">{t('pages.taskTypeDetail.fieldOrderLabel')}</label>
               <input className="form-input" type="number" min={1} value={fieldForm.order}
                 onChange={e => setFieldForm(f => ({ ...f, order: parseInt(e.target.value) }))} />
             </div>
@@ -857,7 +859,7 @@ export default function TaskTypeDetail() {
           <div className="form-check" style={{ marginBottom: 12 }}>
             <input type="checkbox" id="req" checked={fieldForm.required}
               onChange={e => setFieldForm(f => ({ ...f, required: e.target.checked }))} />
-            <label htmlFor="req" style={{ fontSize: '0.83rem', cursor: 'pointer' }}>Required</label>
+            <label htmlFor="req" style={{ fontSize: '0.83rem', cursor: 'pointer' }}>{t('pages.taskTypeDetail.fieldRequiredCheck')}</label>
           </div>
 
           {fieldForm.type === 'select' && (
@@ -865,11 +867,11 @@ export default function TaskTypeDetail() {
               <div className="form-check" style={{ marginBottom: 12 }}>
                 <input type="checkbox" id="multiple" checked={fieldForm.multiple}
                   onChange={e => setFieldForm(f => ({ ...f, multiple: e.target.checked }))} />
-                <label htmlFor="multiple" style={{ fontSize: '0.83rem', cursor: 'pointer' }}>Allow multiple selection</label>
+                <label htmlFor="multiple" style={{ fontSize: '0.83rem', cursor: 'pointer' }}>{t('pages.taskTypeDetail.fieldMultipleCheck')}</label>
               </div>
 
               <div className="form-group">
-                <label className="form-label">Options</label>
+                <label className="form-label">{t('pages.taskTypeDetail.fieldOptionsLabel')}</label>
                 {fieldForm.options.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
                     {fieldForm.options.map(opt => (
@@ -883,28 +885,28 @@ export default function TaskTypeDetail() {
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <input className="form-input" placeholder="Add option…" value={optionInput}
+                  <input className="form-input" placeholder={t('pages.taskTypeDetail.fieldOptionsPlaceholder')} value={optionInput}
                     onChange={e => setOptionInput(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addOption(); } }}
                     style={{ flex: 1 }} />
                   <button type="button" className="btn btn-ghost btn-sm" onClick={addOption} disabled={!optionInput.trim()}>
-                    Add
+                    {t('common.add')}
                   </button>
                 </div>
-                <p className="form-hint">Press Enter or click Add. Options appear as a dropdown when filling the task form.</p>
+                <p className="form-hint">{t('pages.taskTypeDetail.fieldOptionsHint')}</p>
               </div>
             </>
           )}
 
           {fieldForm.type === 'select_store' && brandFields.length > 0 && (
             <div className="form-group">
-              <label className="form-label">Filter stores by brand field</label>
+              <label className="form-label">{t('pages.taskTypeDetail.filterStoresLabel')}</label>
               <select className="form-select" value={fieldForm.filteredById}
                 onChange={e => setFieldForm(f => ({ ...f, filteredById: e.target.value }))}>
-                <option value="">No filter (show all stores)</option>
+                <option value="">{t('pages.taskTypeDetail.filterStoresNoFilter')}</option>
                 {brandFields.map(bf => <option key={bf.id} value={bf.id}>{bf.label}</option>)}
               </select>
-              <p className="form-hint">If set, the store picker will only show stores belonging to the brand chosen in the linked field.</p>
+              <p className="form-hint">{t('pages.taskTypeDetail.filterStoresHint')}</p>
             </div>
           )}
 
@@ -924,24 +926,24 @@ export default function TaskTypeDetail() {
 
       {/* Add Webhook to Step Modal */}
       {openWebhook && (
-        <Modal title={`Add Webhook to "${openWebhook.name}"`} onClose={() => setOpenWebhook(null)}
+        <Modal title={t('pages.taskTypeDetail.modalAddWebhook').replace('{name}', openWebhook.name)} onClose={() => setOpenWebhook(null)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenWebhook(null)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setOpenWebhook(null)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={addWebhook} disabled={saving || !whForm.webhookId || whForm.events.length === 0}>
-              {saving ? 'Adding…' : 'Add Webhook'}
+              {saving ? t('pages.taskTypeDetail.adding') : t('pages.taskTypeDetail.addWebhookBtn')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Webhook</label>
+            <label className="form-label">{t('pages.taskTypeDetail.webhookLabel')}</label>
             <select className="form-select" value={whForm.webhookId} onChange={e => setWhForm(f => ({ ...f, webhookId: e.target.value }))}>
-              <option value="">Select webhook…</option>
+              <option value="">{t('pages.taskTypeDetail.webhookPlaceholder')}</option>
               {webhooks.map(w => <option key={w.id} value={w.id}>{w.name} {w.isAlerts ? '(alerts)' : ''}</option>)}
             </select>
           </div>
           <div className="form-group">
-            <label className="form-label">Fire on events</label>
+            <label className="form-label">{t('pages.taskTypeDetail.webhookEventsLabel')}</label>
             <div style={{ display: 'flex', gap: 8 }}>
               {WH_EVENTS.map(ev => (
                 <button key={ev} type="button"
@@ -958,28 +960,28 @@ export default function TaskTypeDetail() {
 
       {/* Edit Task Type Modal */}
       {openEditTT && (
-        <Modal title="Edit Task Type" onClose={() => setOpenEditTT(false)}
+        <Modal title={t('pages.taskTypeDetail.modalEditTT')} onClose={() => setOpenEditTT(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenEditTT(false)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setOpenEditTT(false)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" form="edit-tt-form" type="submit" disabled={saving || !ttForm.name.trim()}>
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? t('common.saving') : t('common.save')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <form id="edit-tt-form" onSubmit={saveTaskType}>
             <div className="form-group">
-              <label className="form-label">Name</label>
+              <label className="form-label">{t('pages.taskTypeDetail.ttNameLabel')}</label>
               <input className="form-input" value={ttForm.name} onChange={e => setTtForm(f => ({ ...f, name: e.target.value }))} required />
             </div>
             <div className="form-group">
-              <label className="form-label">Description</label>
+              <label className="form-label">{t('pages.taskTypeDetail.ttDescLabel')}</label>
               <textarea className="form-textarea" rows={3} value={ttForm.description} onChange={e => setTtForm(f => ({ ...f, description: e.target.value }))} />
             </div>
             <div className="form-check">
               <input type="checkbox" id="tt-schedulable" checked={ttForm.schedulable} onChange={e => setTtForm(f => ({ ...f, schedulable: e.target.checked }))} />
               <label htmlFor="tt-schedulable" style={{ fontSize: '0.83rem', cursor: 'pointer' }}>
-                Schedulable — users can set a start/end window when creating a task
+                {t('pages.taskTypeDetail.ttSchedulableCheck')}
               </label>
             </div>
           </form>

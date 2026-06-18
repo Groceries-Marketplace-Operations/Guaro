@@ -6,6 +6,7 @@ import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { brandsApi, shopsApi, tasksApi, taskTypesApi, applicationsApi, accountsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
+import { useT } from '../../i18n';
 import type { Brand, Shop, Task, TaskType, Paginated, Application, Country } from '../../types';
 
 const COUNTRY_EMOJI: Record<string, string> = { MX: '🇲🇽', CO: '🇨🇴', CR: '🇨🇷' };
@@ -25,18 +26,15 @@ export default function BrandDetail() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { account } = useAuth();
+  const t = useT();
   const roles = account?.roles ?? [];
   const isAdmin = roles.some(r => r === 'admin' || r === 'super_admin');
   const isBpo   = roles.some(r => r === 'bpo') && !isAdmin;
 
   const [tab, setTab] = useState<'shops' | 'tasks'>('shops');
-
-  // Start task modal
   const [openTask, setOpenTask] = useState(false);
   const [taskTypeId, setTaskTypeId] = useState('');
   const [savingTask, setSavingTask] = useState(false);
-
-  // Edit brand modal
   const [openEdit, setOpenEdit] = useState(false);
   const [editForm, setEditForm] = useState({
     brandName: '', category: '',
@@ -44,35 +42,23 @@ export default function BrandDetail() {
   });
   const [savingEdit, setSavingEdit] = useState(false);
   const [editErr, setEditErr] = useState('');
-
-  // Change OP modal (admin only)
   const [openChangeOp, setOpenChangeOp] = useState(false);
   const [selectedOwnerId, setSelectedOwnerId] = useState('');
   const [savingOp, setSavingOp] = useState(false);
-
-  // Change Application modal (admin only)
   const [openChangeApp, setOpenChangeApp] = useState(false);
   const [selectedAppId, setSelectedAppId] = useState('');
   const [savingApp, setSavingApp] = useState(false);
-
-  // Batch status
   const [selectedShopIds, setSelectedShopIds] = useState<Set<string>>(new Set());
   const [batchStatus, setBatchStatus] = useState('');
   const [savingBatch, setSavingBatch] = useState(false);
-
-  // Add shop — manual
   const [openAddShop, setOpenAddShop] = useState(false);
   const [shopMode, setShopMode] = useState<'manual' | 'batch'>('manual');
   const [shopForm, setShopForm] = useState({ shopId: '', appShopId: '', city: '', status: 'lead' });
   const [savingShop, setSavingShop] = useState(false);
   const [shopErr, setShopErr] = useState('');
-
-  // Batch CSV
   const fileRef = useRef<HTMLInputElement>(null);
   const [batchRows, setBatchRows] = useState<{ shopId: string; appShopId: string; city: string; status: string; _err?: string }[]>([]);
   const [batchDone, setBatchDone] = useState(false);
-
-  // ── Queries ───────────────────────────────────────────────────────────────
 
   const { data: brand, refetch: refetchBrand } = useQuery<Brand>({
     queryKey: ['brand', id],
@@ -111,13 +97,9 @@ export default function BrandDetail() {
   });
   const availableApps = appsResult?.data ?? [];
 
-  // ── Derived permissions ───────────────────────────────────────────────────
-
   const isBpoOp = isBpo && !!brand && brand.owner?.id === account?.id;
   const canEdit = isAdmin || isBpoOp;
-  const canAddShop = isAdmin || isBpo; // BPOs can add shops to any brand they work with
-
-  // ── Handlers ─────────────────────────────────────────────────────────────
+  const canAddShop = isAdmin || isBpo;
 
   const createTask = async () => {
     if (!taskTypeId) return;
@@ -162,7 +144,7 @@ export default function BrandDetail() {
     } catch (ex: unknown) {
       const e = ex as { response?: { data?: { message?: string | string[] } } };
       const msg = e.response?.data?.message;
-      setEditErr(Array.isArray(msg) ? msg.join(', ') : (msg ?? 'Error saving changes'));
+      setEditErr(Array.isArray(msg) ? msg.join(', ') : (msg ?? t('pages.brandDetail.errorSavingChanges')));
     } finally { setSavingEdit(false); }
   };
 
@@ -213,7 +195,7 @@ export default function BrandDetail() {
     } catch (ex: unknown) {
       const e = ex as { response?: { data?: { message?: string | string[] } } };
       const msg = e.response?.data?.message;
-      setShopErr(Array.isArray(msg) ? msg.join(', ') : (msg ?? 'Error creating shop'));
+      setShopErr(Array.isArray(msg) ? msg.join(', ') : (msg ?? t('pages.brandDetail.errorCreatingShop')));
     } finally { setSavingShop(false); }
   };
 
@@ -255,7 +237,7 @@ export default function BrandDetail() {
     } catch (ex: unknown) {
       const e = ex as { response?: { data?: { message?: string | string[] } } };
       const msg = e.response?.data?.message;
-      setShopErr(Array.isArray(msg) ? msg.join(', ') : (msg ?? 'Error uploading shops'));
+      setShopErr(Array.isArray(msg) ? msg.join(', ') : (msg ?? t('pages.brandDetail.errorUploadingShops')));
     } finally { setSavingShop(false); }
   };
 
@@ -273,7 +255,7 @@ export default function BrandDetail() {
 
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Brands', href: '/brands' }, { label: brand.brandName }]} />
+      <Topbar breadcrumb={[{ label: t('nav.brands'), href: '/brands' }, { label: brand.brandName }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
@@ -282,38 +264,37 @@ export default function BrandDetail() {
           </div>
           <div className="page-actions">
             {canEdit && (
-              <button className="btn btn-ghost" onClick={openEditModal}>Edit Brand</button>
+              <button className="btn btn-ghost" onClick={openEditModal}>{t('pages.brandDetail.editBrand')}</button>
             )}
-            <button className="btn btn-primary" onClick={() => setOpenTask(true)}>Start Task</button>
+            <button className="btn btn-primary" onClick={() => setOpenTask(true)}>{t('pages.brandDetail.startTask')}</button>
           </div>
         </div>
 
-        {/* Stat cards */}
         <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: 24 }}>
           <div className="stat-card">
-            <div className="s-label">Brand ID</div>
+            <div className="s-label">{t('pages.brandDetail.brandId')}</div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', fontWeight: 600, marginTop: 4 }}>{brand.brandId}</div>
           </div>
 
           <div className="stat-card">
-            <div className="s-label">Owner (OP)</div>
+            <div className="s-label">{t('pages.brandDetail.ownerOp')}</div>
             <div style={{ fontWeight: 600, marginTop: 4, fontSize: '0.9rem' }}>{brand.owner?.name ?? '—'}</div>
-            <div className="s-meta">{brand.owner?.email ?? 'Unassigned'}</div>
+            <div className="s-meta">{brand.owner?.email ?? t('pages.brandDetail.unassigned')}</div>
             {isAdmin && (
               <button
                 className="btn btn-ghost btn-sm"
                 style={{ marginTop: 6, fontSize: '0.72rem', padding: '2px 8px' }}
                 onClick={() => { setSelectedOwnerId(brand.owner?.id ?? ''); setOpenChangeOp(true); }}
               >
-                {brand.owner ? 'Change' : 'Assign'}
+                {brand.owner ? t('pages.brandDetail.change') : t('pages.brandDetail.assign')}
               </button>
             )}
           </div>
 
           <div className="stat-card">
-            <div className="s-label">Application</div>
+            <div className="s-label">{t('pages.brandDetail.application')}</div>
             <div style={{ fontWeight: 600, marginTop: 4, fontSize: '0.9rem' }}>
-              {brand.application?.appName ?? <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>None</span>}
+              {brand.application?.appName ?? <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{t('pages.brandDetail.appNone')}</span>}
             </div>
             {brand.application && <div className="s-meta td-mono">{brand.application.appId}</div>}
             {isAdmin && (
@@ -322,59 +303,56 @@ export default function BrandDetail() {
                 style={{ marginTop: 6, fontSize: '0.72rem', padding: '2px 8px' }}
                 onClick={() => { setSelectedAppId(brand.application?.id ?? ''); setOpenChangeApp(true); }}
               >
-                {brand.application ? 'Change' : 'Link'}
+                {brand.application ? t('pages.brandDetail.change') : t('pages.brandDetail.link')}
               </button>
             )}
           </div>
 
           <div className="stat-card">
-            <div className="s-label">Shops</div>
+            <div className="s-label">{t('pages.brandDetail.shops')}</div>
             <div className="s-value">{shops.length}</div>
           </div>
           <div className="stat-card">
-            <div className="s-label">Tasks</div>
+            <div className="s-label">{t('pages.brandDetail.tasks')}</div>
             <div className="s-value">{tasks.length}</div>
           </div>
         </div>
 
-        {/* Brand detail row */}
         <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 24 }}>
           <div className="stat-card">
-            <div className="s-label">Category</div>
+            <div className="s-label">{t('pages.brandDetail.category')}</div>
             <div style={{ fontWeight: 500, marginTop: 4, fontSize: '0.88rem' }}>{brand.category ?? '—'}</div>
           </div>
           <div className="stat-card">
-            <div className="s-label">Menu Integration</div>
+            <div className="s-label">{t('pages.brandDetail.menuIntegration')}</div>
             <div style={{ fontWeight: 500, marginTop: 4, fontSize: '0.88rem' }}>{fmt(brand.menuIntegration)}</div>
           </div>
           <div className="stat-card">
-            <div className="s-label">Picking Mode</div>
+            <div className="s-label">{t('pages.brandDetail.pickingMode')}</div>
             <div style={{ fontWeight: 500, marginTop: 4, fontSize: '0.88rem' }}>{fmt(brand.pickingMode)}</div>
           </div>
           <div className="stat-card">
-            <div className="s-label">Payment Mode</div>
+            <div className="s-label">{t('pages.brandDetail.paymentMode')}</div>
             <div style={{ fontWeight: 500, marginTop: 4, fontSize: '0.88rem' }}>{fmt(brand.paymentMode)}</div>
           </div>
         </div>
 
-        {/* Tabs */}
         <div className="tabs">
           <div className={`tab ${tab === 'shops' ? 'active' : ''}`} onClick={() => setTab('shops')}>
-            Shops ({shops.length})
+            {t('pages.brandDetail.tabShops').replace('{count}', String(shops.length))}
           </div>
           <div className={`tab ${tab === 'tasks' ? 'active' : ''}`} onClick={() => setTab('tasks')}>
-            Tasks ({tasks.length})
+            {t('pages.brandDetail.tabTasks').replace('{count}', String(tasks.length))}
           </div>
         </div>
 
         {tab === 'shops' && (
           <>
-            {/* Toolbar */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
               {selectedShopIds.size > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'var(--orange-muted)', borderRadius: 8, border: '1px solid rgba(255,105,0,0.2)' }}>
                   <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--orange)' }}>
-                    {selectedShopIds.size} selected
+                    {t('pages.brandDetail.selected').replace('{count}', String(selectedShopIds.size))}
                   </span>
                   <select
                     className="form-select"
@@ -382,7 +360,7 @@ export default function BrandDetail() {
                     value={batchStatus}
                     onChange={e => setBatchStatus(e.target.value)}
                   >
-                    <option value="">Set status…</option>
+                    <option value="">{t('pages.brandDetail.setStatus')}</option>
                     <option value="lead">Lead</option>
                     <option value="application">Application</option>
                     <option value="integrated">Integrated</option>
@@ -394,21 +372,21 @@ export default function BrandDetail() {
                     disabled={!batchStatus || savingBatch}
                     onClick={applyBatchStatus}
                   >
-                    {savingBatch ? 'Saving…' : 'Apply'}
+                    {savingBatch ? t('pages.brandDetail.saving') : t('common.apply')}
                   </button>
                   <button
                     className="btn btn-ghost btn-sm"
                     style={{ padding: '4px 10px', fontSize: '0.82rem' }}
                     onClick={() => setSelectedShopIds(new Set())}
                   >
-                    Clear
+                    {t('common.clear')}
                   </button>
                 </div>
               )}
               <div style={{ marginLeft: 'auto' }}>
                 {canAddShop && (
                   <button className="btn btn-primary" onClick={() => { setOpenAddShop(true); setShopMode('manual'); setBatchRows([]); setBatchDone(false); setShopErr(''); }}>
-                    + Add Shop
+                    {t('pages.brandDetail.addShop')}
                   </button>
                 )}
               </div>
@@ -426,11 +404,14 @@ export default function BrandDetail() {
                         onChange={toggleAllShops}
                       />
                     </th>
-                    <th>Shop ID</th><th>App Shop ID</th><th>City</th><th>Status</th>
+                    <th>{t('pages.brandDetail.colShopId')}</th>
+                    <th>{t('pages.brandDetail.colAppShopId')}</th>
+                    <th>{t('pages.brandDetail.colCity')}</th>
+                    <th>{t('pages.brandDetail.colStatus')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {shops.length === 0 && <tr><td colSpan={5}><div className="empty-state"><p>No shops for this brand.</p></div></td></tr>}
+                  {shops.length === 0 && <tr><td colSpan={5}><div className="empty-state"><p>{t('pages.brandDetail.noShops')}</p></div></td></tr>}
                   {shops.map(s => (
                     <tr key={s.id} style={{ cursor: 'pointer', background: selectedShopIds.has(s.id) ? 'rgba(255,105,0,0.04)' : '' }}>
                       <td onClick={e => { e.stopPropagation(); toggleShop(s.id); }}>
@@ -457,15 +438,19 @@ export default function BrandDetail() {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Task Type</th><th>Status</th><th>Created</th></tr>
+                <tr>
+                  <th>{t('pages.brandDetail.colTaskType')}</th>
+                  <th>{t('pages.brandDetail.colStatus')}</th>
+                  <th>{t('pages.brandDetail.colCreated')}</th>
+                </tr>
               </thead>
               <tbody>
-                {tasks.length === 0 && <tr><td colSpan={3}><div className="empty-state"><p>No tasks yet.</p></div></td></tr>}
-                {tasks.map(t => (
-                  <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/tasks/${t.id}`)}>
-                    <td style={{ fontWeight: 600 }}>{t.taskType?.name ?? '—'}</td>
-                    <td><StatusBadge status={t.status} /></td>
-                    <td className="text-muted text-sm">{new Date(t.createdAt).toLocaleDateString()}</td>
+                {tasks.length === 0 && <tr><td colSpan={3}><div className="empty-state"><p>{t('pages.brandDetail.noTasks')}</p></div></td></tr>}
+                {tasks.map(tk => (
+                  <tr key={tk.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/tasks/${tk.id}`)}>
+                    <td style={{ fontWeight: 600 }}>{tk.taskType?.name ?? '—'}</td>
+                    <td><StatusBadge status={tk.status} /></td>
+                    <td className="text-muted text-sm">{new Date(tk.createdAt).toLocaleDateString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -474,32 +459,35 @@ export default function BrandDetail() {
         )}
       </main>
 
-      {/* Add Shop Modal */}
       {openAddShop && (
         <Modal
-          title="Add Shop"
+          title={t('pages.brandDetail.modalAddShop')}
           onClose={() => setOpenAddShop(false)}
           footer={
             shopMode === 'manual' ? (
               <>
-                <button className="btn btn-ghost" onClick={() => setOpenAddShop(false)}>Cancel</button>
+                <button className="btn btn-ghost" onClick={() => setOpenAddShop(false)}>{t('common.cancel')}</button>
                 <button className="btn btn-primary" onClick={handleAddShop} disabled={savingShop || !shopForm.shopId || !shopForm.appShopId}>
-                  {savingShop ? 'Creating…' : 'Create Shop'}
+                  {savingShop ? t('pages.brandDetail.creating') : t('pages.brandDetail.createShop')}
                 </button>
               </>
             ) : batchDone ? (
-              <button className="btn btn-primary" onClick={() => setOpenAddShop(false)}>Done</button>
+              <button className="btn btn-primary" onClick={() => setOpenAddShop(false)}>{t('common.done')}</button>
             ) : (
               <>
-                <button className="btn btn-ghost" onClick={() => setOpenAddShop(false)}>Cancel</button>
+                <button className="btn btn-ghost" onClick={() => setOpenAddShop(false)}>{t('common.cancel')}</button>
                 <button className="btn btn-primary" onClick={handleBatchUpload} disabled={savingShop || batchRows.length === 0}>
-                  {savingShop ? 'Uploading…' : `Upload ${batchRows.length} shop${batchRows.length !== 1 ? 's' : ''}`}
+                  {savingShop
+                    ? t('pages.brandDetail.uploading')
+                    : batchRows.length !== 1
+                      ? t('pages.brandDetail.uploadShopsPlural').replace('{count}', String(batchRows.length))
+                      : t('pages.brandDetail.uploadShops').replace('{count}', String(batchRows.length))
+                  }
                 </button>
               </>
             )
           }
         >
-          {/* Mode toggle */}
           <div style={{ display: 'flex', gap: 0, marginBottom: 18, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
             {(['manual', 'batch'] as const).map(m => (
               <button
@@ -512,7 +500,7 @@ export default function BrandDetail() {
                   transition: 'background 0.15s',
                 }}
               >
-                {m === 'manual' ? 'Manual' : 'Batch CSV'}
+                {m === 'manual' ? t('pages.brandDetail.shopModeManual') : t('pages.brandDetail.shopModeBatch')}
               </button>
             ))}
           </div>
@@ -523,24 +511,24 @@ export default function BrandDetail() {
             <>
               <div className="form-row">
                 <div className="form-group">
-                  <label className="form-label">Shop ID <span style={{ color: 'var(--red)' }}>*</span></label>
+                  <label className="form-label">{t('pages.brandDetail.shopIdLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
                   <input className="form-input" value={shopForm.shopId} placeholder="SHOP_001"
                     onChange={e => setShopForm(f => ({ ...f, shopId: e.target.value }))} autoFocus />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">App Shop ID <span style={{ color: 'var(--red)' }}>*</span></label>
+                  <label className="form-label">{t('pages.brandDetail.appShopIdLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
                   <input className="form-input" value={shopForm.appShopId} placeholder="APP_001"
                     onChange={e => setShopForm(f => ({ ...f, appShopId: e.target.value }))} />
                 </div>
               </div>
               <div className="form-row">
                 <div className="form-group">
-                  <label className="form-label">City</label>
+                  <label className="form-label">{t('pages.brandDetail.cityLabel')}</label>
                   <input className="form-input" value={shopForm.city} placeholder="Bogotá"
                     onChange={e => setShopForm(f => ({ ...f, city: e.target.value }))} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Status</label>
+                  <label className="form-label">{t('pages.brandDetail.statusLabel')}</label>
                   <select className="form-select" value={shopForm.status}
                     onChange={e => setShopForm(f => ({ ...f, status: e.target.value }))}>
                     <option value="lead">Lead</option>
@@ -556,7 +544,7 @@ export default function BrandDetail() {
           {shopMode === 'batch' && !batchDone && (
             <>
               <p className="form-hint" style={{ marginBottom: 10 }}>
-                Upload a CSV with columns: <code>shopId, appShopId, city, status</code>. Status defaults to <code>lead</code> if omitted.
+                {t('pages.brandDetail.batchHint')}
               </p>
               <div
                 style={{
@@ -568,7 +556,9 @@ export default function BrandDetail() {
               >
                 <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={handleFileChange} />
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: 0 }}>
-                  {batchRows.length ? `${batchRows.length} rows loaded — click to replace` : 'Click to select CSV file'}
+                  {batchRows.length
+                    ? t('pages.brandDetail.rowsLoaded').replace('{count}', String(batchRows.length))
+                    : t('pages.brandDetail.clickToSelectCsv')}
                 </p>
               </div>
 
@@ -601,41 +591,44 @@ export default function BrandDetail() {
           {batchDone && (
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
               <div style={{ fontSize: '2rem', marginBottom: 8 }}>✓</div>
-              <p style={{ fontWeight: 600 }}>{batchRows.length} shop{batchRows.length !== 1 ? 's' : ''} created successfully</p>
+              <p style={{ fontWeight: 600 }}>
+                {batchRows.length !== 1
+                  ? t('pages.brandDetail.batchSuccessPlural').replace('{count}', String(batchRows.length))
+                  : t('pages.brandDetail.batchSuccess').replace('{count}', String(batchRows.length))}
+              </p>
             </div>
           )}
         </Modal>
       )}
 
-      {/* Edit Brand Modal */}
       {openEdit && (
         <Modal
-          title="Edit Brand"
+          title={t('pages.brandDetail.modalEditBrand')}
           onClose={() => setOpenEdit(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenEdit(false)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setOpenEdit(false)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={handleEdit} disabled={savingEdit}>
-              {savingEdit ? 'Saving…' : 'Save Changes'}
+              {savingEdit ? t('common.saving') : t('pages.brandDetail.saveChanges')}
             </button>
           </>}
         >
           {editErr && <div className="error-banner">{editErr}</div>}
 
           <div className="form-group">
-            <label className="form-label">Brand Name</label>
+            <label className="form-label">{t('pages.brandDetail.brandNameLabel')}</label>
             <input className="form-input" value={editForm.brandName}
               onChange={e => setEditForm(f => ({ ...f, brandName: e.target.value }))} />
           </div>
 
           <div className="form-group">
-            <label className="form-label">Category</label>
-            <input className="form-input" placeholder="e.g. Burgers, Pizza…" value={editForm.category}
+            <label className="form-label">{t('pages.brandDetail.categoryLabel')}</label>
+            <input className="form-input" placeholder={t('pages.brandDetail.categoryPlaceholder')} value={editForm.category}
               onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))} />
           </div>
 
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Menu Integration</label>
+              <label className="form-label">{t('pages.brandDetail.menuLabel')}</label>
               <select className="form-select" value={editForm.menuIntegration}
                 onChange={e => setEditForm(f => ({ ...f, menuIntegration: e.target.value }))}>
                 <option value="">—</option>
@@ -643,7 +636,7 @@ export default function BrandDetail() {
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Picking Mode</label>
+              <label className="form-label">{t('pages.brandDetail.pickingLabel')}</label>
               <select className="form-select" value={editForm.pickingMode}
                 onChange={e => setEditForm(f => ({ ...f, pickingMode: e.target.value }))}>
                 <option value="">—</option>
@@ -654,7 +647,7 @@ export default function BrandDetail() {
 
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Payment Mode</label>
+              <label className="form-label">{t('pages.brandDetail.paymentLabel')}</label>
               <select className="form-select" value={editForm.paymentMode}
                 onChange={e => setEditForm(f => ({ ...f, paymentMode: e.target.value }))}>
                 <option value="">—</option>
@@ -663,7 +656,7 @@ export default function BrandDetail() {
             </div>
             {isAdmin && (
               <div className="form-group">
-                <label className="form-label">KA Type</label>
+                <label className="form-label">{t('pages.brandDetail.kaTypeLabel')}</label>
                 <select className="form-select" value={editForm.kaType}
                   onChange={e => setEditForm(f => ({ ...f, kaType: e.target.value }))}>
                   {KA_TYPES.map(v => <option key={v} value={v}>{v}</option>)}
@@ -674,45 +667,43 @@ export default function BrandDetail() {
         </Modal>
       )}
 
-      {/* Start Task Modal */}
       {openTask && (
-        <Modal title="Start Task" onClose={() => setOpenTask(false)}
+        <Modal title={t('pages.brandDetail.modalStartTask')} onClose={() => setOpenTask(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenTask(false)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setOpenTask(false)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={createTask} disabled={savingTask || !taskTypeId}>
-              {savingTask ? 'Creating…' : 'Start Task'}
+              {savingTask ? t('common.creating') : t('pages.brandDetail.startTaskBtn')}
             </button>
           </>}
         >
           <div className="form-group">
-            <label className="form-label">Task Type</label>
+            <label className="form-label">{t('pages.brandDetail.taskTypeLabel')}</label>
             <select className="form-select" value={taskTypeId} onChange={e => setTaskTypeId(e.target.value)}>
-              <option value="">Select a task type…</option>
-              {types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              <option value="">{t('pages.brandDetail.taskTypePlaceholder')}</option>
+              {types.map(tp => <option key={tp.id} value={tp.id}>{tp.name}</option>)}
             </select>
           </div>
         </Modal>
       )}
 
-      {/* Change OP Modal (admin only) */}
       {openChangeOp && (
         <Modal
-          title="Change Owner (OP)"
+          title={t('pages.brandDetail.modalChangeOp')}
           onClose={() => setOpenChangeOp(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenChangeOp(false)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setOpenChangeOp(false)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={handleChangeOp} disabled={savingOp}>
-              {savingOp ? 'Saving…' : 'Save'}
+              {savingOp ? t('common.saving') : t('common.save')}
             </button>
           </>}
         >
           <p className="text-muted text-sm" style={{ marginBottom: 14 }}>
-            Manual assignment — overrides the automatic assignment rule.
+            {t('pages.brandDetail.changeOpHint')}
           </p>
           <div className="form-group">
-            <label className="form-label">BPO / Owner</label>
+            <label className="form-label">{t('pages.brandDetail.bpoOwnerLabel')}</label>
             <select className="form-select" value={selectedOwnerId} onChange={e => setSelectedOwnerId(e.target.value)}>
-              <option value="">Unassigned</option>
+              <option value="">{t('pages.brandDetail.unassigned')}</option>
               {bpos.map(b => (
                 <option key={b.id} value={b.id}>{b.name} — {b.email}</option>
               ))}
@@ -721,31 +712,35 @@ export default function BrandDetail() {
         </Modal>
       )}
 
-      {/* Link Application Modal (admin only) */}
       {openChangeApp && (
         <Modal
-          title="Link Application"
+          title={t('pages.brandDetail.modalLinkApp')}
           onClose={() => setOpenChangeApp(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenChangeApp(false)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setOpenChangeApp(false)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={handleChangeApp} disabled={savingApp}>
-              {savingApp ? 'Saving…' : 'Save'}
+              {savingApp ? t('common.saving') : t('common.save')}
             </button>
           </>}
         >
           <p className="text-muted text-sm" style={{ marginBottom: 14 }}>
-            Only applications for {COUNTRY_EMOJI[brand.country as Country]} {brand.country} are shown.
+            {t('pages.brandDetail.linkAppHint')
+              .replace('{flag}', COUNTRY_EMOJI[brand.country as Country] ?? '')
+              .replace('{country}', brand.country)}
           </p>
           <div className="form-group">
-            <label className="form-label">Application</label>
+            <label className="form-label">{t('pages.brandDetail.appLabel')}</label>
             <select className="form-select" value={selectedAppId} onChange={e => setSelectedAppId(e.target.value)}>
-              <option value="">None</option>
+              <option value="">{t('pages.brandDetail.appNone')}</option>
               {availableApps.map(a => (
                 <option key={a.id} value={a.id}>{a.appName} ({a.appId})</option>
               ))}
             </select>
             {availableApps.length === 0 && (
-              <p className="form-hint">No applications for {brand.country} yet. <a href="/applications">Create one →</a></p>
+              <p className="form-hint">
+                {t('pages.brandDetail.noAppsYet').replace('{country}', brand.country)}{' '}
+                <a href="/applications">{t('pages.brandsList.createOneArrow')}</a>
+              </p>
             )}
           </div>
         </Modal>

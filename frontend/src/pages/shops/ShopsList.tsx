@@ -6,6 +6,7 @@ import Modal from '../../components/ui/Modal';
 import Paginator from '../../components/ui/Paginator';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { shopsApi, brandsApi } from '../../api';
+import { useT } from '../../i18n';
 import type { Shop, Brand, ShopStatus, Paginated } from '../../types';
 
 const STATUSES: ShopStatus[] = ['lead', 'application', 'integrated', 'online'];
@@ -25,6 +26,7 @@ const SearchIcon = () => (
 export default function ShopsList() {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [dq, setDq] = useState('');
@@ -35,8 +37,8 @@ export default function ShopsList() {
   const [form, setForm] = useState({ shopId: '', appShopId: '', brandId: '', city: '', latitude: '', longitude: '' });
 
   useEffect(() => {
-    const t = setTimeout(() => { setDq(q); setPage(1); }, 300);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => { setDq(q); setPage(1); }, 300);
+    return () => clearTimeout(timer);
   }, [q]);
 
   const params = {
@@ -50,7 +52,6 @@ export default function ShopsList() {
     queryFn: () => shopsApi.list(params).then(r => r.data),
   });
 
-  // All brands for the create-shop dropdown (no pagination)
   const { data: brandsResult } = useQuery<Paginated<Brand>>({
     queryKey: ['brands', { limit: 5000 }],
     queryFn: () => brandsApi.list({ limit: 5000 }).then(r => r.data),
@@ -75,25 +76,29 @@ export default function ShopsList() {
 
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Shops' }]} />
+      <Topbar breadcrumb={[{ label: t('nav.brands') }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
-            <h1>Shops</h1>
-            <p>{total} stores{statusF ? ` · ${statusF}` : ''}</p>
+            <h1>{t('pages.shopsList.title')}</h1>
+            <p>
+              {statusF
+                ? t('pages.shopsList.subtitleFiltered').replace('{total}', String(total)).replace('{status}', statusF)
+                : t('pages.shopsList.subtitle').replace('{total}', String(total))}
+            </p>
           </div>
           <div className="page-actions">
-            <button className="btn btn-primary" onClick={() => setOpen(true)}><PlusIcon /> New Shop</button>
+            <button className="btn btn-primary" onClick={() => setOpen(true)}><PlusIcon /> {t('pages.shopsList.newShop')}</button>
           </div>
         </div>
 
         <div className="toolbar">
           <div className="search-wrap">
             <SearchIcon />
-            <input placeholder="Search by ID, brand or city…" value={q} onChange={e => setQ(e.target.value)} />
+            <input placeholder={t('pages.shopsList.searchPlaceholder')} value={q} onChange={e => setQ(e.target.value)} />
           </div>
           <div style={{ display: 'flex', gap: 4 }}>
-            <button className={`btn btn-sm ${statusF === '' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => { setStatusF(''); setPage(1); }}>All</button>
+            <button className={`btn btn-sm ${statusF === '' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => { setStatusF(''); setPage(1); }}>{t('common.all')}</button>
             {STATUSES.map(s => (
               <button key={s} className={`btn btn-sm ${statusF === s ? 'btn-primary' : 'btn-ghost'}`} onClick={() => { setStatusF(s); setPage(1); }}>
                 {s.charAt(0).toUpperCase() + s.slice(1)}
@@ -105,11 +110,17 @@ export default function ShopsList() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Shop ID</th><th>Brand</th><th>City</th><th>App Shop ID</th><th>Status</th></tr>
+              <tr>
+                <th>{t('pages.shopsList.colShopId')}</th>
+                <th>{t('pages.shopsList.colBrand')}</th>
+                <th>{t('pages.shopsList.colCity')}</th>
+                <th>{t('pages.shopsList.colAppShopId')}</th>
+                <th>{t('pages.shopsList.colStatus')}</th>
+              </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={5} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>Loading…</td></tr>}
-              {!isLoading && shops.length === 0 && <tr><td colSpan={5}><div className="empty-state"><p>No shops found.</p></div></td></tr>}
+              {isLoading && <tr><td colSpan={5} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>}
+              {!isLoading && shops.length === 0 && <tr><td colSpan={5}><div className="empty-state"><p>{t('pages.shopsList.noShops')}</p></div></td></tr>}
               {shops.map(s => (
                 <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/shops/${s.id}`)}>
                   <td className="td-mono">{s.shopId}</td>
@@ -126,11 +137,11 @@ export default function ShopsList() {
       </main>
 
       {open && (
-        <Modal title="New Shop" onClose={() => setOpen(false)}
+        <Modal title={t('pages.shopsList.modalTitle')} onClose={() => setOpen(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setOpen(false)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
-              {saving ? 'Creating…' : 'Create Shop'}
+              {saving ? t('pages.shopsList.creating') : t('pages.shopsList.createShop')}
             </button>
           </>}
         >
@@ -138,25 +149,25 @@ export default function ShopsList() {
           <form onSubmit={handleCreate}>
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Shop ID</label>
+                <label className="form-label">{t('pages.shopsList.shopIdLabel')}</label>
                 <input className="form-input" placeholder="SHOP-MX-001" value={form.shopId}
                   onChange={e => setForm(f => ({ ...f, shopId: e.target.value }))} required autoFocus />
               </div>
               <div className="form-group">
-                <label className="form-label">App Shop ID</label>
+                <label className="form-label">{t('pages.shopsList.appShopIdLabel')}</label>
                 <input className="form-input" placeholder="S001" value={form.appShopId}
                   onChange={e => setForm(f => ({ ...f, appShopId: e.target.value }))} required />
               </div>
             </div>
             <div className="form-group">
-              <label className="form-label">Brand</label>
+              <label className="form-label">{t('pages.shopsList.brandLabel')}</label>
               <select className="form-select" value={form.brandId} onChange={e => setForm(f => ({ ...f, brandId: e.target.value }))} required>
-                <option value="">Select brand…</option>
+                <option value="">{t('pages.shopsList.brandPlaceholder')}</option>
                 {brands.map(b => <option key={b.id} value={b.id}>{b.brandName} ({b.country})</option>)}
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">City</label>
+              <label className="form-label">{t('pages.shopsList.cityLabel')}</label>
               <input className="form-input" placeholder="Mexico City" value={form.city}
                 onChange={e => setForm(f => ({ ...f, city: e.target.value }))} />
             </div>

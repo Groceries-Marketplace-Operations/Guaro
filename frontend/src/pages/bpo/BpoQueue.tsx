@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Topbar from '../../components/layout/Topbar';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { bpoApi } from '../../api';
+import { useT } from '../../i18n';
 
 interface ActiveTask {
   id: string;
@@ -23,6 +24,7 @@ interface Perf {
 
 export default function BpoQueue() {
   const nav = useNavigate();
+  const t = useT();
 
   const { data: tasks = [], isLoading } = useQuery<ActiveTask[]>({
     queryKey: ['bpo-my-tasks'],
@@ -35,43 +37,47 @@ export default function BpoQueue() {
     queryFn: () => bpoApi.myPerformance().then(r => r.data),
   });
 
-  const activeStep = (t: ActiveTask) =>
-    t.stepInstances?.find(s => s.status === 'in_progress' || s.status === 'blocked' || s.status === 'pending');
+  const activeStep = (tk: ActiveTask) =>
+    tk.stepInstances?.find(s => s.status === 'in_progress' || s.status === 'blocked' || s.status === 'pending');
+
+  const subtitle = tasks.length === 1
+    ? t('pages.bpoQueue.subtitle').replace('{count}', String(tasks.length))
+    : t('pages.bpoQueue.subtitlePlural').replace('{count}', String(tasks.length));
 
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'My Queue' }]} />
+      <Topbar breadcrumb={[{ label: t('nav.myQueue') }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
-            <h1>My Queue</h1>
-            <p>{tasks.length} active task{tasks.length !== 1 ? 's' : ''} · refreshes every 15 s</p>
+            <h1>{t('pages.bpoQueue.title')}</h1>
+            <p>{subtitle}</p>
           </div>
         </div>
 
         {perf && (
           <div className="stat-grid" style={{ marginBottom: 24 }}>
             <div className="stat-card orange-accent">
-              <div className="s-label">Steps Done</div>
+              <div className="s-label">{t('pages.bpoQueue.stepsDone')}</div>
               <div className="s-value">{perf.stepsCompleted}</div>
-              <div className="s-meta">all time</div>
+              <div className="s-meta">{t('common.allTime')}</div>
             </div>
             <div className="stat-card">
-              <div className="s-label">In Progress</div>
+              <div className="s-label">{t('pages.bpoQueue.inProgress')}</div>
               <div className="s-value" style={{ color: 'var(--amber)' }}>{perf.stepsInProgress}</div>
-              <div className="s-meta">active steps</div>
+              <div className="s-meta">{t('pages.bpoQueue.activeSteps')}</div>
             </div>
             <div className="stat-card">
-              <div className="s-label">Failed</div>
+              <div className="s-label">{t('pages.bpoQueue.failed')}</div>
               <div className="s-value" style={{ color: 'var(--red)' }}>{perf.stepsFailed}</div>
-              <div className="s-meta">steps failed</div>
+              <div className="s-meta">{t('pages.bpoQueue.stepsFailed')}</div>
             </div>
             <div className="stat-card">
-              <div className="s-label">Avg Time</div>
+              <div className="s-label">{t('pages.bpoQueue.avgTime')}</div>
               <div className="s-value">
                 {perf.avgCompletionHours != null ? Number(perf.avgCompletionHours).toFixed(1) : '—'}
               </div>
-              <div className="s-meta">hours per step</div>
+              <div className="s-meta">{t('pages.bpoQueue.hoursPerStep')}</div>
             </div>
           </div>
         )}
@@ -80,32 +86,32 @@ export default function BpoQueue() {
           <table>
             <thead>
               <tr>
-                <th>Brand</th>
-                <th>Task Type</th>
-                <th>Task Status</th>
-                <th>Current Step</th>
-                <th>Last Update</th>
+                <th>{t('pages.bpoQueue.colBrand')}</th>
+                <th>{t('pages.bpoQueue.colTaskType')}</th>
+                <th>{t('pages.bpoQueue.colTaskStatus')}</th>
+                <th>{t('pages.bpoQueue.colCurrentStep')}</th>
+                <th>{t('pages.bpoQueue.colLastUpdate')}</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={5} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                <tr><td colSpan={5} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>
               )}
               {!isLoading && tasks.length === 0 && (
                 <tr><td colSpan={5}>
                   <div className="empty-state">
-                    <h3>Queue is empty</h3>
-                    <p>No tasks assigned to you right now.</p>
+                    <h3>{t('pages.bpoQueue.queueEmpty')}</h3>
+                    <p>{t('pages.bpoQueue.noTasksAssigned')}</p>
                   </div>
                 </td></tr>
               )}
-              {tasks.map(t => {
-                const step = activeStep(t);
+              {tasks.map(tk => {
+                const step = activeStep(tk);
                 return (
-                  <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/tasks/${t.id}`)}>
-                    <td style={{ fontWeight: 600 }}>{t.brand?.brandName ?? '—'}</td>
-                    <td className="text-muted">{t.taskType?.name ?? '—'}</td>
-                    <td><StatusBadge status={t.status} /></td>
+                  <tr key={tk.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/tasks/${tk.id}`)}>
+                    <td style={{ fontWeight: 600 }}>{tk.brand?.brandName ?? '—'}</td>
+                    <td className="text-muted">{tk.taskType?.name ?? '—'}</td>
+                    <td><StatusBadge status={tk.status} /></td>
                     <td>
                       {step?.stepDefinition?.name
                         ? <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -114,7 +120,7 @@ export default function BpoQueue() {
                           </span>
                         : <span className="text-muted">—</span>}
                     </td>
-                    <td className="text-sm text-muted">{new Date(t.updatedAt).toLocaleString()}</td>
+                    <td className="text-sm text-muted">{new Date(tk.updatedAt).toLocaleString()}</td>
                   </tr>
                 );
               })}

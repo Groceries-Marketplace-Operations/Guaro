@@ -159,6 +159,9 @@ export class TasksService {
     id: string,
     viewer?: { roles: AccountRole[]; accountId: string; sectionId: string | null },
   ) {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(id)) throw new NotFoundException('Task not found');
+
     const task = await this.prisma.task.findUnique({ where: { id }, include: TASK_INCLUDE });
     if (!task || task.deletedAt) throw new NotFoundException('Task not found');
 

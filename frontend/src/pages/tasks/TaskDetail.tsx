@@ -6,6 +6,7 @@ import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { tasksApi, accountsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
+import { useT } from '../../i18n';
 import type { Task, StepInstance, StepStatus, FormValue, Account } from '../../types';
 
 const CheckIcon = () => (
@@ -30,7 +31,6 @@ const RefreshIcon = () => (
     <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
   </svg>
 );
-
 const PlayIcon = () => (
   <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
     <polygon points="5 3 19 12 5 21 5 3"/>
@@ -57,6 +57,7 @@ export default function TaskDetail() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
   const { account } = useAuth();
+  const t = useT();
   const roles = account?.roles ?? [];
   const canActOnStep = roles.some(r => r === 'bpo' || r === 'admin' || r === 'super_admin');
 
@@ -67,14 +68,14 @@ export default function TaskDetail() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
-  // Manual assignment state
   const [manualAssignStep, setManualAssignStep] = useState<string | null>(null);
   const [manualAssignBpo, setManualAssignBpo] = useState('');
 
-  const { data: task, isLoading } = useQuery<Task>({
+  const { data: task, isLoading, isError } = useQuery<Task>({
     queryKey: ['task', id],
     queryFn: () => tasksApi.get(id!).then(r => r.data),
     refetchInterval: 5000,
+    retry: false,
   });
 
   const canManualAssign = roles.some(r => r === 'admin' || r === 'super_admin');
@@ -95,7 +96,7 @@ export default function TaskDetail() {
       setManualAssignBpo('');
     } catch (ex: unknown) {
       const e = ex as { response?: { data?: { message?: string } } };
-      setErr(e.response?.data?.message ?? 'Error assigning BPO');
+      setErr(e.response?.data?.message ?? t('pages.taskDetail.errorAssigning'));
     } finally { setSaving(false); }
   };
 
@@ -126,23 +127,34 @@ export default function TaskDetail() {
       qc.invalidateQueries({ queryKey: ['task', id] });
     } catch (ex: unknown) {
       const e = ex as { response?: { data?: { message?: string } } };
-      setErr(e.response?.data?.message ?? 'Error starting step');
+      setErr(e.response?.data?.message ?? t('pages.taskDetail.errorStarting'));
     } finally { setSaving(false); }
   };
 
   if (isLoading) return (
     <>
-      <Topbar breadcrumb={[{ label: 'Tasks', href: '/tasks' }, { label: 'Loading…' }]} />
-      <main className="main-content"><p className="text-muted">Loading…</p></main>
+      <Topbar breadcrumb={[{ label: t('nav.tasks'), href: '/tasks' }, { label: t('pages.taskDetail.loading') }]} />
+      <main className="main-content"><p className="text-muted">{t('pages.taskDetail.loading')}</p></main>
     </>
   );
-  if (!task) return null;
+
+  if (isError || !task) return (
+    <>
+      <Topbar breadcrumb={[{ label: t('nav.tasks'), href: '/tasks' }, { label: t('pages.taskDetail.notFound') }]} />
+      <main className="main-content">
+        <div className="empty-state" style={{ marginTop: 64 }}>
+          <p style={{ fontWeight: 600, marginBottom: 8 }}>{t('pages.taskDetail.notFound')}</p>
+          <p className="text-muted text-sm">{t('pages.taskDetail.notFoundHint')}</p>
+        </div>
+      </main>
+    </>
+  );
 
   const steps = [...(task.stepInstances ?? [])].sort((a, b) => (a.stepDefinition?.order ?? 0) - (b.stepDefinition?.order ?? 0));
 
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Tasks', href: '/tasks' }, { label: `${task.taskType?.name ?? 'Task'} — ${task.brand?.brandName ?? ''}` }]} />
+      <Topbar breadcrumb={[{ label: t('nav.tasks'), href: '/tasks' }, { label: `${task.taskType?.name ?? 'Task'} — ${task.brand?.brandName ?? ''}` }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
@@ -169,11 +181,19 @@ export default function TaskDetail() {
         )}
 
         <div className="card">
-          <div className="card-header"><span className="card-title">Steps</span></div>
+          <div className="card-header"><span className="card-title">{t('pages.taskDetail.cardSteps')}</span></div>
           <div className="table-wrap" style={{ border: 'none', borderRadius: 0 }}>
             <table>
               <thead>
-                <tr><th>#</th><th>Step</th><th>Type</th><th>Assigned To</th><th>Status</th><th>Note</th><th></th></tr>
+                <tr>
+                  <th>{t('pages.taskDetail.colNum')}</th>
+                  <th>{t('pages.taskDetail.colStep')}</th>
+                  <th>{t('pages.taskDetail.colType')}</th>
+                  <th>{t('pages.taskDetail.colAssignedTo')}</th>
+                  <th>{t('pages.taskDetail.colStatus')}</th>
+                  <th>{t('pages.taskDetail.colNote')}</th>
+                  <th></th>
+                </tr>
               </thead>
               <tbody>
                 {steps.map((s, i) => (
@@ -190,20 +210,20 @@ export default function TaskDetail() {
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                             <select className="form-select" style={{ fontSize: '0.8rem', padding: '3px 8px', height: 'auto' }}
                               value={manualAssignBpo} onChange={e => setManualAssignBpo(e.target.value)}>
-                              <option value="">Select BPO…</option>
+                              <option value="">{t('pages.taskDetail.selectBpo')}</option>
                               {bpoAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                             </select>
                             <button className="btn btn-sm btn-primary" disabled={!manualAssignBpo || saving}
                               onClick={() => handleManualAssign(s.id)}>
-                              Assign
+                              {t('common.assign')}
                             </button>
                             <button className="btn btn-sm btn-ghost" onClick={() => { setManualAssignStep(null); setManualAssignBpo(''); }}>
-                              Cancel
+                              {t('common.cancel')}
                             </button>
                           </div>
                         ) : (
                           <button className="btn btn-sm btn-ghost" onClick={() => { setManualAssignStep(s.id); setManualAssignBpo(''); }}>
-                            Assign BPO
+                            {t('pages.taskDetail.assignBpo')}
                           </button>
                         )
                       )}
@@ -216,20 +236,20 @@ export default function TaskDetail() {
                           disabled={saving}
                           onClick={() => handleStart(s)}
                         >
-                          <PlayIcon /> Start Review
+                          <PlayIcon /> {t('pages.taskDetail.startReview')}
                         </button>
                       )}
                       {canActOnStep && s.status === 'in_progress' && s.stepDefinition?.executionType !== 'automatic' && (
                         <div className="flex gap-2">
-                          <button className="btn btn-sm btn-primary" title="Complete"
+                          <button className="btn btn-sm btn-primary" title={t('pages.taskDetail.btnComplete')}
                             onClick={() => { setActiveStep(s); setAction('complete'); }}>
                             <CheckIcon />
                           </button>
-                          <button className="btn btn-sm btn-ghost" title="Block"
+                          <button className="btn btn-sm btn-ghost" title={t('pages.taskDetail.btnBlock')}
                             onClick={() => { setActiveStep(s); setAction('block'); }}>
                             <AlertIcon />
                           </button>
-                          <button className="btn btn-sm btn-danger" title="Fail"
+                          <button className="btn btn-sm btn-danger" title={t('pages.taskDetail.btnFail')}
                             onClick={() => { setActiveStep(s); setAction('fail'); }}>
                             <XIcon />
                           </button>
@@ -237,11 +257,11 @@ export default function TaskDetail() {
                       )}
                       {canActOnStep && s.status === 'blocked' && (
                         <div className="flex gap-2">
-                          <button className="btn btn-sm btn-primary" title="Retry"
+                          <button className="btn btn-sm btn-primary" title={t('pages.taskDetail.retry')}
                             onClick={() => handleRetry(s)}>
-                            <RefreshIcon /> Retry
+                            <RefreshIcon /> {t('pages.taskDetail.retry')}
                           </button>
-                          <button className="btn btn-sm btn-danger" title="Fail"
+                          <button className="btn btn-sm btn-danger" title={t('pages.taskDetail.btnFail')}
                             onClick={() => { setActiveStep(s); setAction('fail'); }}>
                             <XIcon />
                           </button>
@@ -257,7 +277,7 @@ export default function TaskDetail() {
 
         {task.formValues && task.formValues.length > 0 && (
           <div className="card mt-2">
-            <div className="card-header"><span className="card-title">Form Inputs</span></div>
+            <div className="card-header"><span className="card-title">{t('pages.taskDetail.cardFormInputs')}</span></div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: '0 16px 16px' }}>
               {task.formValues.map((fv) => (
                 <div key={fv.id}>
@@ -270,24 +290,24 @@ export default function TaskDetail() {
         )}
 
         <div className="card mt-2" style={{ background: 'var(--surface-2)' }}>
-          <div className="card-header"><span className="card-title">Details</span></div>
+          <div className="card-header"><span className="card-title">{t('pages.taskDetail.cardDetails')}</span></div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <div className="text-sm text-muted">Created by</div>
+              <div className="text-sm text-muted">{t('pages.taskDetail.createdBy')}</div>
               <div style={{ fontWeight: 500 }}>{task.createdBy?.name ?? '—'}</div>
             </div>
             <div>
-              <div className="text-sm text-muted">Created at</div>
+              <div className="text-sm text-muted">{t('pages.taskDetail.createdAt')}</div>
               <div>{new Date(task.createdAt).toLocaleString()}</div>
             </div>
             {task.scheduledStart && (
               <>
                 <div>
-                  <div className="text-sm text-muted">Scheduled start</div>
+                  <div className="text-sm text-muted">{t('pages.taskDetail.scheduledStart')}</div>
                   <div>{new Date(task.scheduledStart).toLocaleString()}</div>
                 </div>
                 <div>
-                  <div className="text-sm text-muted">Scheduled end</div>
+                  <div className="text-sm text-muted">{t('pages.taskDetail.scheduledEnd')}</div>
                   <div>{task.scheduledEnd ? new Date(task.scheduledEnd).toLocaleString() : '—'}</div>
                 </div>
               </>
@@ -298,33 +318,33 @@ export default function TaskDetail() {
 
       {action && activeStep && (
         <Modal
-          title={action === 'complete' ? 'Complete Step' : action === 'block' ? 'Block Step' : 'Fail Step'}
+          title={action === 'complete' ? t('pages.taskDetail.modalCompleteStep') : action === 'block' ? t('pages.taskDetail.modalBlockStep') : t('pages.taskDetail.modalFailStep')}
           onClose={() => { setAction(null); setActiveStep(null); setNote(''); setErr(''); }}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => { setAction(null); setActiveStep(null); }}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => { setAction(null); setActiveStep(null); }}>{t('common.cancel')}</button>
             <button
               className={`btn ${action === 'fail' ? 'btn-danger' : action === 'block' ? 'btn-ghost' : 'btn-primary'}`}
               onClick={handleAction} disabled={saving}
             >
-              {saving ? 'Saving…' : action === 'complete' ? 'Complete' : action === 'block' ? 'Block' : 'Fail Step'}
+              {saving ? t('common.saving') : action === 'complete' ? t('pages.taskDetail.btnComplete') : action === 'block' ? t('pages.taskDetail.btnBlock') : t('pages.taskDetail.btnFail')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           {action === 'fail' && (
             <div className="form-group">
-              <label className="form-label">Failure Reason</label>
+              <label className="form-label">{t('pages.taskDetail.failureReasonLabel')}</label>
               <select className="form-select" value={failureReason} onChange={e => setFailureReason(e.target.value)}>
-                <option value="bpo_timed_out">BPO timed out</option>
-                <option value="no_bpo">No BPO available</option>
-                <option value="error_handler">Handler error</option>
-                <option value="system_timed_out">System timed out</option>
+                <option value="bpo_timed_out">{t('pages.taskDetail.failBpoTimedOut')}</option>
+                <option value="no_bpo">{t('pages.taskDetail.failNoBpo')}</option>
+                <option value="error_handler">{t('pages.taskDetail.failHandlerError')}</option>
+                <option value="system_timed_out">{t('pages.taskDetail.failSystemTimedOut')}</option>
               </select>
             </div>
           )}
           <div className="form-group">
-            <label className="form-label">Note {action !== 'fail' ? '(optional)' : ''}</label>
-            <textarea className="form-textarea" placeholder="Add a note…" value={note} onChange={e => setNote(e.target.value)} />
+            <label className="form-label">{action !== 'fail' ? t('pages.taskDetail.noteOptional') : t('pages.taskDetail.noteLabel')}</label>
+            <textarea className="form-textarea" placeholder={t('pages.taskDetail.notePlaceholder')} value={note} onChange={e => setNote(e.target.value)} />
           </div>
         </Modal>
       )}

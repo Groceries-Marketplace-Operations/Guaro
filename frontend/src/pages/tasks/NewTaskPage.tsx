@@ -3,9 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import { taskTypesApi, brandsApi, shopsApi, tasksApi, appConfigApi } from '../../api';
+import { useT } from '../../i18n';
 import type { TaskType, FormField, Brand, Shop } from '../../types';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 type ApiError = { response?: { data?: { message?: string | string[] } } };
 function errMsg(ex: unknown) {
@@ -19,7 +18,6 @@ function isValidUrl(url: string): boolean {
   try { new URL(url); return true; } catch { return false; }
 }
 
-// Tomorrow at 00:00, local time, formatted as datetime-local value "YYYY-MM-DDThh:mm"
 function toLocalDatetimeInput(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -30,14 +28,9 @@ const WINDOW_HOURS = 4;
 function getSchedulingBounds() {
   const now = new Date();
   now.setSeconds(0, 0);
-
   const maxDate = new Date(now);
   maxDate.setMonth(maxDate.getMonth() + 1);
-
-  return {
-    min: toLocalDatetimeInput(now),
-    max: toLocalDatetimeInput(maxDate),
-  };
+  return { min: toLocalDatetimeInput(now), max: toLocalDatetimeInput(maxDate) };
 }
 
 function addHours(datetimeLocal: string, hours: number): string {
@@ -45,8 +38,6 @@ function addHours(datetimeLocal: string, hours: number): string {
   d.setHours(d.getHours() + hours);
   return d.toISOString();
 }
-
-// ── Icons ─────────────────────────────────────────────────────────────────────
 
 const ChevronDown = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="14" height="14">
@@ -63,8 +54,6 @@ const XSmall = () => (
     <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
   </svg>
 );
-
-// ── Brand Combobox ─────────────────────────────────────────────────────────────
 
 interface BrandComboboxProps {
   brands: Brand[];
@@ -89,25 +78,11 @@ function BrandCombobox({ brands, value, onChange, placeholder = 'Search brand…
     ).slice(0, 50);
   }, [brands, query]);
 
-  const select = (b: Brand) => {
-    onChange(b.id);
-    setQuery('');
-    setOpen(false);
-  };
+  const select = (b: Brand) => { onChange(b.id); setQuery(''); setOpen(false); };
+  const clear = (e: React.MouseEvent) => { e.stopPropagation(); onChange(''); setQuery(''); setOpen(false); };
 
-  const clear = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onChange('');
-    setQuery('');
-    setOpen(false);
-  };
-
-  // Close on outside click
   const handleBlur = useCallback((e: React.FocusEvent) => {
-    if (!containerRef.current?.contains(e.relatedTarget as Node)) {
-      setOpen(false);
-      setQuery('');
-    }
+    if (!containerRef.current?.contains(e.relatedTarget as Node)) { setOpen(false); setQuery(''); }
   }, []);
 
   return (
@@ -122,40 +97,22 @@ function BrandCombobox({ brands, value, onChange, placeholder = 'Search brand…
           style={{ paddingRight: value ? 32 : 12 }}
         />
         {value && (
-          <button
-            type="button"
-            onMouseDown={clear}
-            tabIndex={-1}
-            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}
-          >
+          <button type="button" onMouseDown={clear} tabIndex={-1}
+            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}>
             <XSmall />
           </button>
         )}
       </div>
-
       {open && (
-        <div style={{
-          position: 'absolute', zIndex: 200, top: 'calc(100% + 4px)', left: 0, right: 0,
-          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-          maxHeight: 240, overflowY: 'auto',
-        }}>
+        <div style={{ position: 'absolute', zIndex: 200, top: 'calc(100% + 4px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', maxHeight: 240, overflowY: 'auto' }}>
           {filtered.length === 0 ? (
-            <div style={{ padding: '10px 14px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>No brands found</div>
+            <div style={{ padding: '10px 14px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{placeholder}</div>
           ) : (
             filtered.map(b => (
-              <div
-                key={b.id}
-                onMouseDown={() => select(b)}
-                style={{
-                  padding: '9px 14px', cursor: 'pointer', fontSize: '0.84rem',
-                  background: value === b.id ? 'rgba(255,105,0,0.08)' : 'transparent',
-                  color: value === b.id ? 'var(--orange)' : 'var(--text-primary)',
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                }}
+              <div key={b.id} onMouseDown={() => select(b)}
+                style={{ padding: '9px 14px', cursor: 'pointer', fontSize: '0.84rem', background: value === b.id ? 'rgba(255,105,0,0.08)' : 'transparent', color: value === b.id ? 'var(--orange)' : 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                 onMouseEnter={e => (e.currentTarget.style.background = value === b.id ? 'rgba(255,105,0,0.12)' : 'var(--surface-2)')}
-                onMouseLeave={e => (e.currentTarget.style.background = value === b.id ? 'rgba(255,105,0,0.08)' : 'transparent')}
-              >
+                onMouseLeave={e => (e.currentTarget.style.background = value === b.id ? 'rgba(255,105,0,0.08)' : 'transparent')}>
                 <span style={{ fontWeight: value === b.id ? 600 : 400 }}>{b.brandName}</span>
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{b.brandId} · {b.country}</span>
               </div>
@@ -163,7 +120,7 @@ function BrandCombobox({ brands, value, onChange, placeholder = 'Search brand…
           )}
           {brands.length > 50 && filtered.length === 50 && (
             <div style={{ padding: '6px 14px', fontSize: '0.72rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
-              Showing first 50 — type to filter
+              {placeholder}
             </div>
           )}
         </div>
@@ -172,25 +129,20 @@ function BrandCombobox({ brands, value, onChange, placeholder = 'Search brand…
   );
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
-
 type FieldValue = string | string[];
 
 export default function NewTaskPage() {
   const nav = useNavigate();
+  const t = useT();
   const { min: schedMin, max: schedMax } = useMemo(() => getSchedulingBounds(), []);
 
-  const [selectedTTId, setSelectedTTId]         = useState<string | null>(null);
+  const [selectedTTId, setSelectedTTId] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
-
   const [scheduledStart, setScheduledStart] = useState('');
-  const [formValues, setFormValues]         = useState<Record<string, FieldValue>>({});
-  const [urlErrors, setUrlErrors]           = useState<Record<string, string>>({});
-
+  const [formValues, setFormValues] = useState<Record<string, FieldValue>>({});
+  const [urlErrors, setUrlErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const [err,    setErr]    = useState('');
-
-  // ── Data ───────────────────────────────────────────────────────────────────
+  const [err, setErr] = useState('');
 
   const { data: taskTypesResult } = useQuery<{ data: TaskType[] }>({
     queryKey: ['task-types', { page: 1, limit: 200 }],
@@ -198,7 +150,6 @@ export default function NewTaskPage() {
   });
   const taskTypes: TaskType[] = taskTypesResult?.data ?? [];
 
-  // Fetch full detail (with formFields + stepDefinitions) when a TT is selected
   const { data: selectedTT = null } = useQuery<TaskType>({
     queryKey: ['task-type', selectedTTId],
     queryFn: () => taskTypesApi.get(selectedTTId!).then(r => r.data as TaskType),
@@ -249,20 +200,16 @@ export default function NewTaskPage() {
     enabled: hasKaTypeField || hasCountryField,
   });
 
-  // ── Section grouping ───────────────────────────────────────────────────────
-
   const bySection = useMemo(() => {
     const map = new Map<string, { sectionId: string; sectionName: string; types: TaskType[] }>();
     for (const tt of taskTypes) {
-      if (tt.active === false) continue; // skip hidden task types
+      if (tt.active === false) continue;
       const key = tt.sectionId;
       if (!map.has(key)) map.set(key, { sectionId: key, sectionName: tt.section?.name ?? 'No section', types: [] });
       map.get(key)!.types.push(tt);
     }
     return [...map.values()];
   }, [taskTypes]);
-
-  // ── Handlers ───────────────────────────────────────────────────────────────
 
   const pickTaskType = (tt: TaskType) => {
     setSelectedTTId(tt.id);
@@ -284,7 +231,7 @@ export default function NewTaskPage() {
 
   const validateUrl = (fieldId: string, value: string) => {
     if (value && !isValidUrl(value)) {
-      setUrlErrors(prev => ({ ...prev, [fieldId]: 'Must be a valid URL (e.g. https://example.com)' }));
+      setUrlErrors(prev => ({ ...prev, [fieldId]: t('pages.newTask.urlError') }));
     } else {
       setUrlErrors(prev => { const next = { ...prev }; delete next[fieldId]; return next; });
     }
@@ -300,13 +247,12 @@ export default function NewTaskPage() {
 
   const submit = async () => {
     if (!selectedTT) return;
-    // Final URL validation
     let hasUrlError = false;
     for (const f of fields) {
       if (f.tipo === 'link' || f.tipo === 'link_spreadsheet') {
         const val = (formValues[f.id] as string) ?? '';
         if (!isValidUrl(val)) {
-          setUrlErrors(prev => ({ ...prev, [f.id]: 'Must be a valid URL' }));
+          setUrlErrors(prev => ({ ...prev, [f.id]: t('pages.newTask.urlError') }));
           hasUrlError = true;
         }
       }
@@ -316,7 +262,6 @@ export default function NewTaskPage() {
     setErr(''); setSaving(true);
     try {
       const fvPayload: Array<Record<string, string>> = [];
-
       for (const f of fields) {
         const val = formValues[f.id];
         if (f.tipo === 'select_brand') {
@@ -331,7 +276,6 @@ export default function NewTaskPage() {
           if (val) fvPayload.push({ formFieldId: f.id, value: val as string });
         }
       }
-
       const payload: Record<string, unknown> = {
         taskTypeId: selectedTT.id,
         ...(fvPayload.length && { formValues: fvPayload }),
@@ -340,7 +284,6 @@ export default function NewTaskPage() {
           scheduledEnd:   addHours(scheduledStart, WINDOW_HOURS),
         }),
       };
-
       const res = await tasksApi.create(payload);
       const created = res.data as { id: string };
       nav(`/tasks/${created.id}`);
@@ -350,8 +293,6 @@ export default function NewTaskPage() {
       setSaving(false);
     }
   };
-
-  // ── Field renderers ────────────────────────────────────────────────────────
 
   const renderField = (f: FormField) => {
     const val = formValues[f.id];
@@ -405,12 +346,8 @@ export default function NewTaskPage() {
                 const checked = selected.includes(o);
                 return (
                   <label key={o} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '3px 0' }}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleMultiOption(f.id, o)}
-                      style={{ accentColor: 'var(--orange)', width: 15, height: 15, flexShrink: 0 }}
-                    />
+                    <input type="checkbox" checked={checked} onChange={() => toggleMultiOption(f.id, o)}
+                      style={{ accentColor: 'var(--orange)', width: 15, height: 15, flexShrink: 0 }} />
                     <span style={{ fontSize: '0.84rem' }}>{o}</span>
                   </label>
                 );
@@ -418,7 +355,7 @@ export default function NewTaskPage() {
             </div>
             {selected.length > 0 && (
               <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                {selected.length} selected: {selected.join(', ')}
+                {t('pages.newTask.selectedCount').replace('{count}', String(selected.length)).replace('{list}', selected.join(', '))}
               </p>
             )}
           </div>
@@ -428,7 +365,7 @@ export default function NewTaskPage() {
         <div className="form-group" key={f.id}>
           {label}
           <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)}>
-            <option value="">Select…</option>
+            <option value="">{t('pages.newTask.selectOption')}</option>
             {f.options.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
         </div>
@@ -442,6 +379,7 @@ export default function NewTaskPage() {
           brands={brands}
           value={strVal}
           onChange={id => setField(f.id, id)}
+          placeholder={t('pages.newTask.noBrandsFound')}
         />
       </div>
     );
@@ -452,7 +390,7 @@ export default function NewTaskPage() {
         <div className="form-group" key={f.id}>
           {label}
           <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)}>
-            <option value="">Select KA Type…</option>
+            <option value="">{t('pages.newTask.selectKaType')}</option>
             {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
@@ -465,7 +403,7 @@ export default function NewTaskPage() {
         <div className="form-group" key={f.id}>
           {label}
           <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)}>
-            <option value="">Select Country…</option>
+            <option value="">{t('pages.newTask.selectCountry')}</option>
             {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
@@ -481,10 +419,10 @@ export default function NewTaskPage() {
         <div className="form-group" key={f.id}>
           {label}
           {!filterBrandId && (
-            <p className="form-hint" style={{ marginBottom: 6 }}>Select a brand first to load stores.</p>
+            <p className="form-hint" style={{ marginBottom: 6 }}>{t('pages.newTask.selectBrand')}</p>
           )}
           <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)} disabled={!filterBrandId}>
-            <option value="">Select store…</option>
+            <option value="">{t('pages.newTask.selectStore')}</option>
             {filteredShops.map(s => (
               <option key={s.id} value={s.id}>{s.shopId}{s.city ? ` · ${s.city}` : ''}</option>
             ))}
@@ -496,8 +434,6 @@ export default function NewTaskPage() {
     return null;
   };
 
-  // ── Validation ─────────────────────────────────────────────────────────────
-
   const missingRequired = fields.filter(f => f.required).some(f => {
     const val = formValues[f.id];
     if (f.multiple) return !Array.isArray(val) || val.length === 0;
@@ -507,32 +443,19 @@ export default function NewTaskPage() {
   const hasUrlErrors = Object.keys(urlErrors).length > 0;
   const canSubmit = !saving && !missingRequired && !hasUrlErrors;
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Tasks', href: '/tasks' }, { label: 'New Task' }]} />
+      <Topbar breadcrumb={[{ label: t('nav.tasks'), href: '/tasks' }, { label: t('pages.newTask.breadcrumb') }]} />
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '260px 1fr',
-        gridColumn: 2,
-        minHeight: 'calc(100vh - var(--topbar-h))',
-      }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gridColumn: 2, minHeight: 'calc(100vh - var(--topbar-h))' }}>
 
-        {/* Left panel — Task type picker */}
-        <div style={{
-          borderRight: '1px solid var(--border)',
-          overflowY: 'auto',
-          padding: '20px 0',
-          background: 'var(--surface-2)',
-        }}>
+        <div style={{ borderRight: '1px solid var(--border)', overflowY: 'auto', padding: '20px 0', background: 'var(--surface-2)' }}>
           <div style={{ padding: '0 16px 12px', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Task Types
+            {t('pages.newTask.taskTypesHeader')}
           </div>
 
           {taskTypes.length === 0 && (
-            <p style={{ padding: '0 16px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>No task types available.</p>
+            <p style={{ padding: '0 16px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{t('pages.newTask.noTaskTypes')}</p>
           )}
 
           {bySection.map(({ sectionId, sectionName, types }) => {
@@ -541,12 +464,7 @@ export default function NewTaskPage() {
               <div key={sectionId} style={{ marginBottom: 4 }}>
                 <button
                   onClick={() => toggleSection(sectionId)}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '6px 16px', background: 'none', border: 'none', cursor: 'pointer',
-                    fontSize: '0.72rem', fontWeight: 700, color: '#666',
-                    textTransform: 'uppercase', letterSpacing: '0.06em',
-                  }}
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 16px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}
                 >
                   {sectionName}
                   {collapsed ? <ChevronRight /> : <ChevronDown />}
@@ -555,21 +473,8 @@ export default function NewTaskPage() {
                 {!collapsed && types.map(tt => {
                   const isActive = selectedTTId === tt.id;
                   return (
-                    <button
-                      key={tt.id}
-                      onClick={() => pickTaskType(tt)}
-                      style={{
-                        width: '100%', display: 'block', textAlign: 'left',
-                        padding: '9px 16px 9px 24px',
-                        background: isActive ? 'rgba(255,105,0,0.08)' : 'none',
-                        border: 'none',
-                        borderLeft: isActive ? '3px solid var(--orange)' : '3px solid transparent',
-                        cursor: 'pointer',
-                        color: isActive ? 'var(--orange)' : 'var(--text-primary)',
-                        fontWeight: isActive ? 600 : 400,
-                        fontSize: '0.84rem',
-                        transition: 'background 0.1s',
-                      }}
+                    <button key={tt.id} onClick={() => pickTaskType(tt)}
+                      style={{ width: '100%', display: 'block', textAlign: 'left', padding: '9px 16px 9px 24px', background: isActive ? 'rgba(255,105,0,0.08)' : 'none', border: 'none', borderLeft: isActive ? '3px solid var(--orange)' : '3px solid transparent', cursor: 'pointer', color: isActive ? 'var(--orange)' : 'var(--text-primary)', fontWeight: isActive ? 600 : 400, fontSize: '0.84rem', transition: 'background 0.1s' }}
                     >
                       <div style={{ lineHeight: 1.3 }}>{tt.name}</div>
                       {tt.description && (
@@ -585,7 +490,6 @@ export default function NewTaskPage() {
           })}
         </div>
 
-        {/* Right panel — Form */}
         <div style={{ overflowY: 'auto', padding: '32px 40px' }}>
           {!selectedTT ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, color: 'var(--text-muted)' }}>
@@ -594,11 +498,10 @@ export default function NewTaskPage() {
                 <rect x="9" y="3" width="6" height="4" rx="1"/>
                 <line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="12" y2="16"/>
               </svg>
-              <p style={{ fontSize: '0.9rem' }}>Select a task type on the left to get started</p>
+              <p style={{ fontSize: '0.9rem' }}>{t('pages.newTask.selectPrompt')}</p>
             </div>
           ) : (
             <div style={{ maxWidth: 640 }}>
-              {/* Header */}
               <div style={{ marginBottom: 28 }}>
                 <h1 style={{ fontSize: '1.35rem', fontWeight: 700, marginBottom: 4 }}>{selectedTT.name}</h1>
                 {selectedTT.description && (
@@ -612,57 +515,46 @@ export default function NewTaskPage() {
                   )}
                   {selectedTT.schedulable && (
                     <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue)' }}>
-                      Schedulable
+                      {t('pages.newTask.schedulable')}
                     </span>
                   )}
                   <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                    {(selectedTT.stepDefinitions?.length ?? 0)} step{(selectedTT.stepDefinitions?.length ?? 0) !== 1 ? 's' : ''}
+                    {(selectedTT.stepDefinitions?.length ?? 0)} {t('common.steps')}
                   </span>
                 </div>
               </div>
 
               {err && <div className="error-banner" style={{ marginBottom: 20 }}>{err}</div>}
 
-              {/* Scheduling */}
               {selectedTT.schedulable && (
                 <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: 4, color: 'var(--text-secondary)' }}>Schedule (optional)</div>
-                  <p className="form-hint" style={{ marginBottom: 12 }}>
-                    The task will activate at this date and time. If left empty, it starts immediately.
-                  </p>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: 4, color: 'var(--text-secondary)' }}>{t('pages.newTask.scheduleSection')}</div>
+                  <p className="form-hint" style={{ marginBottom: 12 }}>{t('pages.newTask.scheduleHint')}</p>
                   <div className="form-group" style={{ marginBottom: 8 }}>
-                    <label className="form-label">Start date &amp; time</label>
-                    <input
-                      className="form-input"
-                      type="datetime-local"
-                      value={scheduledStart}
-                      min={schedMin}
-                      max={schedMax}
-                      onChange={e => setScheduledStart(e.target.value)}
-                      style={{ maxWidth: 280 }}
-                    />
+                    <label className="form-label">{t('pages.newTask.startDateTime')}</label>
+                    <input className="form-input" type="datetime-local" value={scheduledStart} min={schedMin} max={schedMax}
+                      onChange={e => setScheduledStart(e.target.value)} style={{ maxWidth: 280 }} />
                   </div>
                   {scheduledStart && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text-muted)', background: 'var(--surface-2)', borderRadius: 6, padding: '6px 10px' }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13" style={{ flexShrink: 0 }}>
                         <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                       </svg>
-                      Execution window: {WINDOW_HOURS} hours from start. Steps not completed by then will be marked as timed out.
+                      {t('pages.newTask.windowNote').replace('{hours}', String(WINDOW_HOURS))}
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Templates */}
               {(selectedTT?.templates?.length ?? 0) > 0 && (
                 <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: 12, color: 'var(--text-secondary)' }}>Templates</div>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: 12, color: 'var(--text-secondary)' }}>{t('pages.newTask.templatesSection')}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {selectedTT!.templates!.map(t => (
-                      <a key={t.id} href={t.url} target="_blank" rel="noopener noreferrer"
+                    {selectedTT!.templates!.map(tp => (
+                      <a key={tp.id} href={tp.url} target="_blank" rel="noopener noreferrer"
                         style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:8, background:'var(--surface-2)', border:'1px solid var(--border)', textDecoration:'none', color:'var(--text-primary)' }}>
-                        <span style={{ fontSize:'0.72rem', fontWeight:700, padding:'1px 6px', borderRadius:4, background:'var(--orange-muted)', color:'var(--orange)', textTransform:'uppercase', flexShrink:0 }}>{t.tipo}</span>
-                        <span style={{ fontWeight:500, fontSize:'0.84rem' }}>{t.name}</span>
+                        <span style={{ fontSize:'0.72rem', fontWeight:700, padding:'1px 6px', borderRadius:4, background:'var(--orange-muted)', color:'var(--orange)', textTransform:'uppercase', flexShrink:0 }}>{tp.tipo}</span>
+                        <span style={{ fontWeight:500, fontSize:'0.84rem' }}>{tp.name}</span>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13" style={{ marginLeft:'auto', flexShrink:0, opacity:0.4 }}>
                           <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
                         </svg>
@@ -672,27 +564,23 @@ export default function NewTaskPage() {
                 </div>
               )}
 
-              {/* Dynamic form fields */}
               {fields.length > 0 && (
                 <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: 16, color: 'var(--text-secondary)' }}>Task Details</div>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: 16, color: 'var(--text-secondary)' }}>{t('pages.newTask.taskDetailsSection')}</div>
                   {fields.map(f => renderField(f))}
                 </div>
               )}
 
               {fields.length === 0 && !selectedTT.schedulable && (
                 <div className="card" style={{ marginBottom: 20, padding: '20px', textAlign: 'center' }}>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    This task type has no form fields. Click <strong>Create Task</strong> to start it immediately.
-                  </p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{t('pages.newTask.noFormFields')}</p>
                 </div>
               )}
 
-              {/* Step preview */}
               {(selectedTT.stepDefinitions?.length ?? 0) > 0 && (
                 <div style={{ marginBottom: 24 }}>
                   <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-                    Steps that will run
+                    {t('pages.newTask.stepsPreviewHeader')}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {[...(selectedTT.stepDefinitions ?? [])].sort((a, b) => a.order - b.order).map((s, i) => (
@@ -712,21 +600,16 @@ export default function NewTaskPage() {
                 </div>
               )}
 
-              {/* Submit */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                <button className="btn btn-ghost" onClick={() => nav('/tasks')}>Cancel</button>
+                <button className="btn btn-ghost" onClick={() => nav('/tasks')}>{t('pages.newTask.cancelBtn')}</button>
                 <button
                   className="btn btn-primary"
                   style={{ minWidth: 140 }}
                   onClick={submit}
                   disabled={!canSubmit}
-                  title={
-                    missingRequired ? 'Fill in all required fields' :
-                    hasUrlErrors ? 'Fix URL errors before submitting' :
-                    ''
-                  }
+                  title={missingRequired ? t('pages.newTask.missingRequiredTitle') : hasUrlErrors ? t('pages.newTask.fixUrlErrors') : ''}
                 >
-                  {saving ? 'Creating…' : 'Create Task'}
+                  {saving ? t('pages.newTask.creating') : t('pages.newTask.createTaskBtn')}
                 </button>
               </div>
             </div>

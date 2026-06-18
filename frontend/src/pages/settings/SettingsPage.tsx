@@ -5,9 +5,8 @@ import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { appConfigApi, assignmentRulesApi, accountsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
+import { useT } from '../../i18n';
 import type { AppConfigOption, BrandAssignmentRule, Account } from '../../types';
-
-// ── Icons ─────────────────────────────────────────────────────────────────────
 
 const PlusIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" width="14" height="14">
@@ -44,6 +43,7 @@ export default function SettingsPage() {
   const { account } = useAuth();
   const nav = useNavigate();
   const qc = useQueryClient();
+  const t = useT();
   const isSA = account?.roles.includes('super_admin') ?? false;
 
   if (!isSA) {
@@ -55,19 +55,16 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
-  // ── Assignment rules state ─────────────────────────────────────────────────
   const [editingRule, setEditingRule] = useState<BrandAssignmentRule | null>(null);
   const [ruleModo, setRuleModo] = useState<'fixed' | 'round_robin'>('round_robin');
   const [addingCandidateRuleId, setAddingCandidateRuleId] = useState<string | null>(null);
   const [candidateAccountId, setCandidateAccountId] = useState('');
 
-  // ── Catalog state ──────────────────────────────────────────────────────────
   const [addingCat, setAddingCat] = useState<string | null>(null);
   const [newOptForm, setNewOptForm] = useState({ value: '', label: '' });
   const [editingOpt, setEditingOpt] = useState<AppConfigOption | null>(null);
   const [editOptLabel, setEditOptLabel] = useState('');
 
-  // ── Data ───────────────────────────────────────────────────────────────────
   const { data: rulesRaw = [] } = useQuery<BrandAssignmentRule[]>({
     queryKey: ['assignment-rules'],
     queryFn: () => assignmentRulesApi.list().then(r => r.data as BrandAssignmentRule[]),
@@ -85,7 +82,6 @@ export default function SettingsPage() {
   });
   const bpos: Account[] = bposResult?.data ?? [];
 
-  // ── Assignment rule handlers ───────────────────────────────────────────────
   const openEditRule = (rule: BrandAssignmentRule) => {
     setEditingRule(rule);
     setRuleModo(rule.modo);
@@ -98,7 +94,7 @@ export default function SettingsPage() {
       await assignmentRulesApi.update(editingRule!.id, ruleModo);
       qc.invalidateQueries({ queryKey: ['assignment-rules'] });
       setEditingRule(null);
-    } catch { setErr('Error saving rule'); } finally { setSaving(false); }
+    } catch { setErr(t('pages.settings.errorSavingRule')); } finally { setSaving(false); }
   };
 
   const openAddCandidate = (ruleId: string) => {
@@ -114,18 +110,17 @@ export default function SettingsPage() {
       await assignmentRulesApi.addCandidate(addingCandidateRuleId!, candidateAccountId);
       qc.invalidateQueries({ queryKey: ['assignment-rules'] });
       setAddingCandidateRuleId(null);
-    } catch { setErr('Error adding candidate'); } finally { setSaving(false); }
+    } catch { setErr(t('pages.settings.errorAddingCandidate')); } finally { setSaving(false); }
   };
 
   const removeCandidate = async (ruleId: string, accountId: string) => {
-    if (!window.confirm('Remove this BPO from the pool?')) return;
+    if (!window.confirm(t('pages.settings.removeFromPool'))) return;
     try {
       await assignmentRulesApi.removeCandidate(ruleId, accountId);
       qc.invalidateQueries({ queryKey: ['assignment-rules'] });
     } catch { /* ignore */ }
   };
 
-  // ── Catalog option handlers ────────────────────────────────────────────────
   const toggleActive = async (opt: AppConfigOption) => {
     try {
       await appConfigApi.patch(opt.id, { active: !opt.active });
@@ -145,7 +140,7 @@ export default function SettingsPage() {
       await appConfigApi.upsert({ category: addingCat, ...newOptForm, active: true });
       qc.invalidateQueries({ queryKey: ['app-config'] });
       setAddingCat(null);
-    } catch { setErr('Error creating option'); } finally { setSaving(false); }
+    } catch { setErr(t('pages.settings.errorCreatingOption')); } finally { setSaving(false); }
   };
 
   const openEditOpt = (opt: AppConfigOption) => {
@@ -160,19 +155,18 @@ export default function SettingsPage() {
       await appConfigApi.patch(editingOpt!.id, { label: editOptLabel });
       qc.invalidateQueries({ queryKey: ['app-config'] });
       setEditingOpt(null);
-    } catch { setErr('Error saving option'); } finally { setSaving(false); }
+    } catch { setErr(t('pages.settings.errorSavingOption')); } finally { setSaving(false); }
   };
 
   const deleteOpt = async (opt: AppConfigOption) => {
-    if (!window.confirm(`Delete "${opt.label}"? This may break existing data using this value.`)) return;
+    if (!window.confirm(t('pages.settings.deleteOptionConfirm').replace('{label}', opt.label))) return;
     try {
       await appConfigApi.remove(opt.id);
       qc.invalidateQueries({ queryKey: ['app-config'] });
     } catch { /* ignore */ }
   };
 
-  // ── Render helpers ─────────────────────────────────────────────────────────
-  const ruleModeLabel = (m: string) => m === 'fixed' ? 'Fixed (1 BPO)' : 'Round Robin';
+  const ruleModeLabel = (m: string) => m === 'fixed' ? t('pages.settings.modeFixed').split(' — ')[0] + ' (1 BPO)' : 'Round Robin';
   const kaLabel: Record<string, string> = { KA: 'KA', CKA: 'CKA', SME: 'SME' };
   const countryLabel: Record<string, string> = { CO: '🇨🇴 CO', MX: '🇲🇽 MX', CR: '🇨🇷 CR' };
 
@@ -188,30 +182,28 @@ export default function SettingsPage() {
 
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Settings' }]} />
+      <Topbar breadcrumb={[{ label: t('nav.settings') }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
-            <h1>Settings</h1>
-            <p>Global configuration — brand assignment rules and catalog options</p>
+            <h1>{t('pages.settings.title')}</h1>
+            <p>{t('pages.settings.subtitle')}</p>
           </div>
         </div>
 
         <div className="tabs">
           <div className={`tab ${tab === 'assignment' ? 'active' : ''}`} onClick={() => setTab('assignment')}>
-            Brand Assignment Rules
+            {t('pages.settings.tabAssignment')}
           </div>
           <div className={`tab ${tab === 'catalog' ? 'active' : ''}`} onClick={() => setTab('catalog')}>
-            Catalog Options
+            {t('pages.settings.tabCatalog')}
           </div>
         </div>
 
-        {/* ── Brand Assignment Rules ── */}
         {tab === 'assignment' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 4 }}>
             <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-              Each rule defines how a brand owner is assigned based on KA type × country. Fixed = always the same BPO.
-              Round Robin = rotates through the pool.
+              {t('pages.settings.assignmentHint')}
             </p>
 
             {sortedRules.map(rule => (
@@ -228,14 +220,14 @@ export default function SettingsPage() {
                     </span>
                   </div>
                   <button className="btn btn-ghost btn-sm" style={{ padding: '4px 10px' }} onClick={() => openEditRule(rule)}>
-                    <EditIcon /> Edit mode
+                    <EditIcon /> {t('pages.settings.editMode')}
                   </button>
                 </div>
 
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>BPO Pool:</span>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>{t('pages.settings.bpoPool')}</span>
                   {rule.candidates.length === 0 && (
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>No BPOs assigned</span>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>{t('pages.settings.noBposAssigned')}</span>
                   )}
                   {rule.candidates.map(c => (
                     <div key={c.accountId} style={{
@@ -256,7 +248,7 @@ export default function SettingsPage() {
                   ))}
                   <button className="btn btn-ghost btn-sm" style={{ padding: '3px 10px', fontSize: '0.78rem' }}
                     onClick={() => openAddCandidate(rule.id)}>
-                    <PlusIcon /> Add BPO
+                    <PlusIcon /> {t('pages.settings.addBpo')}
                   </button>
                 </div>
               </div>
@@ -264,12 +256,10 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* ── Catalog Options ── */}
         {tab === 'catalog' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20, marginTop: 4 }}>
             <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-              Control which enum values are visible across the app. Inactive options are hidden from dropdowns.
-              Adding new values here registers them in the UI; the underlying DB enum must be updated in a migration for new values to be stored.
+              {t('pages.settings.catalogHint')}
             </p>
 
             {[...orderedCategories, ...extraCategories].map(cat => {
@@ -279,17 +269,22 @@ export default function SettingsPage() {
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                     <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{CATEGORY_LABELS[cat] ?? cat}</span>
                     <button className="btn btn-ghost btn-sm" style={{ padding: '4px 10px' }} onClick={() => openAddOpt(cat)}>
-                      <PlusIcon /> Add option
+                      <PlusIcon /> {t('pages.settings.addOption')}
                     </button>
                   </div>
                   <div className="table-wrap" style={{ border: 'none', borderRadius: 0, margin: 0 }}>
                     <table>
                       <thead>
-                        <tr><th>Value</th><th>Label</th><th>Status</th><th></th></tr>
+                        <tr>
+                          <th>{t('pages.settings.colValue')}</th>
+                          <th>{t('pages.settings.colLabel')}</th>
+                          <th>{t('pages.settings.colStatus')}</th>
+                          <th></th>
+                        </tr>
                       </thead>
                       <tbody>
                         {opts.length === 0 && (
-                          <tr><td colSpan={4}><div className="empty-state" style={{ padding: 12 }}><p>No options.</p></div></td></tr>
+                          <tr><td colSpan={4}><div className="empty-state" style={{ padding: 12 }}><p>{t('pages.settings.noOptions')}</p></div></td></tr>
                         )}
                         {opts.map(opt => (
                           <tr key={opt.id} style={{ opacity: opt.active ? 1 : 0.55 }}>
@@ -305,17 +300,17 @@ export default function SettingsPage() {
                                   color: opt.active ? '#027A48' : 'var(--text-muted)',
                                 }}
                               >
-                                {opt.active ? 'Active' : 'Inactive'}
+                                {opt.active ? t('common.active') : t('common.inactive')}
                               </button>
                             </td>
                             <td>
                               <div style={{ display: 'flex', gap: 4 }}>
                                 <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px' }}
-                                  onClick={() => openEditOpt(opt)} title="Rename">
+                                  onClick={() => openEditOpt(opt)} title={t('common.rename')}>
                                   <EditIcon />
                                 </button>
                                 <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px', color: 'var(--red)' }}
-                                  onClick={() => deleteOpt(opt)} title="Delete">
+                                  onClick={() => deleteOpt(opt)} title={t('common.delete')}>
                                   <TrashIcon />
                                 </button>
                               </div>
@@ -332,43 +327,41 @@ export default function SettingsPage() {
         )}
       </main>
 
-      {/* Edit rule mode modal */}
       {editingRule && (
-        <Modal title={`Edit Rule — ${editingRule.kaType} × ${editingRule.country}`}
+        <Modal title={t('pages.settings.modalEditRule').replace('{name}', `${editingRule.kaType} × ${editingRule.country}`)}
           onClose={() => setEditingRule(null)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setEditingRule(null)}>Cancel</button>
-            <button className="btn btn-primary" onClick={saveRule} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+            <button className="btn btn-ghost" onClick={() => setEditingRule(null)}>{t('common.cancel')}</button>
+            <button className="btn btn-primary" onClick={saveRule} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Assignment mode</label>
+            <label className="form-label">{t('pages.settings.assignmentModeLabel')}</label>
             <select className="form-select" value={ruleModo} onChange={e => setRuleModo(e.target.value as 'fixed' | 'round_robin')}>
-              <option value="fixed">Fixed — always assign the first BPO in the pool</option>
-              <option value="round_robin">Round Robin — rotate through the pool</option>
+              <option value="fixed">{t('pages.settings.modeFixed')}</option>
+              <option value="round_robin">{t('pages.settings.modeRoundRobin')}</option>
             </select>
           </div>
-          <p className="form-hint">Fixed mode uses the first BPO added to the pool. Add at least one BPO to the pool after saving.</p>
+          <p className="form-hint">{t('pages.settings.modeHint')}</p>
         </Modal>
       )}
 
-      {/* Add BPO candidate modal */}
       {addingCandidateRuleId && (
-        <Modal title="Add BPO to Pool"
+        <Modal title={t('pages.settings.modalAddBpo')}
           onClose={() => setAddingCandidateRuleId(null)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setAddingCandidateRuleId(null)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setAddingCandidateRuleId(null)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={addCandidate} disabled={saving || !candidateAccountId}>
-              {saving ? 'Adding…' : 'Add'}
+              {saving ? t('pages.settings.adding') : t('common.add')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">BPO</label>
+            <label className="form-label">{t('pages.settings.bpoLabel')}</label>
             <select className="form-select" value={candidateAccountId} onChange={e => setCandidateAccountId(e.target.value)}>
-              <option value="">Select BPO…</option>
+              <option value="">{t('pages.settings.bpoPlaceholder')}</option>
               {bpos.map(b => (
                 <option key={b.id} value={b.id}>{b.name} ({b.email})</option>
               ))}
@@ -377,44 +370,42 @@ export default function SettingsPage() {
         </Modal>
       )}
 
-      {/* Add catalog option modal */}
       {addingCat && (
-        <Modal title={`Add option to ${CATEGORY_LABELS[addingCat] ?? addingCat}`}
+        <Modal title={t('pages.settings.modalAddOption').replace('{category}', CATEGORY_LABELS[addingCat] ?? addingCat)}
           onClose={() => setAddingCat(null)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setAddingCat(null)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setAddingCat(null)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={saveNewOpt} disabled={saving || !newOptForm.value || !newOptForm.label}>
-              {saving ? 'Creating…' : 'Create'}
+              {saving ? t('pages.settings.creating') : t('common.create')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Value (internal key)</label>
-            <input className="form-input" value={newOptForm.value} placeholder="snake_case_key"
+            <label className="form-label">{t('pages.settings.optValueLabel')}</label>
+            <input className="form-input" value={newOptForm.value} placeholder={t('pages.settings.optValuePlaceholder')}
               onChange={e => setNewOptForm(f => ({ ...f, value: e.target.value }))} autoFocus />
-            <p className="form-hint">Must match the Prisma enum value exactly.</p>
+            <p className="form-hint">{t('pages.settings.optValueHint')}</p>
           </div>
           <div className="form-group">
-            <label className="form-label">Label (display name)</label>
-            <input className="form-input" value={newOptForm.label} placeholder="Human readable name"
+            <label className="form-label">{t('pages.settings.optLabelLabel')}</label>
+            <input className="form-input" value={newOptForm.label} placeholder={t('pages.settings.optLabelPlaceholder')}
               onChange={e => setNewOptForm(f => ({ ...f, label: e.target.value }))} />
           </div>
         </Modal>
       )}
 
-      {/* Edit catalog option label modal */}
       {editingOpt && (
-        <Modal title={`Rename "${editingOpt.value}"`}
+        <Modal title={t('pages.settings.modalRename').replace('{value}', editingOpt.value)}
           onClose={() => setEditingOpt(null)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setEditingOpt(null)}>Cancel</button>
-            <button className="btn btn-primary" onClick={saveEditOpt} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+            <button className="btn btn-ghost" onClick={() => setEditingOpt(null)}>{t('common.cancel')}</button>
+            <button className="btn btn-primary" onClick={saveEditOpt} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Label</label>
+            <label className="form-label">{t('pages.settings.renameLabelLabel')}</label>
             <input className="form-input" value={editOptLabel} onChange={e => setEditOptLabel(e.target.value)} autoFocus />
           </div>
         </Modal>

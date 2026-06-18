@@ -1,3 +1,5 @@
+import { useT } from '../../i18n';
+
 interface PaginatorProps {
   page: number;
   total: number;
@@ -6,6 +8,7 @@ interface PaginatorProps {
 }
 
 export default function Paginator({ page, total, limit, onChange }: PaginatorProps) {
+  const t = useT();
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
   const pages: (number | '…')[] = [];
@@ -34,7 +37,7 @@ export default function Paginator({ page, total, limit, onChange }: PaginatorPro
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderTop: '1px solid var(--border)', gap: 12 }}>
       <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-        {total === 0 ? 'No results' : `${(page - 1) * limit + 1}–${Math.min(page * limit, total)} of ${total}`}
+        {total === 0 ? t('common.noResults') : `${(page - 1) * limit + 1}–${Math.min(page * limit, total)} ${t('common.of')} ${total}`}
       </span>
       {totalPages > 1 && (
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>

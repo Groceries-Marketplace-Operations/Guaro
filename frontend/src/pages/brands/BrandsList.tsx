@@ -6,6 +6,7 @@ import Modal from '../../components/ui/Modal';
 import Paginator from '../../components/ui/Paginator';
 import { brandsApi, applicationsApi, webhooksApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
+import { useT } from '../../i18n';
 import type { Brand, Country, KaType, MenuIntegration, PickingMode, PaymentMode, Paginated, Application, Webhook } from '../../types';
 
 const COUNTRIES: Country[] = ['MX', 'CO', 'CR'];
@@ -66,12 +67,13 @@ export default function BrandsList() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { account } = useAuth();
+  const t = useT();
   const isBpo = account?.roles.includes('bpo') && !account?.roles.includes('admin') && !account?.roles.includes('super_admin');
   const isAdmin = account?.roles.includes('admin') || account?.roles.includes('super_admin');
   const canCreateBrand = isAdmin || (isBpo && (account?.bpoPermissions ?? []).includes('create_brand'));
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const [dq, setDq] = useState(''); // debounced q
+  const [dq, setDq] = useState('');
   const [page, setPage] = useState(1);
   const [myBrands, setMyBrands] = useState(false);
   const [countryF, setCountryF] = useState<Country | ''>('');
@@ -105,10 +107,9 @@ export default function BrandsList() {
 
   const appsForCountry = applications.filter(a => a.country === form.country);
 
-  // Debounce search
   useEffect(() => {
-    const t = setTimeout(() => { setDq(q); setPage(1); }, 300);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => { setDq(q); setPage(1); }, 300);
+    return () => clearTimeout(timer);
   }, [q]);
 
   const go = (fn: () => void) => () => { fn(); setPage(1); };
@@ -173,12 +174,12 @@ export default function BrandsList() {
 
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Brands' }]} />
+      <Topbar breadcrumb={[{ label: t('nav.brands') }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
-            <h1>Brands</h1>
-            <p>{total} brands{anyFilter ? ' (filtered)' : ''}</p>
+            <h1>{t('pages.brandsList.title')}</h1>
+            <p>{anyFilter ? t('pages.brandsList.subtitleFiltered').replace('{total}', String(total)) : t('pages.brandsList.subtitle').replace('{total}', String(total))}</p>
           </div>
           <div className="page-actions">
             {isBpo && (
@@ -186,87 +187,59 @@ export default function BrandsList() {
                 className={`btn ${myBrands ? 'btn-primary' : 'btn-ghost'}`}
                 onClick={() => { setMyBrands(m => !m); setPage(1); }}
               >
-                My Brands
+                {t('pages.brandsList.myBrands')}
               </button>
             )}
             {canCreateBrand && (
               <button className="btn btn-primary" onClick={() => setOpen(true)}>
-                <PlusIcon /> New Brand
+                <PlusIcon /> {t('pages.brandsList.newBrand')}
               </button>
             )}
           </div>
         </div>
 
-        {/* Filters */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-          {/* Row 1: search + clear */}
           <div className="toolbar" style={{ marginBottom: 0 }}>
             <div className="search-wrap">
               <SearchIcon />
-              <input placeholder="Search by name or ID…" value={q} onChange={e => setQ(e.target.value)} />
+              <input placeholder={t('pages.brandsList.searchPlaceholder')} value={q} onChange={e => setQ(e.target.value)} />
             </div>
             {anyFilter && (
               <button className="btn btn-ghost btn-sm" onClick={clearFilters}
                 style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-muted)' }}>
-                <XIcon /> Clear filters
+                <XIcon /> {t('pages.brandsList.clearFilters')}
               </button>
             )}
           </div>
 
-          {/* Row 2: dropdown filters */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <select
-              className="form-select"
-              style={{ flex: '0 0 auto', minWidth: 120 }}
-              value={countryF}
-              onChange={e => go(() => setCountryF(e.target.value as Country | ''))()}
-            >
-              <option value="">All countries</option>
+            <select className="form-select" style={{ flex: '0 0 auto', minWidth: 120 }} value={countryF}
+              onChange={e => go(() => setCountryF(e.target.value as Country | ''))()}>
+              <option value="">{t('pages.brandsList.allCountries')}</option>
               {COUNTRIES.map(c => <option key={c} value={c}>{COUNTRY_EMOJI[c]} {c}</option>)}
             </select>
-
-            <select
-              className="form-select"
-              style={{ flex: '0 0 auto', minWidth: 120 }}
-              value={kaF}
-              onChange={e => go(() => setKaF(e.target.value as KaType | ''))()}
-            >
-              <option value="">All types</option>
+            <select className="form-select" style={{ flex: '0 0 auto', minWidth: 120 }} value={kaF}
+              onChange={e => go(() => setKaF(e.target.value as KaType | ''))()}>
+              <option value="">{t('pages.brandsList.allTypes')}</option>
               {KA_TYPES.map(k => <option key={k} value={k}>{k}</option>)}
             </select>
-
-            <select
-              className="form-select"
-              style={{ flex: '0 0 auto', minWidth: 150 }}
-              value={menuF}
-              onChange={e => go(() => setMenuF(e.target.value as MenuIntegration | ''))()}
-            >
-              <option value="">All menus</option>
+            <select className="form-select" style={{ flex: '0 0 auto', minWidth: 150 }} value={menuF}
+              onChange={e => go(() => setMenuF(e.target.value as MenuIntegration | ''))()}>
+              <option value="">{t('pages.brandsList.allMenus')}</option>
               {MENU_INTEGRATIONS.map(m => <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>)}
             </select>
-
-            <select
-              className="form-select"
-              style={{ flex: '0 0 auto', minWidth: 180 }}
-              value={pickF}
-              onChange={e => go(() => setPickF(e.target.value as PickingMode | ''))()}
-            >
-              <option value="">All picking modes</option>
+            <select className="form-select" style={{ flex: '0 0 auto', minWidth: 180 }} value={pickF}
+              onChange={e => go(() => setPickF(e.target.value as PickingMode | ''))()}>
+              <option value="">{t('pages.brandsList.allPickingModes')}</option>
               {PICKING_MODES.map(p => <option key={p} value={p}>{p.replace(/_/g, ' ')}</option>)}
             </select>
-
-            <select
-              className="form-select"
-              style={{ flex: '0 0 auto', minWidth: 160 }}
-              value={payF}
-              onChange={e => go(() => setPayF(e.target.value as PaymentMode | ''))()}
-            >
-              <option value="">All payments</option>
+            <select className="form-select" style={{ flex: '0 0 auto', minWidth: 160 }} value={payF}
+              onChange={e => go(() => setPayF(e.target.value as PaymentMode | ''))()}>
+              <option value="">{t('pages.brandsList.allPayments')}</option>
               {PAYMENT_MODES.map(p => <option key={p} value={p}>{p.replace(/_/g, ' ')}</option>)}
             </select>
           </div>
 
-          {/* Active filter chips */}
           {anyFilter && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {countryF && <FilterChip label={`${COUNTRY_EMOJI[countryF]} ${countryF}`} onRemove={go(() => setCountryF(''))} />}
@@ -282,26 +255,26 @@ export default function BrandsList() {
           <table>
             <thead>
               <tr>
-                <th>Brand</th>
-                <th>ID</th>
-                <th>Country</th>
-                <th>Type</th>
-                <th>Menu</th>
-                <th>Picking</th>
-                <th>Payment</th>
-                <th>OP</th>
-                <th>Shops</th>
+                <th>{t('pages.brandsList.colBrand')}</th>
+                <th>{t('pages.brandsList.colId')}</th>
+                <th>{t('pages.brandsList.colCountry')}</th>
+                <th>{t('pages.brandsList.colType')}</th>
+                <th>{t('pages.brandsList.colMenu')}</th>
+                <th>{t('pages.brandsList.colPicking')}</th>
+                <th>{t('pages.brandsList.colPayment')}</th>
+                <th>{t('pages.brandsList.colOp')}</th>
+                <th>{t('pages.brandsList.colShops')}</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={9} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                <tr><td colSpan={9} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>
               )}
               {!isLoading && brands.length === 0 && (
                 <tr><td colSpan={9}>
                   <div className="empty-state">
-                    <h3>No brands found</h3>
-                    <p>Try adjusting your search or filters.</p>
+                    <h3>{t('pages.brandsList.noBrandsFound')}</h3>
+                    <p>{t('pages.brandsList.noBrandsHint')}</p>
                   </div>
                 </td></tr>
               )}
@@ -329,52 +302,50 @@ export default function BrandsList() {
       </main>
 
       {open && (
-        <Modal title="New Brand" onClose={() => { setOpen(false); resetForm(); setErr(''); }}
+        <Modal title={t('pages.brandsList.modalTitle')} onClose={() => { setOpen(false); resetForm(); setErr(''); }}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => { setOpen(false); resetForm(); setErr(''); }}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => { setOpen(false); resetForm(); setErr(''); }}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
-              {saving ? 'Creating…' : 'Create Brand'}
+              {saving ? t('pages.brandsList.creating') : t('pages.brandsList.createBrand')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <form onSubmit={handleCreate}>
-            {/* Required */}
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Brand ID <span style={{ color: 'var(--red)' }}>*</span></label>
+                <label className="form-label">{t('pages.brandsList.brandIdLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
                 <input className="form-input" placeholder="BRAND-MX-001" value={form.brandId}
                   onChange={e => setForm(f => ({ ...f, brandId: e.target.value }))} required autoFocus />
               </div>
               <div className="form-group">
-                <label className="form-label">Brand Name <span style={{ color: 'var(--red)' }}>*</span></label>
+                <label className="form-label">{t('pages.brandsList.brandNameLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
                 <input className="form-input" placeholder="KFC Mexico" value={form.brandName}
                   onChange={e => setForm(f => ({ ...f, brandName: e.target.value }))} required />
               </div>
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Country <span style={{ color: 'var(--red)' }}>*</span></label>
+                <label className="form-label">{t('pages.brandsList.countryLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
                 <select className="form-select" value={form.country}
                   onChange={e => setForm(f => ({ ...f, country: e.target.value as Country, applicationId: '' }))}>
                   {COUNTRIES.map(c => <option key={c} value={c}>{COUNTRY_EMOJI[c]} {c}</option>)}
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">KA Type <span style={{ color: 'var(--red)' }}>*</span></label>
+                <label className="form-label">{t('pages.brandsList.kaTypeLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
                 <select className="form-select" value={form.kaType} onChange={e => setForm(f => ({ ...f, kaType: e.target.value as KaType }))}>
                   {KA_TYPES.map(k => <option key={k} value={k}>{k}</option>)}
                 </select>
               </div>
             </div>
 
-            {/* Optional integrations */}
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 8px' }}>
-              Integrations (optional)
+              {t('pages.brandsList.integrationsSection')}
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Menu</label>
+                <label className="form-label">{t('pages.brandsList.menuLabel')}</label>
                 <select className="form-select" value={form.menuIntegration}
                   onChange={e => setForm(f => ({ ...f, menuIntegration: e.target.value as MenuIntegration | '' }))}>
                   <option value="">—</option>
@@ -382,7 +353,7 @@ export default function BrandsList() {
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">Picking Mode</label>
+                <label className="form-label">{t('pages.brandsList.pickingModeLabel')}</label>
                 <select className="form-select" value={form.pickingMode}
                   onChange={e => setForm(f => ({ ...f, pickingMode: e.target.value as PickingMode | '' }))}>
                   <option value="">—</option>
@@ -391,7 +362,7 @@ export default function BrandsList() {
               </div>
             </div>
             <div className="form-group">
-              <label className="form-label">Payment Mode</label>
+              <label className="form-label">{t('pages.brandsList.paymentModeLabel')}</label>
               <select className="form-select" value={form.paymentMode}
                 onChange={e => setForm(f => ({ ...f, paymentMode: e.target.value as PaymentMode | '' }))}>
                 <option value="">—</option>
@@ -399,28 +370,26 @@ export default function BrandsList() {
               </select>
             </div>
 
-            {/* Application */}
             <div className="form-group">
-              <label className="form-label">Application</label>
+              <label className="form-label">{t('pages.brandsList.applicationLabel')}</label>
               <select className="form-select" value={form.applicationId}
                 onChange={e => setForm(f => ({ ...f, applicationId: e.target.value }))}>
-                <option value="">— None —</option>
+                <option value="">{t('pages.brandsList.applicationNone')}</option>
                 {appsForCountry.map(a => (
                   <option key={a.id} value={a.id}>{a.appName} ({a.appId})</option>
                 ))}
               </select>
               {appsForCountry.length === 0 && (
                 <p className="form-hint">
-                  No applications for {COUNTRY_EMOJI[form.country]} {form.country} yet.{' '}
-                  <a href="/applications" target="_blank" rel="noreferrer" style={{ color: 'var(--orange)' }}>Create one →</a>
+                  {t('pages.brandsList.noAppsForCountry').replace('{country}', `${COUNTRY_EMOJI[form.country]} ${form.country}`)}{' '}
+                  <a href="/applications" target="_blank" rel="noreferrer" style={{ color: 'var(--orange)' }}>{t('pages.brandsList.createOneArrow')}</a>
                 </p>
               )}
             </div>
 
-            {/* Webhooks */}
             {allWebhooks.length > 0 && (
               <div className="form-group">
-                <label className="form-label">Webhooks</label>
+                <label className="form-label">{t('pages.brandsList.webhooksLabel')}</label>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
                   {allWebhooks.map(w => (
                     <label key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.83rem' }}>

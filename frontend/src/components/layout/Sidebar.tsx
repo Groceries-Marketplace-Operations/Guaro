@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
+import { useT } from '../../i18n';
 import type { AccountRole } from '../../types';
 
 const IconGrid = () => (
@@ -70,6 +71,7 @@ function hasAny(roles: AccountRole[], ...check: AccountRole[]) {
 
 export default function Sidebar() {
   const { account, logout } = useAuth();
+  const t = useT();
   const roles = account?.roles ?? [];
 
   const isAdmin    = hasAny(roles, 'admin', 'super_admin');
@@ -83,10 +85,10 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
-        <div className="logo-mark">D</div>
+        <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 6 }} />
         <div className="logo-text">
           <span className="lt-name">DiDi Ops</span>
-          <span className="lt-sub">Internal Panel</span>
+          <span className="lt-sub">{t('nav.internalPanel')}</span>
         </div>
       </div>
 
@@ -97,46 +99,46 @@ export default function Sidebar() {
             className="btn btn-primary"
             style={{ width: '100%', justifyContent: 'center', gap: 6, textDecoration: 'none' }}
           >
-            <IconPlus /> New Task
+            <IconPlus /> {t('nav.newTask')}
           </NavLink>
         </div>
       )}
 
       <div className="sidebar-section">
-        <div className="sidebar-section-label">Overview</div>
+        <div className="sidebar-section-label">{t('nav.overview')}</div>
         <NavLink to="/" end className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-          <IconGrid /> Dashboard
+          <IconGrid /> {t('nav.dashboard')}
         </NavLink>
       </div>
 
       <div className="sidebar-section">
-        <div className="sidebar-section-label">Catalog</div>
+        <div className="sidebar-section-label">{t('nav.catalog')}</div>
         <NavLink to="/brands" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-          <IconTag /> Brands
+          <IconTag /> {t('nav.brands')}
         </NavLink>
       </div>
 
       <div className="sidebar-section">
-        <div className="sidebar-section-label">Tasks</div>
+        <div className="sidebar-section-label">{t('nav.tasks')}</div>
         <NavLink to="/tasks" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-          <IconClipboard /> Tasks
+          <IconClipboard /> {t('nav.tasks')}
         </NavLink>
         {isAdmin && (
           <NavLink to="/task-types" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconLayers /> Task Types
+            <IconLayers /> {t('nav.taskTypes')}
           </NavLink>
         )}
       </div>
 
       {isBpo && (
         <div className="sidebar-section">
-          <div className="sidebar-section-label">BPO</div>
+          <div className="sidebar-section-label">{t('nav.bpo')}</div>
           <NavLink to="/bpo" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconBriefcase /> My Queue
+            <IconBriefcase /> {t('nav.myQueue')}
           </NavLink>
           {canSeeModule('create_application') && (
             <NavLink to="/applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-              <IconApp /> Applications
+              <IconApp /> {t('nav.applications')}
             </NavLink>
           )}
         </div>
@@ -144,28 +146,28 @@ export default function Sidebar() {
 
       {isAdmin && (
         <div className="sidebar-section">
-          <div className="sidebar-section-label">Admin</div>
+          <div className="sidebar-section-label">{t('nav.admin')}</div>
           {canSeeModule('applications') && (
             <NavLink to="/applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-              <IconApp /> Applications
+              <IconApp /> {t('nav.applications')}
             </NavLink>
           )}
           {canSeeModule('bpo_team') && (
             <NavLink to="/bpo-management" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-              <IconBriefcase /> BPO Team
+              <IconBriefcase /> {t('nav.bpoTeam')}
             </NavLink>
           )}
           {isSA && (
             <NavLink to="/sections" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-              <IconUsers /> Sections
+              <IconUsers /> {t('nav.sections')}
             </NavLink>
           )}
           <NavLink to="/config" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconSettings /> Config
+            <IconSettings /> {t('nav.config')}
           </NavLink>
           {isSA && (
             <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-              <IconGrid /> Settings
+              <IconGrid /> {t('nav.settings')}
             </NavLink>
           )}
         </div>
@@ -174,7 +176,7 @@ export default function Sidebar() {
       <div className="sidebar-footer">
         <button className="nav-item w-full" style={{ background: 'none', border: 'none', cursor: 'pointer', width: '100%', color: 'var(--sidebar-text)' }} onClick={logout}>
           <IconLogOut />
-          <span>Sign out</span>
+          <span>{t('nav.signOut')}</span>
         </button>
       </div>
     </aside>

@@ -5,6 +5,7 @@ import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import Paginator from '../../components/ui/Paginator';
 import { taskTypesApi, sectionsApi } from '../../api';
+import { useT } from '../../i18n';
 import type { TaskType, Section, Paginated } from '../../types';
 
 const PlusIcon = () => (
@@ -18,6 +19,7 @@ const LIMIT = 50;
 export default function TaskTypesList() {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -27,8 +29,8 @@ export default function TaskTypesList() {
   const [page, setPage] = useState(1);
 
   useEffect(() => {
-    const t = setTimeout(() => { setDq(q); setPage(1); }, 300);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => { setDq(q); setPage(1); }, 300);
+    return () => clearTimeout(timer);
   }, [q]);
 
   const params = { page, limit: LIMIT, ...(dq && { q: dq }) };
@@ -58,24 +60,28 @@ export default function TaskTypesList() {
     } finally { setSaving(false); }
   };
 
+  const subtitle = total === 1
+    ? t('pages.taskTypesList.subtitle').replace('{total}', String(total))
+    : t('pages.taskTypesList.subtitlePlural').replace('{total}', String(total));
+
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Task Types' }]} />
+      <Topbar breadcrumb={[{ label: t('nav.taskTypes') }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
-            <h1>Task Types</h1>
-            <p>{total} workflow template{total !== 1 ? 's' : ''}</p>
+            <h1>{t('pages.taskTypesList.title')}</h1>
+            <p>{subtitle}</p>
           </div>
           <button className="btn btn-primary" onClick={() => setOpen(true)}>
-            <PlusIcon /> New Task Type
+            <PlusIcon /> {t('pages.taskTypesList.newTaskType')}
           </button>
         </div>
 
         <div className="toolbar" style={{ marginBottom: 16 }}>
           <input
             className="form-input"
-            placeholder="Search task types…"
+            placeholder={t('pages.taskTypesList.searchPlaceholder')}
             value={q}
             onChange={e => setQ(e.target.value)}
             style={{ maxWidth: 280 }}
@@ -83,44 +89,44 @@ export default function TaskTypesList() {
         </div>
 
         {isLoading ? (
-          <p className="text-muted">Loading…</p>
+          <p className="text-muted">{t('common.loading')}</p>
         ) : types.length === 0 ? (
           <div className="empty-state">
-            <h3>No task types found</h3>
-            <p>{dq ? 'Try a different search.' : 'Create a task type to define a workflow for your team.'}</p>
+            <h3>{t('pages.taskTypesList.noTaskTypesFound')}</h3>
+            <p>{dq ? t('pages.taskTypesList.noTaskTypesHintSearch') : t('pages.taskTypesList.noTaskTypesHint')}</p>
           </div>
         ) : (
           <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
-            {types.map(t => (
-              <div key={t.id} className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.1s' }}
-                onClick={() => nav(`/task-types/${t.id}`)}
+            {types.map(tp => (
+              <div key={tp.id} className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.1s' }}
+                onClick={() => nav(`/task-types/${tp.id}`)}
                 onMouseOver={e => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.07)')}
                 onMouseOut={e => (e.currentTarget.style.boxShadow = 'none')}
               >
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.95rem', color: t.active === false ? 'var(--text-muted)' : undefined }}>{t.name}</div>
+                  <div style={{ fontWeight: 700, fontSize: '0.95rem', color: tp.active === false ? 'var(--text-muted)' : undefined }}>{tp.name}</div>
                   <div style={{ display: 'flex', gap: 5 }}>
-                    {t.schedulable && (
+                    {tp.schedulable && (
                       <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue)' }}>
-                        Schedulable
+                        {t('pages.taskTypesList.schedulable')}
                       </span>
                     )}
-                    {t.active === false && (
+                    {tp.active === false && (
                       <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'rgba(180,40,40,0.12)', color: 'var(--red)' }}>
-                        Hidden
+                        {t('pages.taskTypesList.hidden')}
                       </span>
                     )}
                   </div>
                 </div>
-                {t.description && <p className="text-muted text-sm">{t.description}</p>}
+                {tp.description && <p className="text-muted text-sm">{tp.description}</p>}
                 <div style={{ marginTop: 12, display: 'flex', gap: 16, fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                  <span>{t._count?.stepDefinitions ?? t.stepDefinitions?.length ?? 0} steps</span>
-                  <span>{t._count?.formFields ?? t.formFields?.length ?? 0} fields</span>
-                  <span>{t._count?.tasks ?? 0} tasks</span>
+                  <span>{tp._count?.stepDefinitions ?? tp.stepDefinitions?.length ?? 0} {t('common.steps')}</span>
+                  <span>{tp._count?.formFields ?? tp.formFields?.length ?? 0} {t('common.fields')}</span>
+                  <span>{tp._count?.tasks ?? 0} {t('common.tasks')}</span>
                 </div>
                 <div style={{ marginTop: 8, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Section: {t.section?.name ?? '—'}
+                  {t('pages.taskTypesList.sectionLabel')}: {tp.section?.name ?? '—'}
                 </div>
               </div>
             ))}
@@ -131,30 +137,30 @@ export default function TaskTypesList() {
       </main>
 
       {open && (
-        <Modal title="New Task Type" onClose={() => setOpen(false)}
+        <Modal title={t('pages.taskTypesList.modalTitle')} onClose={() => setOpen(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setOpen(false)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
-              {saving ? 'Creating…' : 'Create & Configure'}
+              {saving ? t('pages.taskTypesList.creating') : t('common.createConfigure')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <form onSubmit={handleCreate}>
             <div className="form-group">
-              <label className="form-label">Name</label>
+              <label className="form-label">{t('pages.taskTypesList.nameLabel')}</label>
               <input className="form-input" placeholder="Shop Onboarding" value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
             </div>
             <div className="form-group">
-              <label className="form-label">Description</label>
+              <label className="form-label">{t('pages.taskTypesList.descriptionLabel')}</label>
               <textarea className="form-textarea" placeholder="Describe this workflow…" value={form.description}
                 onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
             </div>
             <div className="form-group">
-              <label className="form-label">Section</label>
+              <label className="form-label">{t('pages.taskTypesList.sectionFormLabel')}</label>
               <select className="form-select" value={form.sectionId} onChange={e => setForm(f => ({ ...f, sectionId: e.target.value }))} required>
-                <option value="">Select section…</option>
+                <option value="">{t('pages.taskTypesList.sectionPlaceholder')}</option>
                 {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
@@ -162,7 +168,7 @@ export default function TaskTypesList() {
               <input type="checkbox" id="schedulable" checked={form.schedulable}
                 onChange={e => setForm(f => ({ ...f, schedulable: e.target.checked }))} />
               <label htmlFor="schedulable" style={{ fontSize: '0.83rem', cursor: 'pointer' }}>
-                Schedulable (tasks can be set to a future time window)
+                {t('pages.taskTypesList.schedulableCheck')}
               </label>
             </div>
           </form>

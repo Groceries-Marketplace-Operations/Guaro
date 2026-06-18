@@ -1,21 +1,12 @@
-const LABEL: Record<string, string> = {
-  pending: 'Pending',
-  scheduled: 'Scheduled',
-  assigned: 'Assigned',
-  in_progress: 'In Progress',
-  done: 'Done',
-  failed: 'Failed',
-  blocked: 'Blocked',
-  lead: 'Lead',
-  application: 'Application',
-  integrated: 'Integrated',
-  online: 'Online',
-};
+import { useT } from '../../i18n';
 
 export default function StatusBadge({ status }: { status: string }) {
+  const t = useT();
+  const key = `status.${status}`;
+  const label = t(key) !== key ? t(key) : status;
   return (
     <span className={`status s-${status}`}>
-      {LABEL[status] ?? status}
+      {label}
     </span>
   );
 }

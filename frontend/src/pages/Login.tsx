@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { useT } from '../i18n';
 
 const GoogleIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24">
@@ -14,6 +15,7 @@ const GoogleIcon = () => (
 export default function Login() {
   const { account, loading } = useAuth();
   const nav = useNavigate();
+  const t = useT();
 
   useEffect(() => {
     if (!loading && account) nav('/', { replace: true });
@@ -27,23 +29,25 @@ export default function Login() {
     <div className="login-page">
       <div className="login-panel">
         <div className="login-logo-row">
-          <div className="mark">D</div>
+          <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 36, height: 36, objectFit: 'contain', borderRadius: 8 }} />
           <div className="texts">
             <div className="t1">DiDi Ops</div>
-            <div className="t2">Internal Panel</div>
+            <div className="t2">{t('nav.internalPanel')}</div>
           </div>
         </div>
 
-        <h1>Welcome back</h1>
-        <p className="sub">Sign in to access the operations panel.</p>
+        <h1>{t('pages.login.title')}</h1>
+        <p className="sub">{t('pages.login.subtitle')}</p>
 
         <button className="btn-google" onClick={googleLogin}>
           <GoogleIcon />
-          Continue with Google
+          {t('pages.login.continueWithGoogle')}
         </button>
 
         <p style={{ marginTop: 32, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          Google login is restricted to <strong>@didi-labs.com</strong> accounts.
+          {t('pages.login.domainNote').replace('@didi-labs.com', '')}
+          <strong>@didi-labs.com</strong>
+          {' accounts.'}
         </p>
       </div>
 
@@ -53,7 +57,7 @@ export default function Login() {
         </div>
         <div className="login-aside-logo">
           <div className="big-d">D</div>
-          <p>Operations Panel<br />Task & Workflow Management<br />for Delivery Brands</p>
+          <p>Operations Panel<br />Task &amp; Workflow Management<br />for Delivery Brands</p>
         </div>
       </div>
     </div>

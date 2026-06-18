@@ -5,6 +5,7 @@ import Modal from '../components/ui/Modal';
 import Paginator from '../components/ui/Paginator';
 import { handlersApi, webhooksApi, invitationsApi, sectionsApi, accountsApi } from '../api';
 import { useAuth } from '../auth/AuthContext';
+import { useT } from '../i18n';
 import type { Handler, Webhook, Section, AccountRole, Paginated } from '../types';
 
 interface InvitationRow {
@@ -66,6 +67,7 @@ const BPO_PERMISSIONS = [
 export default function Config() {
   const qc = useQueryClient();
   const { account } = useAuth();
+  const t = useT();
   const isSuperAdmin = account?.roles.includes('super_admin') ?? false;
   const isAdmin = account?.roles.includes('admin') ?? false;
   const adminMods = account?.adminModules ?? [];
@@ -90,11 +92,9 @@ export default function Config() {
   const [copiedInvId, setCopiedInvId] = useState<string | null>(null);
   const [invForm, setInvForm] = useState({ role: 'bpo' as AccountRole, sectionId: '' });
 
-  // Invitations pagination
   const [invPage, setInvPage] = useState(1);
   const INV_LIMIT = 25;
 
-  // Users tab filters + edit + pagination
   const [userQ, setUserQ] = useState('');
   const [dUserQ, setDUserQ] = useState('');
   const [userSection, setUserSection] = useState('');
@@ -107,8 +107,8 @@ export default function Config() {
   const [editBpoPermissions, setEditBpoPermissions] = useState<string[]>([]);
 
   useEffect(() => {
-    const t = setTimeout(() => { setDUserQ(userQ); setUserPage(1); }, 300);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => { setDUserQ(userQ); setUserPage(1); }, 300);
+    return () => clearTimeout(timer);
   }, [userQ]);
 
   const { data: handlers = [] } = useQuery<Handler[]>({ queryKey: ['handlers'], queryFn: () => handlersApi.list().then(r => r.data) });
@@ -153,7 +153,7 @@ export default function Config() {
       });
       qc.invalidateQueries({ queryKey: ['accounts-all'] });
       setEditingUser(null);
-    } catch { setErr('Error saving account'); } finally { setSaving(false); }
+    } catch { setErr(t('pages.config.errorSavingAccount')); } finally { setSaving(false); }
   };
 
   const EDITABLE_ROLES = (isSuperAdmin
@@ -165,7 +165,7 @@ export default function Config() {
       await handlersApi.create({ name: handlerName });
       qc.invalidateQueries({ queryKey: ['handlers'] });
       setOpenHandler(false); setHandlerName('');
-    } catch { setErr('Error creating handler'); } finally { setSaving(false); }
+    } catch { setErr(t('pages.config.errorCreatingHandler')); } finally { setSaving(false); }
   };
 
   const createWebhook = async (e: React.FormEvent) => {
@@ -175,7 +175,7 @@ export default function Config() {
       qc.invalidateQueries({ queryKey: ['webhooks'] });
       setOpenWebhook(false);
       setWhForm({ name: '', url: '', isAlerts: false });
-    } catch { setErr('Error creating webhook'); } finally { setSaving(false); }
+    } catch { setErr(t('pages.config.errorCreatingWebhook')); } finally { setSaving(false); }
   };
 
   const openEditWebhook = (w: Webhook) => {
@@ -192,11 +192,11 @@ export default function Config() {
       await webhooksApi.update(editingWebhook.id, editWhForm);
       qc.invalidateQueries({ queryKey: ['webhooks'] });
       setEditingWebhook(null);
-    } catch { setErr('Error saving webhook'); } finally { setSaving(false); }
+    } catch { setErr(t('pages.config.errorSavingWebhook')); } finally { setSaving(false); }
   };
 
   const deleteWebhook = async (w: Webhook) => {
-    if (!window.confirm(`Delete webhook "${w.name}"?`)) return;
+    if (!window.confirm(t('pages.config.deleteWebhookConfirm').replace('{name}', w.name))) return;
     try {
       await webhooksApi.delete(w.id);
       qc.invalidateQueries({ queryKey: ['webhooks'] });
@@ -218,7 +218,7 @@ export default function Config() {
       setOpenInvite(false);
       setInviteLink(`${window.location.origin}${import.meta.env.BASE_URL}invite/${res.data.token}`);
       setCopied(false);
-    } catch { setErr('Error creating invitation'); } finally { setSaving(false); }
+    } catch { setErr(t('pages.config.errorCreatingInvitation')); } finally { setSaving(false); }
   };
 
   const copyLink = () => {
@@ -238,7 +238,7 @@ export default function Config() {
   };
 
   const deleteInvitation = async (id: string) => {
-    if (!window.confirm('Delete this invitation?')) return;
+    if (!window.confirm(t('pages.config.deleteInvitationConfirm'))) return;
     try {
       await invitationsApi.delete(id);
       qc.invalidateQueries({ queryKey: ['invitations'] });
@@ -246,50 +246,50 @@ export default function Config() {
   };
 
   const deleteAccount = async (id: string, name: string) => {
-    if (!window.confirm(`Delete account "${name}"? This cannot be undone.`)) return;
+    if (!window.confirm(t('pages.config.deleteAccountConfirm').replace('{name}', name))) return;
     try {
       await accountsApi.delete(id);
       qc.invalidateQueries({ queryKey: ['accounts-all'] });
     } catch (ex: unknown) {
       const e2 = ex as { response?: { data?: { message?: string } } };
-      alert(e2.response?.data?.message ?? 'Error deleting account');
+      alert(e2.response?.data?.message ?? t('pages.config.errorSavingAccount'));
     }
   };
 
   return (
     <>
-      <Topbar breadcrumb={[{ label: 'Config' }]} />
+      <Topbar breadcrumb={[{ label: t('nav.config') }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
-            <h1>Configuration</h1>
-            <p>Handlers, webhooks and team invitations</p>
+            <h1>{t('pages.config.title')}</h1>
+            <p>{t('pages.config.subtitle')}</p>
           </div>
         </div>
 
         <div className="tabs">
           {canSeeHandlers && (
-            <div className={`tab ${tab === 'handlers' ? 'active' : ''}`} onClick={() => setTab('handlers')}>Handlers ({handlers.length})</div>
+            <div className={`tab ${tab === 'handlers' ? 'active' : ''}`} onClick={() => setTab('handlers')}>{t('pages.config.tabHandlers')} ({handlers.length})</div>
           )}
           {canSeeWebhooks && (
-            <div className={`tab ${tab === 'webhooks' ? 'active' : ''}`} onClick={() => setTab('webhooks')}>Webhooks ({webhooks.length})</div>
+            <div className={`tab ${tab === 'webhooks' ? 'active' : ''}`} onClick={() => setTab('webhooks')}>{t('pages.config.tabWebhooks')} ({webhooks.length})</div>
           )}
           <div className={`tab ${tab === 'invitations' ? 'active' : ''}`} onClick={() => setTab('invitations')}>
-            Invitations
+            {t('pages.config.tabInvitations')}
           </div>
-          <div className={`tab ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>Users</div>
+          <div className={`tab ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>{t('pages.config.tabUsers')}</div>
         </div>
 
         {tab === 'handlers' && (
           <>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-              <button className="btn btn-primary" onClick={() => setOpenHandler(true)}><PlusIcon /> New Handler</button>
+              <button className="btn btn-primary" onClick={() => setOpenHandler(true)}><PlusIcon /> {t('pages.config.newHandler')}</button>
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Name</th><th>ID</th><th>Created</th></tr></thead>
+                <thead><tr><th>{t('pages.config.colName')}</th><th>{t('pages.config.colId')}</th><th>{t('pages.config.colCreated')}</th></tr></thead>
                 <tbody>
-                  {handlers.length === 0 && <tr><td colSpan={3}><div className="empty-state"><p>No handlers yet.</p></div></td></tr>}
+                  {handlers.length === 0 && <tr><td colSpan={3}><div className="empty-state"><p>{t('pages.config.noHandlers')}</p></div></td></tr>}
                   {handlers.map(h => (
                     <tr key={h.id}>
                       <td className="td-mono" style={{ fontWeight: 600 }}>{h.name}</td>
@@ -306,13 +306,13 @@ export default function Config() {
         {tab === 'webhooks' && (
           <>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-              <button className="btn btn-primary" onClick={() => setOpenWebhook(true)}><PlusIcon /> New Webhook</button>
+              <button className="btn btn-primary" onClick={() => setOpenWebhook(true)}><PlusIcon /> {t('pages.config.newWebhook')}</button>
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Name</th><th>URL</th><th>Type</th><th>Created</th><th></th></tr></thead>
+                <thead><tr><th>{t('pages.config.colName')}</th><th>{t('pages.config.colUrl')}</th><th>{t('pages.config.colType')}</th><th>{t('pages.config.colCreated')}</th><th></th></tr></thead>
                 <tbody>
-                  {webhooks.length === 0 && <tr><td colSpan={5}><div className="empty-state"><p>No webhooks yet.</p></div></td></tr>}
+                  {webhooks.length === 0 && <tr><td colSpan={5}><div className="empty-state"><p>{t('pages.config.noWebhooks')}</p></div></td></tr>}
                   {webhooks.map(w => (
                     <tr key={w.id}>
                       <td style={{ fontWeight: 600 }}>{w.name}</td>
@@ -336,7 +336,7 @@ export default function Config() {
                         <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
                           background: w.isAlerts ? 'var(--red-bg)' : 'var(--green-bg)',
                           color: w.isAlerts ? 'var(--red)' : '#027A48' }}>
-                          {w.isAlerts ? 'Alerts' : 'Events'}
+                          {w.isAlerts ? t('pages.config.webhookBadgeAlerts') : t('pages.config.webhookBadgeEvents')}
                         </span>
                       </td>
                       <td className="text-muted text-sm">{new Date(w.createdAt).toLocaleDateString()}</td>
@@ -363,15 +363,19 @@ export default function Config() {
         {tab === 'invitations' && (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <span className="text-muted text-sm">{invTotal} invitation{invTotal !== 1 ? 's' : ''}</span>
-              <button className="btn btn-primary" onClick={() => setOpenInvite(true)}><PlusIcon /> New Invitation</button>
+              <span className="text-muted text-sm">
+                {invTotal !== 1
+                  ? t('pages.config.invitationsCount').replace('{count}', String(invTotal))
+                  : t('pages.config.invitationCount').replace('{count}', String(invTotal))}
+              </span>
+              <button className="btn btn-primary" onClick={() => setOpenInvite(true)}><PlusIcon /> {t('pages.config.newInvitation')}</button>
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Role</th><th>Section</th><th>Status</th><th>Used by</th><th>Expires</th><th></th></tr></thead>
+                <thead><tr><th>{t('pages.config.colRole')}</th><th>{t('pages.config.colSection')}</th><th>{t('pages.config.colStatus')}</th><th>{t('pages.config.colUsedBy')}</th><th>{t('pages.config.colExpires')}</th><th></th></tr></thead>
                 <tbody>
                   {invitations.length === 0 && (
-                    <tr><td colSpan={6}><div className="empty-state"><p>No invitations yet.</p></div></td></tr>
+                    <tr><td colSpan={6}><div className="empty-state"><p>{t('pages.config.noInvitations')}</p></div></td></tr>
                   )}
                   {invitations.map(inv => {
                     const isPending = !inv.usedAt;
@@ -386,10 +390,10 @@ export default function Config() {
                         <td className="text-muted">{inv.section?.name ?? '—'}</td>
                         <td>
                           {inv.usedAt
-                            ? <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.78rem' }}>Used</span>
+                            ? <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.78rem' }}>{t('pages.config.invStatusUsed')}</span>
                             : expired
-                            ? <span style={{ color: 'var(--red)', fontSize: '0.78rem' }}>Expired</span>
-                            : <span style={{ color: 'var(--amber)', fontWeight: 600, fontSize: '0.78rem' }}>Pending</span>}
+                            ? <span style={{ color: 'var(--red)', fontSize: '0.78rem' }}>{t('pages.config.invStatusExpired')}</span>
+                            : <span style={{ color: 'var(--amber)', fontWeight: 600, fontSize: '0.78rem' }}>{t('pages.config.invStatusPending')}</span>}
                         </td>
                         <td className="text-muted text-sm">{inv.account?.name ?? '—'}</td>
                         <td className="text-muted text-sm">{new Date(inv.expiresAt).toLocaleDateString()}</td>
@@ -438,7 +442,7 @@ export default function Config() {
               <input
                 className="form-input"
                 style={{ width: 240, margin: 0 }}
-                placeholder="Search by name or email…"
+                placeholder={t('pages.config.userSearchPlaceholder')}
                 value={userQ}
                 onChange={e => setUserQ(e.target.value)}
               />
@@ -449,30 +453,32 @@ export default function Config() {
                   value={userSection}
                   onChange={e => setUserSection(e.target.value)}
                 >
-                  <option value="">All sections</option>
+                  <option value="">{t('pages.config.userAllSections')}</option>
                   {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               )}
               {(userQ || userSection) && (
                 <button className="btn btn-ghost btn-sm" onClick={() => { setUserQ(''); setUserSection(''); setUserPage(1); }}>
-                  Clear
+                  {t('common.clear')}
                 </button>
               )}
               <span className="text-muted text-sm" style={{ alignSelf: 'center', marginLeft: 'auto' }}>
-                {usersTotal} account{usersTotal !== 1 ? 's' : ''}
+                {usersTotal !== 1
+                  ? t('pages.config.accountsCount').replace('{count}', String(usersTotal))
+                  : t('pages.config.accountCount').replace('{count}', String(usersTotal))}
               </span>
             </div>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Name</th><th>Email</th><th>Roles</th><th>Section</th><th></th></tr></thead>
+              <thead><tr><th>{t('pages.config.colName')}</th><th>{t('pages.config.colEmail')}</th><th>{t('pages.config.colRoles')}</th><th>{t('pages.config.colSection')}</th><th></th></tr></thead>
               <tbody>
                 {filtered.length === 0 && (
-                  <tr><td colSpan={5}><div className="empty-state"><p>No accounts match the filters.</p></div></td></tr>
+                  <tr><td colSpan={5}><div className="empty-state"><p>{t('pages.config.noAccountsMatch')}</p></div></td></tr>
                 )}
                 {filtered.map(u => (
                   <tr key={u.id}>
                     <td style={{ fontWeight: 600 }}>{u.name}</td>
-                    <td className="text-muted text-sm">{u.email || <span style={{ fontStyle: 'italic' }}>not linked</span>}</td>
+                    <td className="text-muted text-sm">{u.email || <span style={{ fontStyle: 'italic' }}>{t('common.notLinked')}</span>}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {u.roles.map(r => (
@@ -527,92 +533,92 @@ export default function Config() {
       </main>
 
       {openHandler && (
-        <Modal title="New Handler" onClose={() => setOpenHandler(false)}
+        <Modal title={t('pages.config.modalNewHandler')} onClose={() => setOpenHandler(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenHandler(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={createHandler} disabled={saving}>{saving ? 'Creating…' : 'Create'}</button>
+            <button className="btn btn-ghost" onClick={() => setOpenHandler(false)}>{t('common.cancel')}</button>
+            <button className="btn btn-primary" onClick={createHandler} disabled={saving}>{saving ? t('common.creating') : t('common.create')}</button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Handler key</label>
+            <label className="form-label">{t('pages.config.handlerKeyLabel')}</label>
             <input className="form-input" placeholder="send_notification" value={handlerName}
               onChange={e => setHandlerName(e.target.value)} required autoFocus />
-            <p className="form-hint">Must match the key registered in the HANDLER_REGISTRY.</p>
+            <p className="form-hint">{t('pages.config.handlerKeyHint')}</p>
           </div>
         </Modal>
       )}
 
       {openWebhook && (
-        <Modal title="New Webhook" onClose={() => setOpenWebhook(false)}
+        <Modal title={t('pages.config.modalNewWebhook')} onClose={() => setOpenWebhook(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenWebhook(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={createWebhook} disabled={saving}>{saving ? 'Creating…' : 'Create'}</button>
+            <button className="btn btn-ghost" onClick={() => setOpenWebhook(false)}>{t('common.cancel')}</button>
+            <button className="btn btn-primary" onClick={createWebhook} disabled={saving}>{saving ? t('common.creating') : t('common.create')}</button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Name</label>
+            <label className="form-label">{t('pages.config.webhookNameLabel')}</label>
             <input className="form-input" placeholder="Slack Ops" value={whForm.name}
               onChange={e => setWhForm(f => ({ ...f, name: e.target.value }))} required />
           </div>
           <div className="form-group">
-            <label className="form-label">URL</label>
+            <label className="form-label">{t('pages.config.webhookUrlLabel')}</label>
             <input className="form-input" type="url" placeholder="https://hooks.slack.com/…" value={whForm.url}
               onChange={e => setWhForm(f => ({ ...f, url: e.target.value }))} required />
           </div>
           <div className="form-group">
-            <label className="form-label">Type</label>
+            <label className="form-label">{t('pages.config.webhookTypeLabel')}</label>
             <select className="form-select"
               value={whForm.isAlerts ? 'alerts' : 'task'}
               onChange={e => setWhForm(f => ({ ...f, isAlerts: e.target.value === 'alerts' }))}>
-              <option value="task">Task notification — fires on step start / complete / fail</option>
-              <option value="alerts">System alerts — receives timeout and system error alerts</option>
+              <option value="task">{t('pages.config.webhookTypeTask')}</option>
+              <option value="alerts">{t('pages.config.webhookTypeAlerts')}</option>
             </select>
           </div>
         </Modal>
       )}
 
       {editingWebhook && (
-        <Modal title="Edit Webhook" onClose={() => setEditingWebhook(null)}
+        <Modal title={t('pages.config.modalEditWebhook')} onClose={() => setEditingWebhook(null)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setEditingWebhook(null)}>Cancel</button>
-            <button className="btn btn-primary" onClick={saveWebhook} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+            <button className="btn btn-ghost" onClick={() => setEditingWebhook(null)}>{t('common.cancel')}</button>
+            <button className="btn btn-primary" onClick={saveWebhook} disabled={saving}>{saving ? t('common.saving') : t('common.save')}</button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Name</label>
+            <label className="form-label">{t('pages.config.webhookNameLabel')}</label>
             <input className="form-input" value={editWhForm.name}
               onChange={e => setEditWhForm(f => ({ ...f, name: e.target.value }))} required autoFocus />
           </div>
           <div className="form-group">
-            <label className="form-label">URL</label>
+            <label className="form-label">{t('pages.config.webhookUrlLabel')}</label>
             <input className="form-input" type="url" value={editWhForm.url}
               onChange={e => setEditWhForm(f => ({ ...f, url: e.target.value }))} required />
           </div>
           <div className="form-group">
-            <label className="form-label">Type</label>
+            <label className="form-label">{t('pages.config.webhookTypeLabel')}</label>
             <select className="form-select"
               value={editWhForm.isAlerts ? 'alerts' : 'task'}
               onChange={e => setEditWhForm(f => ({ ...f, isAlerts: e.target.value === 'alerts' }))}>
-              <option value="task">Task notification — fires on step start / complete / fail</option>
-              <option value="alerts">System alerts — receives timeout and system error alerts</option>
+              <option value="task">{t('pages.config.webhookTypeTask')}</option>
+              <option value="alerts">{t('pages.config.webhookTypeAlerts')}</option>
             </select>
           </div>
         </Modal>
       )}
 
       {openInvite && (
-        <Modal title="New Invitation" onClose={() => setOpenInvite(false)}
+        <Modal title={t('pages.config.modalNewInvitation')} onClose={() => setOpenInvite(false)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setOpenInvite(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={createInvitation} disabled={saving}>{saving ? 'Creating…' : 'Generate Link'}</button>
+            <button className="btn btn-ghost" onClick={() => setOpenInvite(false)}>{t('common.cancel')}</button>
+            <button className="btn btn-primary" onClick={createInvitation} disabled={saving}>{saving ? t('common.creating') : t('common.generateLink')}</button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           <div className="form-group">
-            <label className="form-label">Role</label>
+            <label className="form-label">{t('pages.config.invRoleLabel')}</label>
             <select className="form-select" value={invForm.role} onChange={e => setInvForm(f => ({ ...f, role: e.target.value as AccountRole }))}>
               <option value="user">User</option>
               <option value="bpo">BPO</option>
@@ -621,9 +627,9 @@ export default function Config() {
             </select>
           </div>
           <div className="form-group">
-            <label className="form-label">Section</label>
+            <label className="form-label">{t('pages.config.invSectionLabel')}</label>
             <select className="form-select" value={invForm.sectionId} onChange={e => setInvForm(f => ({ ...f, sectionId: e.target.value }))} required>
-              <option value="">Select section…</option>
+              <option value="">{t('pages.config.invSectionPlaceholder')}</option>
               {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
@@ -632,14 +638,14 @@ export default function Config() {
 
       {inviteLink && (
         <Modal
-          title="Invitation link ready"
+          title={t('pages.config.modalInviteLinkReady')}
           onClose={() => setInviteLink(null)}
           footer={
-            <button className="btn btn-primary" onClick={() => setInviteLink(null)}>Done</button>
+            <button className="btn btn-primary" onClick={() => setInviteLink(null)}>{t('common.done')}</button>
           }
         >
           <p className="text-muted text-sm" style={{ marginBottom: 12 }}>
-            Share this link with the person you're inviting. It expires in 7 days and can only be used once.
+            {t('pages.config.invLinkHint')}
           </p>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,
@@ -658,34 +664,34 @@ export default function Config() {
               onClick={copyLink}
               style={{ flexShrink: 0 }}
             >
-              {copied ? '✓ Copied' : 'Copy'}
+              {copied ? t('pages.config.invLinkCopied') : t('pages.config.invLinkCopy')}
             </button>
           </div>
         </Modal>
       )}
       {editingUser && (
         <Modal
-          title={`Edit — ${editingUser.name}`}
+          title={t('pages.config.editUserTitle').replace('{name}', editingUser.name)}
           onClose={() => setEditingUser(null)}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => setEditingUser(null)}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => setEditingUser(null)}>{t('common.cancel')}</button>
             <button className="btn btn-primary" onClick={saveEditUser} disabled={saving || editUserRoles.length === 0}>
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? t('common.saving') : t('common.save')}
             </button>
           </>}
         >
           {err && <div className="error-banner">{err}</div>}
           {isSuperAdmin && (
             <div className="form-group">
-              <label className="form-label">Section / Team</label>
+              <label className="form-label">{t('pages.config.editUserSectionLabel')}</label>
               <select className="form-select" value={editUserSection} onChange={e => setEditUserSection(e.target.value)}>
-                <option value="">No section</option>
+                <option value="">{t('pages.config.editUserNoSection')}</option>
                 {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
           )}
           <div className="form-group">
-            <label className="form-label">Roles</label>
+            <label className="form-label">{t('pages.config.editUserRolesLabel')}</label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8 }}>
               {EDITABLE_ROLES.map(role => (
                 <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
@@ -702,12 +708,12 @@ export default function Config() {
                 </label>
               ))}
             </div>
-            {editUserRoles.length === 0 && <p style={{ fontSize: '0.75rem', color: 'var(--red)', marginTop: 4 }}>At least one role is required.</p>}
+            {editUserRoles.length === 0 && <p style={{ fontSize: '0.75rem', color: 'var(--red)', marginTop: 4 }}>{t('pages.config.editUserRolesRequired')}</p>}
           </div>
           {isSuperAdmin && editingUser?.roles.includes('admin') && (
             <div className="form-group">
-              <label className="form-label">Module access</label>
-              <p className="form-hint" style={{ marginBottom: 8 }}>Users and Invitations are always visible. Select additional modules this admin can access.</p>
+              <label className="form-label">{t('pages.config.editUserModulesLabel')}</label>
+              <p className="form-hint" style={{ marginBottom: 8 }}>{t('pages.config.editUserModulesHint')}</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8 }}>
                 {ADMIN_MODULES.map(({ key, label }) => (
                   <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
@@ -728,8 +734,8 @@ export default function Config() {
           )}
           {isSuperAdmin && editingUser?.roles.includes('bpo') && (
             <div className="form-group">
-              <label className="form-label">BPO permissions</label>
-              <p className="form-hint" style={{ marginBottom: 8 }}>Select which create actions this BPO can perform.</p>
+              <label className="form-label">{t('pages.config.editUserBpoPermsLabel')}</label>
+              <p className="form-hint" style={{ marginBottom: 8 }}>{t('pages.config.editUserBpoPermsHint')}</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8 }}>
                 {BPO_PERMISSIONS.map(({ key, label }) => (
                   <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
