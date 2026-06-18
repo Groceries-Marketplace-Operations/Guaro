@@ -31,7 +31,7 @@ export default function Login() {
         <div className="login-logo-row">
           <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 36, height: 36, objectFit: 'contain', borderRadius: 8 }} />
           <div className="texts">
-            <div className="t1">DiDi Ops</div>
+            <div className="t1">Guaro</div>
             <div className="t2">{t('nav.internalPanel')}</div>
           </div>
         </div>

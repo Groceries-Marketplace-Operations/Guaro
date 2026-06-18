@@ -44,7 +44,7 @@ export default function InvitePage() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 28 }}>
           <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 8, flexShrink: 0 }} />
-          <span style={{ fontWeight: 700, fontSize: '1rem', letterSpacing: '-0.02em' }}>DiDi Ops</span>
+          <span style={{ fontWeight: 700, fontSize: '1rem', letterSpacing: '-0.02em' }}>Guaro</span>
         </div>
 
         {done ? (

@@ -87,8 +87,7 @@ export default function Sidebar() {
       <div className="sidebar-logo">
         <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 6 }} />
         <div className="logo-text">
-          <span className="lt-name">DiDi Ops</span>
-          <span className="lt-sub">{t('nav.internalPanel')}</span>
+          <span className="lt-name">Guaro</span>
         </div>
       </div>
 
