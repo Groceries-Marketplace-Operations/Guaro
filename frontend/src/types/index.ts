@@ -6,7 +6,7 @@ export type AssignmentStrategy = 'fixed' | 'round_robin' | 'brand_assignment' | 
 export type ShopStatus = 'lead' | 'application' | 'integrated' | 'online';
 export type KaType = 'KA' | 'CKA' | 'SME';
 export type Country = 'MX' | 'CO' | 'CR';
-export type WebhookEvent = 'on_start' | 'on_complete' | 'on_fail' | 'on_assignment';
+export type WebhookEvent = 'on_start' | 'on_complete' | 'on_fail' | 'on_assignment' | 'on_blocked';
 
 export interface Account {
   id: string;

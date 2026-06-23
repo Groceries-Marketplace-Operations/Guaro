@@ -212,6 +212,8 @@ export class TaskEngineService {
         data: { status: TaskStatus.blocked },
       }),
     ]);
+
+    await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_blocked, step.taskId);
   }
 
   // ── Retry a blocked step ──────────────────────────────────────────────────
@@ -417,12 +419,14 @@ export class TaskEngineService {
       on_complete:   '#4CAF50',
       on_fail:       '#F44336',
       on_assignment: '#9C27B0',
+      on_blocked:    '#FF9800',
     };
     const eventLabel: Record<WebhookEvent, string> = {
       on_start:      'started',
       on_complete:   'completed',
       on_fail:       'failed',
       on_assignment: 'assigned',
+      on_blocked:    'blocked',
     };
 
     const mentions = [bpoHandle && `@${bpoHandle}`, creatorHandle && `@${creatorHandle}`]

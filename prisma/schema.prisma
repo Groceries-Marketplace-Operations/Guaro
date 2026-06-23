@@ -79,6 +79,7 @@ enum WebhookEvent {
   on_complete
   on_fail
   on_assignment
+  on_blocked
 
   @@map("WebhookEvento")
 }
