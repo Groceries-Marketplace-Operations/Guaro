@@ -184,7 +184,8 @@ async function menuUpload(ctx: HandlerContext): Promise<unknown> {
 
   logger.log(`Uploading menu to ${shops.length} shops for brand=${brand.brandName} (${brand.country})`);
 
-  const failed: { appShopId: string; error: string }[] = [];
+  const failed:     { appShopId: string; error: string }[] = [];
+  const successful: { appShopId: string; taskId: string; items: number }[] = [];
 
   for (let i = 0; i < shops.length; i += BATCH_SIZE) {
     const batch = shops.slice(i, i + BATCH_SIZE);
@@ -193,6 +194,7 @@ async function menuUpload(ctx: HandlerContext): Promise<unknown> {
       try {
         const token  = await getAuthToken(appId, appSecret, shop.appShopId);
         const taskId = await uploadMenuForShop(token, shop.items, brand.country);
+        successful.push({ appShopId: shop.appShopId, taskId, items: shop.items.length });
         ctx.addNote(`✓ ${shop.appShopId}: taskID=${taskId} (${shop.items.length} items)`);
         logger.log(`✓ ${shop.appShopId}: taskID=${taskId}`);
       } catch (err) {
@@ -219,7 +221,7 @@ async function menuUpload(ctx: HandlerContext): Promise<unknown> {
 
   const ok = shops.length - failed.length;
   logger.log(`Done: ${ok} ok, ${failed.length} failed`);
-  return { total: shops.length, success: ok, failed: failed.length, failedShops: failed };
+  return { total: shops.length, success: ok, failed: failed.length, successfulShops: successful, failedShops: failed };
 }
 
 registerHandler('menu_upload', menuUpload);

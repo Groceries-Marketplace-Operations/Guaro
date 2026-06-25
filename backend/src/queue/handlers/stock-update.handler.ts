@@ -116,7 +116,8 @@ async function stockUpdate(ctx: HandlerContext): Promise<unknown> {
 
   logger.log(`Updating stock for ${shops.length} shops, brand=${brand.brandName}`);
 
-  const failed: { appShopId: string; error: string }[] = [];
+  const failed:     { appShopId: string; error: string }[] = [];
+  const successful: { appShopId: string; items: number }[] = [];
 
   for (let i = 0; i < shops.length; i += BATCH_SIZE) {
     const batch = shops.slice(i, i + BATCH_SIZE);
@@ -125,6 +126,7 @@ async function stockUpdate(ctx: HandlerContext): Promise<unknown> {
       try {
         const token = await getAuthToken(appId, appSecret, shop.appShopId);
         await updateStockForShop(token, shop.items);
+        successful.push({ appShopId: shop.appShopId, items: shop.items.length });
         ctx.addNote(`✓ ${shop.appShopId}: ${shop.items.length} items updated`);
         logger.log(`✓ ${shop.appShopId}: ${shop.items.length} items`);
       } catch (err) {
@@ -151,7 +153,7 @@ async function stockUpdate(ctx: HandlerContext): Promise<unknown> {
 
   const ok = shops.length - failed.length;
   logger.log(`Done: ${ok} ok, ${failed.length} failed`);
-  return { total: shops.length, success: ok, failed: failed.length, failedShops: failed };
+  return { total: shops.length, success: ok, failed: failed.length, successfulShops: successful, failedShops: failed };
 }
 
 registerHandler('stock_update', stockUpdate);
