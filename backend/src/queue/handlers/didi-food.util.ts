@@ -99,17 +99,18 @@ export function normalizeDate(d: Date | string): string {
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 /**
- * Two-step DiDi Food auth: refresh token → access token.
+ * Two-step DiDi Food auth: refresh token → access token, per shop.
  * Both calls are GET with query params.
  */
 export async function getAuthToken(
   appId: string,
   appSecret: string,
+  appShopId: string,
 ): Promise<string> {
   const timestamp = String(Math.floor(Date.now() / 1000));
 
   // Step 1 — get refresh token
-  const refreshParams: Record<string, string> = { app_id: appId, app_secret: appSecret, timestamp };
+  const refreshParams: Record<string, string> = { app_id: appId, app_secret: appSecret, app_shop_id: appShopId, timestamp };
   refreshParams.sign = generateSignature(refreshParams, appSecret);
   const refreshUrl = new URL(`${DIDI_BASE}/v1/auth/authtoken/refresh`);
   Object.entries(refreshParams).forEach(([k, v]) => refreshUrl.searchParams.set(k, v));
@@ -122,7 +123,7 @@ export async function getAuthToken(
   const refreshToken: string = refreshBody.data.refresh_token;
 
   // Step 2 — get access token
-  const getParams: Record<string, string> = { app_id: appId, refresh_token: refreshToken, timestamp };
+  const getParams: Record<string, string> = { app_id: appId, app_secret: appSecret, app_shop_id: appShopId, refresh_token: refreshToken, timestamp };
   getParams.sign = generateSignature(getParams, appSecret);
   const getUrl = new URL(`${DIDI_BASE}/v1/auth/authtoken/get`);
   Object.entries(getParams).forEach(([k, v]) => getUrl.searchParams.set(k, v));
@@ -133,20 +134,4 @@ export async function getAuthToken(
     throw new Error(`DiDi token get failed: ${getBody.errmsg} (errno=${getBody.errno})`);
   }
   return getBody.data.access_token as string;
-}
-
-/**
- * Convenience wrapper: get auth token for an app.
- * Returns { token, errors } — errors is non-empty if auth failed.
- */
-export async function getAuthTokens(
-  appId: string,
-  appSecret: string,
-): Promise<{ token: string; errors: string[] }> {
-  try {
-    const token = await getAuthToken(appId, appSecret);
-    return { token, errors: [] };
-  } catch (err) {
-    return { token: '', errors: [(err as Error).message] };
-  }
 }

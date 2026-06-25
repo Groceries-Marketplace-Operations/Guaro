@@ -6,7 +6,7 @@ import { registerHandler, HandlerContext } from '../handler.processor';
 import {
   DIDI_BASE, BATCH_SIZE, COOLDOWN_BATCH_MS,
   sleep, parseJsonKeepingIds,
-  isClosed, parseScheduleString, applyBuffer, minutesToHHMM, getAuthTokens,
+  isClosed, parseScheduleString, applyBuffer, minutesToHHMM, getAuthToken,
 } from './didi-food.util';
 
 const logger = new Logger('schedule_update_permanent');
@@ -135,8 +135,6 @@ async function scheduleUpdatePermanent(ctx: HandlerContext): Promise<unknown> {
   }
 
   const { appId, appSecret } = brand.application;
-  const { token, errors: authErrors } = await getAuthTokens(appId, appSecret);
-  if (!token) throw new Error(`Auth failed: ${authErrors.join('; ')}`);
 
   logger.log(`Processing ${shops.length} shops for brand=${brand.brandName} (${brand.country})`);
 
@@ -147,6 +145,7 @@ async function scheduleUpdatePermanent(ctx: HandlerContext): Promise<unknown> {
 
     for (const shop of batch) {
       try {
+        const token = await getAuthToken(appId, appSecret, shop.appShopId);
         await updateShopSchedule(token, shop);
       } catch (err) {
         const msg = (err as Error).message;
