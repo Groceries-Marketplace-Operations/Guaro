@@ -43,8 +43,9 @@ export function generateSignature(
  * DiDi returns 64-bit integers (e.g. taskID) that lose precision in JS.
  */
 export function parseJsonKeepingIds(text: string): any { // eslint-disable-line @typescript-eslint/no-explicit-any
-  // Wrap any bare integer value longer than 15 digits in quotes
-  const safe = text.replace(/"(\w*[Ii]d\w*)":\s*(\d{10,})/g, '"$1":"$2"');
+  // Wrap large integers in ID fields as strings to avoid JS precision loss.
+  // Matches: shopId, appId, taskID, menuID, shop_id, app_shop_id, etc.
+  const safe = text.replace(/"(\w*[Ii][Dd]\w*)":\s*(\d{10,})/g, '"$1":"$2"');
   return JSON.parse(safe);
 }
 
