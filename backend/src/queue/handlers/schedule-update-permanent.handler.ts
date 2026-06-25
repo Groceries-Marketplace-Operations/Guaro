@@ -126,11 +126,15 @@ async function scheduleUpdatePermanent(ctx: HandlerContext): Promise<unknown> {
 
   try {
     shops = await readExcel(filePath);
-  } finally {
+  } catch (err) {
     await unlink(filePath).catch(() => undefined);
+    throw err;
   }
 
-  if (shops.length === 0) throw new Error('Excel file is empty or has no valid rows');
+  if (shops.length === 0) {
+    await unlink(filePath).catch(() => undefined);
+    throw new Error('Excel file is empty or has no valid rows');
+  }
 
   const { appId, appSecret } = brand.application;
   const { token, errors: authErrors } = await getAuthTokens(appId, appSecret, brand.country);
@@ -167,6 +171,8 @@ async function scheduleUpdatePermanent(ctx: HandlerContext): Promise<unknown> {
       }],
     });
   }
+
+  await unlink(filePath).catch(() => undefined);
 
   if (failed.length === shops.length) {
     throw new Error(`All ${shops.length} shops failed — see notes for details`);
