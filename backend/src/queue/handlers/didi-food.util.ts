@@ -109,7 +109,7 @@ export async function getAuthToken(
   const timestamp = String(Math.floor(Date.now() / 1000));
 
   // Step 1 — get refresh token
-  const refreshParams: Record<string, string> = { app_id: appId, timestamp };
+  const refreshParams: Record<string, string> = { app_id: appId, app_secret: appSecret, timestamp };
   refreshParams.sign = generateSignature(refreshParams, appSecret);
   const refreshUrl = new URL(`${DIDI_BASE}/v1/auth/authtoken/refresh`);
   Object.entries(refreshParams).forEach(([k, v]) => refreshUrl.searchParams.set(k, v));
