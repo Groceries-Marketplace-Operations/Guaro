@@ -9,3 +9,5 @@ export * from './notify-integration-complete.handler';
 export * from './debug-echo.handler';
 export * from './schedule-update-permanent.handler';
 export * from './schedule-update-dates.handler';
+export * from './menu-upload.handler';
+export * from './stock-update.handler';
