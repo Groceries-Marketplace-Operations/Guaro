@@ -35,7 +35,7 @@ export function generateSignature(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${k}=${v}`)
     .join('&');
-  return createHash('md5').update(sorted + appSecret).digest('hex').toUpperCase();
+  return createHash('md5').update(sorted + appSecret).digest('hex');
 }
 
 /**
