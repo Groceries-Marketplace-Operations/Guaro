@@ -54,6 +54,8 @@ export interface HandlerContext {
   addNote(text: string): void;
   /** Send a message to all alert webhooks */
   sendAlert(payload: WebhookPayload): Promise<void>;
+  /** True when this is the final BullMQ attempt — safe to clean up temp resources */
+  isLastAttempt: boolean;
 }
 
 // ── Handler function type ─────────────────────────────────────────────────────
@@ -95,7 +97,9 @@ export class HandlerProcessor extends WorkerHost {
     }
 
     const noteLines: string[] = [];
-    const ctx = await this.buildContext(stepInstanceId, taskId, noteLines);
+    const maxAttempts = job.opts.attempts ?? 1;
+    const isLastAttempt = job.attemptsMade >= maxAttempts - 1;
+    const ctx = await this.buildContext(stepInstanceId, taskId, noteLines, isLastAttempt);
 
     try {
       const result = await fn(ctx);
@@ -114,7 +118,7 @@ export class HandlerProcessor extends WorkerHost {
 
   // ── Context builder ───────────────────────────────────────────────────────
 
-  private async buildContext(stepInstanceId: string, taskId: string, noteLines: string[]): Promise<HandlerContext> {
+  private async buildContext(stepInstanceId: string, taskId: string, noteLines: string[], isLastAttempt: boolean): Promise<HandlerContext> {
     const encKey = this.config.get<string>('APP_SECRET_ENCRYPTION_KEY') ?? '';
 
     const task = await this.prisma.task.findUnique({
@@ -171,6 +175,7 @@ export class HandlerProcessor extends WorkerHost {
       field: (label) => formValues.find((f) => f.label === label)?.valor ?? null,
       addNote: (text: string) => { noteLines.push(text); },
       sendAlert: (payload: WebhookPayload) => this.webhooks.sendAlert(payload),
+      isLastAttempt,
     };
   }
 }

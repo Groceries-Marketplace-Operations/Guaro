@@ -179,9 +179,12 @@ async function scheduleUpdateDates(ctx: HandlerContext): Promise<unknown> {
     });
   }
 
-  await unlink(filePath).catch(() => undefined);
+  const allFailed = failed.length === shops.length;
+  if (!allFailed || ctx.isLastAttempt) {
+    await unlink(filePath).catch(() => undefined);
+  }
 
-  if (failed.length === shops.length) {
+  if (allFailed) {
     throw new Error(`All ${shops.length} shops failed — see notes for details`);
   }
 
