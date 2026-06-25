@@ -135,7 +135,7 @@ export async function getAuthToken(
   if (getBody.errno !== 0) {
     throw new Error(`DiDi token get failed: ${getBody.errmsg} (errno=${getBody.errno})`);
   }
-  return getBody.data.access_token as string;
+  return getBody.data.auth_token as string;
 }
 
 // ── Shop list ─────────────────────────────────────────────────────────────────
