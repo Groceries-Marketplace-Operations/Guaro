@@ -5,16 +5,18 @@ import * as ExcelJS from 'exceljs';
 import { registerHandler, HandlerContext } from '../handler.processor';
 import {
   DIDI_BASE, BATCH_SIZE, COOLDOWN_BATCH_MS,
-  sleep, generateSignature, parseJsonKeepingIds,
-  isClosed, parseScheduleString, normalizeDate, getAuthTokens,
+  sleep, parseJsonKeepingIds,
+  isClosed, parseScheduleString, minutesToHHMM, normalizeDate, getAuthTokens,
 } from './didi-food.util';
 
 const logger = new Logger('schedule_update_dates');
 
+interface BizTimeRange { begin: string; end: string; }
+
 interface DateOverride {
-  date: string;  // "YYYY-MM-DD"
+  bizHoliday: string;   // "YYYY-MM-DD"
   restAllDay: boolean;
-  bizTime: { begin: number; end: number }[];
+  bizTime: BizTimeRange[];
 }
 
 interface ShopDateSchedule {
@@ -25,13 +27,13 @@ interface ShopDateSchedule {
 // ── Excel reader ──────────────────────────────────────────────────────────────
 
 /**
- * Excel format:
- *  Col A: app_shop_id
- *  Col B: Date 1  (Date cell or string "YYYY-MM-DD")
- *  Col C: Schedule 1 ("HH:MM-HH:MM" or "closed")
- *  Col D: Date 2
- *  Col E: Schedule 2
- *  ... unlimited pairs from col B onward
+ * Excel format (unlimited date/schedule pairs per shop, row 1 is header):
+ *  Col A:   app_shop_id
+ *  Col B:   Date 1  (Date cell or "YYYY-MM-DD" string)
+ *  Col C:   Schedule 1  ("HH:MM-HH:MM" or "closed")
+ *  Col D:   Date 2
+ *  Col E:   Schedule 2
+ *  ...
  */
 async function readExcel(filePath: string): Promise<ShopDateSchedule[]> {
   const workbook = new ExcelJS.Workbook();
@@ -45,18 +47,17 @@ async function readExcel(filePath: string): Promise<ShopDateSchedule[]> {
     if (!shopId) return;
 
     const overrides: DateOverride[] = [];
-    // Pairs starting at col 2 (B), step 2
     let col = 2;
     while (true) {
       const dateCell = row.getCell(col).value;
       const schedCell = row.getCell(col + 1).value;
       if (dateCell == null && schedCell == null) break;
 
-      let dateStr: string;
+      let bizHoliday: string;
       if (dateCell instanceof Date) {
-        dateStr = normalizeDate(dateCell);
+        bizHoliday = normalizeDate(dateCell);
       } else if (dateCell != null) {
-        dateStr = normalizeDate(String(dateCell).trim());
+        bizHoliday = normalizeDate(String(dateCell).trim());
       } else {
         col += 2;
         continue;
@@ -65,14 +66,18 @@ async function readExcel(filePath: string): Promise<ShopDateSchedule[]> {
       const raw = schedCell == null ? 'closed' : String(schedCell).trim();
 
       if (isClosed(raw)) {
-        overrides.push({ date: dateStr, restAllDay: true, bizTime: [] });
+        overrides.push({ bizHoliday, restAllDay: true, bizTime: [] });
       } else {
         try {
           const ranges = parseScheduleString(raw); // no buffer for date overrides
-          overrides.push({ date: dateStr, restAllDay: false, bizTime: ranges });
+          overrides.push({
+            bizHoliday,
+            restAllDay: false,
+            bizTime: ranges.map(r => ({ begin: minutesToHHMM(r.begin), end: minutesToHHMM(r.end) })),
+          });
         } catch {
-          logger.warn(`Row ${rowNum}: invalid schedule "${raw}" for shop ${shopId} on ${dateStr} — treating as closed`);
-          overrides.push({ date: dateStr, restAllDay: true, bizTime: [] });
+          logger.warn(`Row ${rowNum}: invalid schedule "${raw}" for shop ${shopId} on ${bizHoliday} — treating as closed`);
+          overrides.push({ bizHoliday, restAllDay: true, bizTime: [] });
         }
       }
       col += 2;
@@ -89,35 +94,23 @@ async function readExcel(filePath: string): Promise<ShopDateSchedule[]> {
 // ── DiDi API call ─────────────────────────────────────────────────────────────
 
 async function updateShopDateSchedule(
-  appId: string,
   token: string,
-  country: string,
   shop: ShopDateSchedule,
 ): Promise<void> {
-  const b = DIDI_BASE[country] ?? DIDI_BASE['MX'];
-  const timestamp = String(Math.floor(Date.now() / 1000));
-
   const payload = {
-    app_id: appId,
-    access_token: token,
-    timestamp,
+    auth_token: token,
     app_shop_id: shop.appShopId,
     biz_holiday_time: shop.overrides.map(o => ({
-      date: o.date,
-      rest_all_day: o.restAllDay,
-      biz_time: o.bizTime,
+      bizHoliday: o.bizHoliday,
+      restAllDay: o.restAllDay,
+      bizTime: o.bizTime,
     })),
   };
 
-  const sign = generateSignature(
-    { app_id: appId, access_token: token, timestamp, app_shop_id: shop.appShopId },
-    token,
-  );
-
-  const res = await fetch(`${b}/v1/shop/holiday_time`, {
+  const res = await fetch(`${DIDI_BASE}/v1/shop/shop/update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, sign }),
+    body: JSON.stringify(payload),
   });
 
   const body = parseJsonKeepingIds(await res.text());
@@ -128,21 +121,6 @@ async function updateShopDateSchedule(
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
-/**
- * Reads an Excel file with date-specific schedule overrides and updates DiDi Food.
- * Used for holidays, special events, etc.
- *
- * Form fields:
- *  - "Excel File"  (file)  — required — uploaded .xlsx with date overrides
- *
- * Excel format (unlimited date/schedule pairs per shop):
- *  Col A:   app_shop_id
- *  Col B:   Date 1  (Date cell or "YYYY-MM-DD" string)
- *  Col C:   Schedule 1  ("HH:MM-HH:MM" or "closed")
- *  Col D:   Date 2
- *  Col E:   Schedule 2
- *  ...
- */
 async function scheduleUpdateDates(ctx: HandlerContext): Promise<unknown> {
   const { brand } = ctx;
   if (!brand)             throw new Error('Task has no brand linked');
@@ -167,7 +145,7 @@ async function scheduleUpdateDates(ctx: HandlerContext): Promise<unknown> {
   }
 
   const { appId, appSecret } = brand.application;
-  const { token, errors: authErrors } = await getAuthTokens(appId, appSecret, brand.country);
+  const { token, errors: authErrors } = await getAuthTokens(appId, appSecret);
   if (!token) throw new Error(`Auth failed: ${authErrors.join('; ')}`);
 
   logger.log(`Processing ${shops.length} shops (date overrides) for brand=${brand.brandName} (${brand.country})`);
@@ -179,7 +157,7 @@ async function scheduleUpdateDates(ctx: HandlerContext): Promise<unknown> {
 
     for (const shop of batch) {
       try {
-        await updateShopDateSchedule(appId, token, brand.country, shop);
+        await updateShopDateSchedule(token, shop);
       } catch (err) {
         const msg = (err as Error).message;
         logger.warn(`shop ${shop.appShopId}: ${msg}`);
@@ -211,12 +189,7 @@ async function scheduleUpdateDates(ctx: HandlerContext): Promise<unknown> {
   const ok = shops.length - failed.length;
   logger.log(`Done: ${ok} ok, ${failed.length} failed`);
 
-  return {
-    total: shops.length,
-    success: ok,
-    failed: failed.length,
-    failedShops: failed,
-  };
+  return { total: shops.length, success: ok, failed: failed.length, failedShops: failed };
 }
 
 registerHandler('schedule_update_dates', scheduleUpdateDates);

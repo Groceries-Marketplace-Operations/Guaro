@@ -4,23 +4,34 @@ import { unlink } from 'fs/promises';
 import * as ExcelJS from 'exceljs';
 import { registerHandler, HandlerContext } from '../handler.processor';
 import {
-  DIDI_BASE, BATCH_SIZE, COOLDOWN_BATCH_MS, COOLDOWN_RETRY_MS,
-  sleep, generateSignature, parseJsonKeepingIds,
-  isClosed, parseScheduleString, applyBuffer, getAuthTokens,
+  DIDI_BASE, BATCH_SIZE, COOLDOWN_BATCH_MS,
+  sleep, parseJsonKeepingIds,
+  isClosed, parseScheduleString, applyBuffer, minutesToHHMM, getAuthTokens,
 } from './didi-food.util';
 
 const logger = new Logger('schedule_update_permanent');
 
-// Day-of-week mapping: Excel column index (1-based from B) → DiDi week number (1=Mon … 7=Sun)
-const COL_TO_WEEK = [1, 2, 3, 4, 5, 6, 7]; // cols B-H
+interface BizTimeRange { begin: string; end: string; }
 
 interface ShopSchedule {
   appShopId: string;
-  bizDayTime: { week: number; bizTime: { begin: number; end: number }[] }[];
+  // Days with the same schedule are grouped: bizDay = [1..7], bizTime = HH:MM ranges
+  dayGroups: { bizDay: number[]; bizTime: BizTimeRange[] }[];
 }
 
 // ── Excel reader ──────────────────────────────────────────────────────────────
 
+/**
+ * Excel format (one row per shop, row 1 is header and is skipped):
+ *  Col A: app_shop_id
+ *  Col B: Monday    ("HH:MM-HH:MM" or "closed")
+ *  Col C: Tuesday
+ *  Col D: Wednesday
+ *  Col E: Thursday
+ *  Col F: Friday
+ *  Col G: Saturday
+ *  Col H: Sunday
+ */
 async function readExcel(filePath: string): Promise<ShopSchedule[]> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(filePath);
@@ -28,29 +39,44 @@ async function readExcel(filePath: string): Promise<ShopSchedule[]> {
   const rows: ShopSchedule[] = [];
 
   sheet.eachRow((row, rowNum) => {
-    if (rowNum === 1) return; // skip header
+    if (rowNum === 1) return;
     const shopId = String(row.getCell(1).value ?? '').trim();
     if (!shopId) return;
 
-    const bizDayTime: ShopSchedule['bizDayTime'] = [];
+    // Parse each day (cols B-H = days 1-7)
+    const dayBizTime: (BizTimeRange[] | null)[] = [];
     for (let col = 2; col <= 8; col++) {
-      const cellVal = row.getCell(col).value;
-      const raw = cellVal == null ? '' : String(cellVal).trim();
-      const week = COL_TO_WEEK[col - 2];
-
+      const raw = String(row.getCell(col).value ?? '').trim();
       if (isClosed(raw)) {
-        bizDayTime.push({ week, bizTime: [] });
+        dayBizTime.push(null);
       } else {
         try {
-          const ranges = applyBuffer(parseScheduleString(raw));
-          bizDayTime.push({ week, bizTime: ranges });
+          const buffered = applyBuffer(parseScheduleString(raw));
+          dayBizTime.push(buffered.map(r => ({ begin: minutesToHHMM(r.begin), end: minutesToHHMM(r.end) })));
         } catch {
-          logger.warn(`Row ${rowNum}: invalid schedule "${raw}" for shop ${shopId} (week ${week}) — treating as closed`);
-          bizDayTime.push({ week, bizTime: [] });
+          logger.warn(`Row ${rowNum}: invalid schedule "${raw}" for shop ${shopId} col ${col} — treating as closed`);
+          dayBizTime.push(null);
         }
       }
     }
-    rows.push({ appShopId: shopId, bizDayTime });
+
+    // Group days that share the same schedule
+    const groupMap = new Map<string, { bizDay: number[]; bizTime: BizTimeRange[] }>();
+    for (let i = 0; i < 7; i++) {
+      const bizTime = dayBizTime[i];
+      if (!bizTime) continue;
+      const key = JSON.stringify(bizTime);
+      if (!groupMap.has(key)) {
+        groupMap.set(key, { bizDay: [i + 1], bizTime });
+      } else {
+        groupMap.get(key)!.bizDay.push(i + 1);
+      }
+    }
+
+    const dayGroups = Array.from(groupMap.values());
+    if (dayGroups.length > 0) {
+      rows.push({ appShopId: shopId, dayGroups });
+    }
   });
 
   return rows;
@@ -59,34 +85,22 @@ async function readExcel(filePath: string): Promise<ShopSchedule[]> {
 // ── DiDi API call ─────────────────────────────────────────────────────────────
 
 async function updateShopSchedule(
-  appId: string,
   token: string,
-  country: string,
   shop: ShopSchedule,
 ): Promise<void> {
-  const b = DIDI_BASE[country] ?? DIDI_BASE['MX'];
-  const timestamp = String(Math.floor(Date.now() / 1000));
-
   const payload = {
-    app_id: appId,
-    access_token: token,
-    timestamp,
+    auth_token: token,
     app_shop_id: shop.appShopId,
-    biz_day_time: shop.bizDayTime.map(d => ({
-      week: d.week,
-      biz_time: d.bizTime,
+    biz_day_time: shop.dayGroups.map(g => ({
+      bizDay: g.bizDay,
+      bizTime: g.bizTime,
     })),
   };
 
-  const sign = generateSignature(
-    { app_id: appId, access_token: token, timestamp, app_shop_id: shop.appShopId },
-    token,
-  );
-
-  const res = await fetch(`${b}/v1/shop/business_time`, {
+  const res = await fetch(`${DIDI_BASE}/v1/shop/shop/update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, sign }),
+    body: JSON.stringify(payload),
   });
 
   const body = parseJsonKeepingIds(await res.text());
@@ -97,29 +111,13 @@ async function updateShopSchedule(
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
-/**
- * Reads an Excel file with permanent weekly schedules and updates DiDi Food.
- *
- * Form fields:
- *  - "Excel File"  (file)  — required — uploaded .xlsx with shop schedules
- *
- * Excel format (one row per shop, no header row required but ignored if present):
- *  Col A: app_shop_id
- *  Col B: Monday   schedule ("HH:MM-HH:MM" or "closed")
- *  Col C: Tuesday  schedule
- *  Col D: Wednesday schedule
- *  Col E: Thursday schedule
- *  Col F: Friday   schedule
- *  Col G: Saturday schedule
- *  Col H: Sunday   schedule
- */
 async function scheduleUpdatePermanent(ctx: HandlerContext): Promise<unknown> {
   const { brand } = ctx;
-  if (!brand)        throw new Error('Task has no brand linked');
+  if (!brand)             throw new Error('Task has no brand linked');
   if (!brand.application) throw new Error(`Brand ${brand.brandName} has no linked application`);
 
   const tempFile = ctx.field('Excel File');
-  if (!tempFile)     throw new Error('Form field "Excel File" is required');
+  if (!tempFile)          throw new Error('Form field "Excel File" is required');
 
   const filePath = join(process.cwd(), 'uploads', 'temp', tempFile);
   let shops: ShopSchedule[] = [];
@@ -137,7 +135,7 @@ async function scheduleUpdatePermanent(ctx: HandlerContext): Promise<unknown> {
   }
 
   const { appId, appSecret } = brand.application;
-  const { token, errors: authErrors } = await getAuthTokens(appId, appSecret, brand.country);
+  const { token, errors: authErrors } = await getAuthTokens(appId, appSecret);
   if (!token) throw new Error(`Auth failed: ${authErrors.join('; ')}`);
 
   logger.log(`Processing ${shops.length} shops for brand=${brand.brandName} (${brand.country})`);
@@ -149,7 +147,7 @@ async function scheduleUpdatePermanent(ctx: HandlerContext): Promise<unknown> {
 
     for (const shop of batch) {
       try {
-        await updateShopSchedule(appId, token, brand.country, shop);
+        await updateShopSchedule(token, shop);
       } catch (err) {
         const msg = (err as Error).message;
         logger.warn(`shop ${shop.appShopId}: ${msg}`);
@@ -181,12 +179,7 @@ async function scheduleUpdatePermanent(ctx: HandlerContext): Promise<unknown> {
   const ok = shops.length - failed.length;
   logger.log(`Done: ${ok} ok, ${failed.length} failed`);
 
-  return {
-    total: shops.length,
-    success: ok,
-    failed: failed.length,
-    failedShops: failed,
-  };
+  return { total: shops.length, success: ok, failed: failed.length, failedShops: failed };
 }
 
 registerHandler('schedule_update_permanent', scheduleUpdatePermanent);

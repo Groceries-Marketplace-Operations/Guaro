@@ -1,12 +1,6 @@
 import { createHash } from 'crypto';
 
-// ── Base URLs by country ──────────────────────────────────────────────────────
-// Adjust these if DiDi provides different URLs per environment/country.
-export const DIDI_BASE: Record<string, string> = {
-  MX: 'https://openapi.didi.com.mx',
-  CO: 'https://openapi.didi.com.co',
-  CR: 'https://openapi.didi.co.cr',
-};
+export const DIDI_BASE = 'https://openapi.didi-food.com';
 
 // ── Batching / throttle constants ─────────────────────────────────────────────
 export const BATCH_SIZE       = 20;    // shops per batch
@@ -86,6 +80,13 @@ export function applyBuffer(
   return result;
 }
 
+/** Convert minutes-from-midnight to "HH:MM" string. */
+export function minutesToHHMM(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 /** Normalise a JS Date or date string to "YYYY-MM-DD". */
 export function normalizeDate(d: Date | string): string {
   const date = d instanceof Date ? d : new Date(d);
@@ -97,29 +98,23 @@ export function normalizeDate(d: Date | string): string {
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-function base(country: string): string {
-  return DIDI_BASE[country] ?? DIDI_BASE['MX'];
-}
-
 /**
  * Two-step DiDi Food auth: refresh token → access token.
- * Returns the access token string.
+ * Both calls are GET with query params.
  */
 export async function getAuthToken(
   appId: string,
   appSecret: string,
-  country: string,
 ): Promise<string> {
-  const b = base(country);
   const timestamp = String(Math.floor(Date.now() / 1000));
 
-  // Step 1 — refresh
-  const refreshSign = generateSignature({ app_id: appId, timestamp }, appSecret);
-  const refreshRes = await fetch(`${b}/v1/token/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: appId, timestamp, sign: refreshSign }),
-  });
+  // Step 1 — get refresh token
+  const refreshParams: Record<string, string> = { app_id: appId, timestamp };
+  refreshParams.sign = generateSignature(refreshParams, appSecret);
+  const refreshUrl = new URL(`${DIDI_BASE}/v1/auth/authtoken/refresh`);
+  Object.entries(refreshParams).forEach(([k, v]) => refreshUrl.searchParams.set(k, v));
+
+  const refreshRes = await fetch(refreshUrl.toString());
   const refreshBody = parseJsonKeepingIds(await refreshRes.text());
   if (refreshBody.errno !== 0) {
     throw new Error(`DiDi token refresh failed: ${refreshBody.errmsg} (errno=${refreshBody.errno})`);
@@ -127,54 +122,17 @@ export async function getAuthToken(
   const refreshToken: string = refreshBody.data.refresh_token;
 
   // Step 2 — get access token
-  const getSign = generateSignature({ app_id: appId, refresh_token: refreshToken, timestamp }, appSecret);
-  const getRes = await fetch(`${b}/v1/token/get`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: appId, refresh_token: refreshToken, timestamp, sign: getSign }),
-  });
+  const getParams: Record<string, string> = { app_id: appId, refresh_token: refreshToken, timestamp };
+  getParams.sign = generateSignature(getParams, appSecret);
+  const getUrl = new URL(`${DIDI_BASE}/v1/auth/authtoken/get`);
+  Object.entries(getParams).forEach(([k, v]) => getUrl.searchParams.set(k, v));
+
+  const getRes = await fetch(getUrl.toString());
   const getBody = parseJsonKeepingIds(await getRes.text());
   if (getBody.errno !== 0) {
     throw new Error(`DiDi token get failed: ${getBody.errmsg} (errno=${getBody.errno})`);
   }
   return getBody.data.access_token as string;
-}
-
-/**
- * Fetch paginated shop list for an app.
- * Returns array of { appShopId, shopName }.
- */
-export async function getShopList(
-  appId: string,
-  token: string,
-  country: string,
-): Promise<{ appShopId: string; shopName: string }[]> {
-  const b = base(country);
-  const shops: { appShopId: string; shopName: string }[] = [];
-  let page = 1;
-
-  while (true) {
-    const timestamp = String(Math.floor(Date.now() / 1000));
-    const params: Record<string, string | number> = { app_id: appId, access_token: token, page, page_size: 50, timestamp };
-    const sign = generateSignature(params, token);
-
-    const url = new URL(`${b}/v1/shop/list`);
-    Object.entries({ ...params, sign }).forEach(([k, v]) => url.searchParams.set(k, String(v)));
-
-    const res = await fetch(url.toString());
-    const body = parseJsonKeepingIds(await res.text());
-    if (body.errno !== 0) throw new Error(`DiDi shop list failed: ${body.errmsg}`);
-
-    const items: { app_shop_id: string | number; shop_name?: string }[] = body.data?.list ?? [];
-    for (const item of items) {
-      shops.push({ appShopId: String(item.app_shop_id), shopName: item.shop_name ?? '' });
-    }
-    if (items.length < 50) break;
-    page++;
-    await sleep(COOLDOWN_PAGE_MS);
-  }
-
-  return shops;
 }
 
 /**
@@ -184,10 +142,9 @@ export async function getShopList(
 export async function getAuthTokens(
   appId: string,
   appSecret: string,
-  country: string,
 ): Promise<{ token: string; errors: string[] }> {
   try {
-    const token = await getAuthToken(appId, appSecret, country);
+    const token = await getAuthToken(appId, appSecret);
     return { token, errors: [] };
   } catch (err) {
     return { token: '', errors: [(err as Error).message] };
