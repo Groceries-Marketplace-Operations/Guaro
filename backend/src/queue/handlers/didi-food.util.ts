@@ -3,10 +3,11 @@ import { createHash } from 'crypto';
 export const DIDI_BASE = 'https://openapi.didi-food.com';
 
 // ── Batching / throttle constants ─────────────────────────────────────────────
-export const BATCH_SIZE       = 20;    // shops per batch
-export const COOLDOWN_PAGE_MS = 500;   // between pagination calls
-export const COOLDOWN_BATCH_MS = 1500; // between shop batches
-export const COOLDOWN_RETRY_MS = 2000; // before retry on transient error
+export const BATCH_SIZE          = 20;    // shops per batch
+export const COOLDOWN_PAGE_MS    = 500;   // between pagination calls
+export const COOLDOWN_BATCH_MS   = 1500;  // between shop batches
+export const COOLDOWN_RETRY_MS   = 2000;  // before retry on transient error
+export const COOLDOWN_SHOPLIST_MS = 20000; // between shop list pagination pages (DiDi rate limit)
 const BUFFER_MINUTES = 15;             // buffer added to outermost schedule edges
 
 // ── Primitives ────────────────────────────────────────────────────────────────
@@ -15,9 +16,10 @@ export function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
-/** True if the ID contains only digits (raw numeric DiDi shop ID). */
+/** True if the ID is a raw DiDi shop_id (starts with "57", exactly 19 digits). */
 export function isRawShopId(id: string): boolean {
-  return /^\d+$/.test(id.trim());
+  const s = id.toString().trim();
+  return s.startsWith('57') && s.length === 19;
 }
 
 /**
@@ -134,4 +136,52 @@ export async function getAuthToken(
     throw new Error(`DiDi token get failed: ${getBody.errmsg} (errno=${getBody.errno})`);
   }
   return getBody.data.access_token as string;
+}
+
+// ── Shop list ─────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch all shops for an app and return a map of shop_id → app_shop_id.
+ * Uses POST /v1/shop/shop/list with pagination (page_size=100).
+ * Waits COOLDOWN_SHOPLIST_MS between pages to respect DiDi's rate limit.
+ */
+export async function fetchShopIdMap(
+  appId: string,
+  appSecret: string,
+): Promise<Map<string, string>> {
+  const pageSize = 100;
+  const allShops: { shopId: string; appShopId: string }[] = [];
+  let pageNo = 1;
+
+  while (true) {
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const params: Record<string, string | number> = { app_id: appId, page_no: pageNo, page_size: pageSize, timestamp };
+    params.sign = generateSignature(params, appSecret);
+
+    const res = await fetch(`${DIDI_BASE}/v1/shop/shop/list`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+
+    const body = parseJsonKeepingIds(await res.text());
+    if (body.errno !== 0) {
+      throw new Error(`DiDi shop list failed (page ${pageNo}): ${body.errmsg} (errno=${body.errno})`);
+    }
+
+    const shops: { shop_id: string; app_shop_id: string }[] = body.data?.shop_list ?? [];
+    for (const s of shops) {
+      allShops.push({ shopId: String(s.shop_id), appShopId: String(s.app_shop_id) });
+    }
+
+    const total: number = body.data?.total ?? 0;
+    if (allShops.length >= total || shops.length < pageSize) break;
+
+    pageNo++;
+    await sleep(COOLDOWN_SHOPLIST_MS);
+  }
+
+  const map = new Map<string, string>();
+  for (const s of allShops) map.set(s.shopId, s.appShopId);
+  return map;
 }

@@ -6,7 +6,8 @@ import { registerHandler, HandlerContext } from '../handler.processor';
 import {
   DIDI_BASE, BATCH_SIZE, COOLDOWN_BATCH_MS,
   sleep, parseJsonKeepingIds,
-  isClosed, parseScheduleString, minutesToHHMM, normalizeDate, getAuthToken,
+  isClosed, parseScheduleString, minutesToHHMM, normalizeDate,
+  isRawShopId, fetchShopIdMap, getAuthToken,
 } from './didi-food.util';
 
 const logger = new Logger('schedule_update_dates');
@@ -145,6 +146,32 @@ async function scheduleUpdateDates(ctx: HandlerContext): Promise<unknown> {
   }
 
   const { appId, appSecret } = brand.application;
+
+  // If column A contains raw shop_ids (starts with "57", 19 digits), map them to app_shop_ids
+  if (shops.length > 0 && isRawShopId(shops[0].appShopId)) {
+    logger.log('Detected raw shop_ids — fetching shop list from DiDi to resolve app_shop_ids...');
+    const shopIdMap = await fetchShopIdMap(appId, appSecret);
+    const unmapped: string[] = [];
+    for (const shop of shops) {
+      const mapped = shopIdMap.get(shop.appShopId);
+      if (mapped) {
+        shop.appShopId = mapped;
+      } else {
+        unmapped.push(shop.appShopId);
+      }
+    }
+    if (unmapped.length > 0) {
+      logger.warn(`${unmapped.length} shop_ids not found in DiDi shop list: ${unmapped.join(', ')}`);
+      unmapped.forEach(id => ctx.addNote(`✗ shop_id ${id}: not found in DiDi shop list`));
+    }
+    const before = shops.length;
+    shops = shops.filter(s => !isRawShopId(s.appShopId));
+    logger.log(`Mapped ${shops.length}/${before} shops successfully`);
+    if (shops.length === 0) {
+      await unlink(filePath).catch(() => undefined);
+      throw new Error('No shops could be mapped from shop_id to app_shop_id');
+    }
+  }
 
   logger.log(`Processing ${shops.length} shops (date overrides) for brand=${brand.brandName} (${brand.country})`);
 
