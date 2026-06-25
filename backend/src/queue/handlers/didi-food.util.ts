@@ -165,6 +165,11 @@ export async function fetchShopIdMap(
     });
 
     const body = parseJsonKeepingIds(await res.text());
+    if (body.errno === 10005) {
+      // Rate limit: 1 call per 20 s window — wait and retry this page once
+      await sleep(COOLDOWN_SHOPLIST_MS);
+      continue;
+    }
     if (body.errno !== 0) {
       throw new Error(`DiDi shop list failed (page ${pageNo}): ${body.errmsg} (errno=${body.errno})`);
     }
