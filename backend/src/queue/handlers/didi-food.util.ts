@@ -78,7 +78,7 @@ export function applyBuffer(
   if (ranges.length === 0) return ranges;
   const result = ranges.map(r => ({ ...r }));
   result[0].begin = Math.max(0, result[0].begin - bufferMins);
-  result[result.length - 1].end = Math.min(24 * 60, result[result.length - 1].end + bufferMins);
+  result[result.length - 1].end = Math.min(23 * 60 + 59, result[result.length - 1].end + bufferMins);
   return result;
 }
 
