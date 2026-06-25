@@ -4,6 +4,7 @@ import { Job } from 'bullmq';
 import { StepFailureReason } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from '../tasks/task-engine.service';
+import { WebhookSenderService, WebhookPayload } from '../webhooks/webhook-sender.service';
 import { ConfigService } from '@nestjs/config';
 import { decrypt } from '../common/crypto.util';
 
@@ -49,6 +50,10 @@ export interface HandlerContext {
   } | null;
   /** Helper: get a form value by its field label */
   field(label: string): string | null;
+  /** Accumulate a line in the step note (shown in UI after completion/failure) */
+  addNote(text: string): void;
+  /** Send a message to all alert webhooks */
+  sendAlert(payload: WebhookPayload): Promise<void>;
 }
 
 // ── Handler function type ─────────────────────────────────────────────────────
@@ -73,6 +78,7 @@ export class HandlerProcessor extends WorkerHost {
     private engine: TaskEngineService,
     private prisma: PrismaService,
     private config: ConfigService,
+    private webhooks: WebhookSenderService,
   ) {
     super();
   }
@@ -88,16 +94,19 @@ export class HandlerProcessor extends WorkerHost {
       return;
     }
 
-    const ctx = await this.buildContext(stepInstanceId, taskId);
+    const noteLines: string[] = [];
+    const ctx = await this.buildContext(stepInstanceId, taskId, noteLines);
 
     try {
       const result = await fn(ctx);
-      await this.engine.completeStep(stepInstanceId, result);
+      const note = noteLines.length ? noteLines.join('\n') : undefined;
+      await this.engine.completeStep(stepInstanceId, result, note);
     } catch (err) {
       const msg = (err as Error).message;
       this.logger.error(`Handler [${handlerName}] failed: ${msg}`);
       if (job.attemptsMade >= (job.opts.attempts ?? 1) - 1) {
-        await this.engine.failStep(stepInstanceId, StepFailureReason.error_handler, msg);
+        const note = noteLines.length ? `${msg}\n${noteLines.join('\n')}` : msg;
+        await this.engine.failStep(stepInstanceId, StepFailureReason.error_handler, note);
       }
       throw err;
     }
@@ -105,7 +114,7 @@ export class HandlerProcessor extends WorkerHost {
 
   // ── Context builder ───────────────────────────────────────────────────────
 
-  private async buildContext(stepInstanceId: string, taskId: string): Promise<HandlerContext> {
+  private async buildContext(stepInstanceId: string, taskId: string, noteLines: string[]): Promise<HandlerContext> {
     const encKey = this.config.get<string>('APP_SECRET_ENCRYPTION_KEY') ?? '';
 
     const task = await this.prisma.task.findUnique({
@@ -160,6 +169,8 @@ export class HandlerProcessor extends WorkerHost {
       formValues,
       brand,
       field: (label) => formValues.find((f) => f.label === label)?.valor ?? null,
+      addNote: (text: string) => { noteLines.push(text); },
+      sendAlert: (payload: WebhookPayload) => this.webhooks.sendAlert(payload),
     };
   }
 }

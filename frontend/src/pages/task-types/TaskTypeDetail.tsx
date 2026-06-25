@@ -40,7 +40,7 @@ const FILE_TIPOS = ['xlsx', 'csv', 'docx', 'pdf'];
 const FILE_ACCEPT = '.xlsx,.csv,.docx,.pdf';
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 const WH_EVENTS: WebhookEvent[] = ['on_assignment', 'on_start', 'on_complete', 'on_fail', 'on_blocked'];
-const FIELD_TYPES = ['texto', 'numero', 'link', 'link_spreadsheet', 'select', 'select_brand', 'select_store', 'select_ka_type', 'select_country'];
+const FIELD_TYPES = ['texto', 'numero', 'link', 'link_spreadsheet', 'select', 'select_brand', 'select_store', 'select_ka_type', 'select_country', 'file'];
 
 function execLabel(et: ExecutionType) {
   return et === 'manual_internal' ? 'Manual Internal' : et === 'manual_external' ? 'Manual External' : 'Automatic';

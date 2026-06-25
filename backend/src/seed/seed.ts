@@ -50,6 +50,8 @@ async function main() {
     'enable_shop_online',
     'notify_integration_complete',
     'debug_echo',
+    'schedule_update_permanent',
+    'schedule_update_dates',
   ];
   for (const name of handlerNames) {
     await prisma.handler.upsert({ where: { name }, update: {}, create: { name } });

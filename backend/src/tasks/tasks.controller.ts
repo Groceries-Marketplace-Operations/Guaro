@@ -1,4 +1,8 @@
-import { Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { randomUUID } from 'crypto';
 import { AccountRole, TaskStatus } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
@@ -94,5 +98,23 @@ export class TasksController {
     @Body('accountId') accountId: string,
   ) {
     return this.taskEngine.assignStepManually(stepId, accountId);
+  }
+
+  @Post('upload-excel')
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  @UseInterceptors(FileInterceptor('file', {
+    storage: diskStorage({
+      destination: join(process.cwd(), 'uploads', 'temp'),
+      filename: (_, file, cb) => cb(null, `${randomUUID()}${extname(file.originalname)}`),
+    }),
+    fileFilter: (_, file, cb) => {
+      const ok = /\.(xlsx|xls)$/i.test(file.originalname);
+      cb(ok ? null : new BadRequestException('Only .xlsx and .xls files are allowed'), ok);
+    },
+    limits: { fileSize: 5 * 1024 * 1024 },
+  }))
+  uploadExcel(@UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No file uploaded');
+    return { tempPath: file.filename, originalName: file.originalname };
   }
 }

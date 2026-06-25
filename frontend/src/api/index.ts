@@ -118,6 +118,10 @@ export const tasksApi = {
     client.patch(`/tasks/${taskId}/steps/${stepId}/start`),
   assignStep: (taskId: string, stepId: string, accountId: string) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/assign`, { accountId }),
+  uploadExcel: (formData: FormData) =>
+    client.post<{ tempPath: string; originalName: string }>('/tasks/upload-excel', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
 };
 
 /* ── BPO Management ─────────────────────────────────────────── */

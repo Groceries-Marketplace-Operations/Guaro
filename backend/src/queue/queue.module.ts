@@ -8,6 +8,7 @@ import { TaskEngineService } from '../tasks/task-engine.service';
 import { HandlerProcessor } from './handler.processor';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
+import { WebhooksModule } from '../webhooks/webhooks.module';
 
 // Register all concrete handler implementations
 import './handlers/index';
@@ -34,6 +35,7 @@ import './handlers/index';
     TasksModule,
     PrismaModule,
     ConfigModule,
+    WebhooksModule,
   ],
   providers: [HandlerProcessor],
 })

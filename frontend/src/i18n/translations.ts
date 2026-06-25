@@ -435,6 +435,10 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.newTask.selectStore': 'Select store…',
     'pages.newTask.selectKaType': 'Select KA Type…',
     'pages.newTask.selectCountry': 'Select Country…',
+    'pages.newTask.chooseExcel': 'Click to choose an Excel file (.xlsx / .xls)',
+    'pages.newTask.uploading': 'Uploading…',
+    'pages.newTask.excelHint': 'Upload an .xlsx or .xls file. Max 5 MB.',
+    'pages.newTask.fileUploadError': 'Failed to upload file. Please try again.',
 
     // ── Task Types List ──────────────────────────────────────────────────────
     'pages.taskTypesList.title': 'Task Types',
@@ -1117,6 +1121,10 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.newTask.selectStore': 'Selecciona tienda…',
     'pages.newTask.selectKaType': 'Selecciona tipo KA…',
     'pages.newTask.selectCountry': 'Selecciona país…',
+    'pages.newTask.chooseExcel': 'Haz clic para elegir un archivo Excel (.xlsx / .xls)',
+    'pages.newTask.uploading': 'Subiendo…',
+    'pages.newTask.excelHint': 'Sube un archivo .xlsx o .xls. Máx. 5 MB.',
+    'pages.newTask.fileUploadError': 'Error al subir el archivo. Intenta de nuevo.',
 
     // ── Task Types List ──────────────────────────────────────────────────────
     'pages.taskTypesList.title': 'Tipos de tarea',

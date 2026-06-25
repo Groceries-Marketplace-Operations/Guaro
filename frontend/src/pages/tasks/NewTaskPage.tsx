@@ -129,7 +129,8 @@ function BrandCombobox({ brands, value, onChange, placeholder = 'Search brand…
   );
 }
 
-type FieldValue = string | string[];
+type FileFieldValue = { name: string; tempPath: string };
+type FieldValue = string | string[] | FileFieldValue;
 
 export default function NewTaskPage() {
   const nav = useNavigate();
@@ -141,6 +142,8 @@ export default function NewTaskPage() {
   const [scheduledStart, setScheduledStart] = useState('');
   const [formValues, setFormValues] = useState<Record<string, FieldValue>>({});
   const [urlErrors, setUrlErrors] = useState<Record<string, string>>({});
+  const [fileUploading, setFileUploading] = useState<Record<string, boolean>>({});
+  const [fileUploadErrors, setFileUploadErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -268,6 +271,9 @@ export default function NewTaskPage() {
           if (val) fvPayload.push({ formFieldId: f.id, brandId: val as string });
         } else if (f.tipo === 'select_store') {
           if (val) fvPayload.push({ formFieldId: f.id, shopId: val as string });
+        } else if (f.tipo === 'file') {
+          const fv = val as FileFieldValue | undefined;
+          if (fv?.tempPath) fvPayload.push({ formFieldId: f.id, value: fv.tempPath });
         } else if (f.multiple && Array.isArray(val)) {
           for (const v of val) {
             if (v) fvPayload.push({ formFieldId: f.id, value: v });
@@ -291,6 +297,22 @@ export default function NewTaskPage() {
       setErr(errMsg(ex));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleFileUpload = async (fieldId: string, file: File) => {
+    setFileUploading(p => ({ ...p, [fieldId]: true }));
+    setFileUploadErrors(p => { const n = { ...p }; delete n[fieldId]; return n; });
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await tasksApi.uploadExcel(fd);
+      const { tempPath, originalName } = res.data;
+      setField(fieldId, { name: originalName, tempPath } as FileFieldValue);
+    } catch {
+      setFileUploadErrors(p => ({ ...p, [fieldId]: t('pages.newTask.fileUploadError') }));
+    } finally {
+      setFileUploading(p => ({ ...p, [fieldId]: false }));
     }
   };
 
@@ -431,11 +453,41 @@ export default function NewTaskPage() {
       );
     }
 
+    if (f.tipo === 'file') {
+      const fileVal = val as FileFieldValue | undefined;
+      const uploading = fileUploading[f.id] ?? false;
+      return (
+        <div className="form-group" key={f.id}>
+          {label}
+          <p className="form-hint" style={{ marginBottom: 6 }}>{t('pages.newTask.excelHint')}</p>
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            disabled={uploading}
+            style={{ fontSize: '0.84rem' }}
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (file) handleFileUpload(f.id, file);
+              e.target.value = '';
+            }}
+          />
+          {uploading && <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 4 }}>{t('pages.newTask.uploading')}</p>}
+          {fileVal?.name && !uploading && (
+            <p style={{ fontSize: '0.78rem', color: 'var(--green)', marginTop: 4 }}>✓ {fileVal.name}</p>
+          )}
+          {fileUploadErrors[f.id] && (
+            <p style={{ fontSize: '0.78rem', color: 'var(--red)', marginTop: 4 }}>{fileUploadErrors[f.id]}</p>
+          )}
+        </div>
+      );
+    }
+
     return null;
   };
 
   const missingRequired = fields.filter(f => f.required).some(f => {
     const val = formValues[f.id];
+    if (f.tipo === 'file') return !(val as FileFieldValue | undefined)?.tempPath;
     if (f.multiple) return !Array.isArray(val) || val.length === 0;
     return !val;
   });
