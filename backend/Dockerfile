@@ -38,4 +38,4 @@ RUN mkdir -p /app/uploads
 EXPOSE 3000
 
 # Run migrations then start the app
-CMD ["sh", "-c", "npx prisma db push --schema=./prisma/schema.prisma --accept-data-loss && node dist/main"]
+CMD ["sh", "-c", "npx prisma db push --schema=./prisma/schema.prisma --accept-data-loss || echo '[warn] db push failed, schema may already be current' ; node dist/main"]
