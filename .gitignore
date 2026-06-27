@@ -28,6 +28,13 @@ lerna-debug.log*
 .temp
 .tmp
 
+# Uploaded files (runtime data, not source)
+/backend/uploads/*
+!/backend/uploads/.gitkeep
+!/backend/uploads/temp/
+/backend/uploads/temp/*
+!/backend/uploads/temp/.gitkeep
+
 # AI
 CLAUDE.md
 /.claude
