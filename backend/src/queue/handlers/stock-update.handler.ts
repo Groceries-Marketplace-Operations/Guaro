@@ -37,7 +37,7 @@ async function readExcel(filePath: string): Promise<ShopStock[]> {
   const sheet = workbook.worksheets[0];
   const shopMap = new Map<string, StockItem[]>();
 
-  sheet.eachRow((row, rowNum) => {
+  sheet.eachRow((row: ExcelJS.Row, rowNum: number) => {
     if (rowNum === 1) return;
     const shopId = String(row.getCell(1).value ?? '').trim();
     const upc    = String(row.getCell(2).value ?? '').trim();

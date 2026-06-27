@@ -63,7 +63,7 @@ async function readExcel(filePath: string): Promise<ShopMenu[]> {
   const sheet = workbook.worksheets[0];
   const shopMap = new Map<string, MenuItem[]>();
 
-  sheet.eachRow((row, rowNum) => {
+  sheet.eachRow((row: ExcelJS.Row, rowNum: number) => {
     if (rowNum === 1) return;
     const shopId = String(row.getCell(1).value ?? '').trim();
     const upc    = String(row.getCell(2).value ?? '').trim();
@@ -224,4 +224,4 @@ async function menuUpload(ctx: HandlerContext): Promise<unknown> {
   return { total: shops.length, success: ok, failed: failed.length, successfulShops: successful, failedShops: failed };
 }
 
-registerHandler('menu_upload', menuUpload);
+registerHandler('library_menu_upload', menuUpload);

@@ -52,7 +52,7 @@ async function main() {
     'debug_echo',
     'schedule_update_permanent',
     'schedule_update_dates',
-    'menu_upload',
+    'library_menu_upload',
     'stock_update',
   ];
   for (const name of handlerNames) {

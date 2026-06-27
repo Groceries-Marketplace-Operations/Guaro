@@ -42,7 +42,7 @@ async function readExcel(filePath: string): Promise<ShopDateSchedule[]> {
   const sheet = workbook.worksheets[0];
   const rows: ShopDateSchedule[] = [];
 
-  sheet.eachRow((row, rowNum) => {
+  sheet.eachRow((row: ExcelJS.Row, rowNum: number) => {
     if (rowNum === 1) return;
     const shopId = String(row.getCell(1).value ?? '').trim();
     if (!shopId) return;
