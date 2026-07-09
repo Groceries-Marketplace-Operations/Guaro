@@ -31,13 +31,14 @@ type Tab = 'assignment' | 'catalog';
 const CATEGORY_LABELS: Record<string, string> = {
   country: 'Countries',
   ka_type: 'KA Types',
+  biz_category: 'Business Category',
   menu_integration: 'Menu Integration',
   picking_mode: 'Picking Mode',
   payment_mode: 'Payment Mode',
   shop_status: 'Shop Status',
 };
 
-const CATEGORY_ORDER = ['country', 'ka_type', 'menu_integration', 'picking_mode', 'payment_mode', 'shop_status'];
+const CATEGORY_ORDER = ['country', 'ka_type', 'biz_category', 'menu_integration', 'picking_mode', 'payment_mode', 'shop_status'];
 
 export default function SettingsPage() {
   const { account } = useAuth();

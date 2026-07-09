@@ -70,9 +70,10 @@ enum FormFieldTipo {
   select
   select_brand
   select_store
-  select_ka_type   // dropdown populated from AppConfig category=ka_type
-  select_country   // dropdown populated from AppConfig category=country
-  file             // Excel upload (.xlsx/.xls); stored as temp filename, deleted after handler runs
+  select_ka_type      // dropdown populated from AppConfig category=ka_type
+  select_country      // dropdown populated from AppConfig category=country
+  select_biz_category // dropdown populated from AppConfig category=biz_category
+  file                // Excel upload (.xlsx/.xls); stored as temp filename, deleted after handler runs
 }
 
 enum WebhookEvent {

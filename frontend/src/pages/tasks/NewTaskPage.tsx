@@ -166,8 +166,9 @@ export default function NewTaskPage() {
 
   const hasBrandField   = fields.some(f => f.tipo === 'select_brand');
   const hasStoreField   = fields.some(f => f.tipo === 'select_store');
-  const hasKaTypeField  = fields.some(f => f.tipo === 'select_ka_type');
-  const hasCountryField = fields.some(f => f.tipo === 'select_country');
+  const hasKaTypeField      = fields.some(f => f.tipo === 'select_ka_type');
+  const hasCountryField     = fields.some(f => f.tipo === 'select_country');
+  const hasBizCatField      = fields.some(f => f.tipo === 'select_biz_category');
 
   const selectedBrandIds: Record<string, string> = useMemo(() => {
     const result: Record<string, string> = {};
@@ -200,7 +201,7 @@ export default function NewTaskPage() {
       const raw = r.data as Record<string, { value: string; label: string; active: boolean }[]>;
       return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v.filter(o => o.active)]));
     }),
-    enabled: hasKaTypeField || hasCountryField,
+    enabled: hasKaTypeField || hasCountryField || hasBizCatField,
   });
 
   const bySection = useMemo(() => {
@@ -426,6 +427,19 @@ export default function NewTaskPage() {
           {label}
           <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)}>
             <option value="">{t('pages.newTask.selectCountry')}</option>
+            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+      );
+    }
+
+    if (f.tipo === 'select_biz_category') {
+      const options = appConfig['biz_category'] ?? [];
+      return (
+        <div className="form-group" key={f.id}>
+          {label}
+          <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)}>
+            <option value="">{t('pages.newTask.selectBizCategory')}</option>
             {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>

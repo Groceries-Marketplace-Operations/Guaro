@@ -40,7 +40,7 @@ const FILE_TIPOS = ['xlsx', 'csv', 'docx', 'pdf'];
 const FILE_ACCEPT = '.xlsx,.csv,.docx,.pdf';
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 const WH_EVENTS: WebhookEvent[] = ['on_assignment', 'on_start', 'on_complete', 'on_fail', 'on_blocked'];
-const FIELD_TYPES = ['texto', 'numero', 'link', 'link_spreadsheet', 'select', 'select_brand', 'select_store', 'select_ka_type', 'select_country', 'file'];
+const FIELD_TYPES = ['texto', 'numero', 'link', 'link_spreadsheet', 'select', 'select_brand', 'select_store', 'select_ka_type', 'select_country', 'select_biz_category', 'file'];
 
 function execLabel(et: ExecutionType) {
   return et === 'manual_internal' ? 'Manual Internal' : et === 'manual_external' ? 'Manual External' : 'Automatic';
@@ -957,9 +957,11 @@ export default function TaskTypeDetail() {
             </div>
           )}
 
-          {(fieldForm.type === 'select_ka_type' || fieldForm.type === 'select_country') && (
+          {(fieldForm.type === 'select_ka_type' || fieldForm.type === 'select_country' || fieldForm.type === 'select_biz_category') && (
             <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--orange-muted)', border: '1px solid var(--orange)', fontSize: '0.78rem', color: 'var(--orange)' }}>
-              <strong>{fieldForm.type === 'select_ka_type' ? 'KA Type' : 'Country'} catalog</strong> — dropdown populated from the active values in Settings → Catalog. Required for <em>brand_assignment</em> strategy to work.
+              <strong>
+                {fieldForm.type === 'select_ka_type' ? 'KA Type' : fieldForm.type === 'select_country' ? 'Country' : 'Business Category'} catalog
+              </strong> — dropdown populated from the active values in Settings → Catalog.
             </div>
           )}
         </Modal>

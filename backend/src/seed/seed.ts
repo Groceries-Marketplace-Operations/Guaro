@@ -127,6 +127,19 @@ async function main() {
     { category: 'shop_status',      value: 'application',             label: 'Application',              order: 1 },
     { category: 'shop_status',      value: 'integrated',              label: 'Integrated',               order: 2 },
     { category: 'shop_status',      value: 'online',                  label: 'Online',                   order: 3 },
+    { category: 'biz_category',    value: 'Market',                  label: 'Market',                   order: 0 },
+    { category: 'biz_category',    value: 'Express',                 label: 'Express',                  order: 1 },
+    { category: 'biz_category',    value: 'Pet',                     label: 'Pet',                      order: 2 },
+    { category: 'biz_category',    value: 'Alcohol',                 label: 'Alcohol',                  order: 3 },
+    { category: 'biz_category',    value: 'Baby',                    label: 'Baby',                     order: 4 },
+    { category: 'biz_category',    value: 'Sports and Fitness',      label: 'Sports and Fitness',       order: 5 },
+    { category: 'biz_category',    value: 'Electronics',             label: 'Electronics',              order: 6 },
+    { category: 'biz_category',    value: 'Sexual Health',           label: 'Sexual Health',            order: 7 },
+    { category: 'biz_category',    value: 'Pharmacy',                label: 'Pharmacy',                 order: 8 },
+    { category: 'biz_category',    value: 'Stores',                  label: 'Stores',                   order: 9 },
+    { category: 'biz_category',    value: 'Personal Care',           label: 'Personal Care',            order: 10 },
+    { category: 'biz_category',    value: 'Flowers',                 label: 'Flowers',                  order: 11 },
+    { category: 'biz_category',    value: 'Office Supplies',         label: 'Office Supplies',          order: 12 },
   ];
   for (const opt of configOptions) {
     await prisma.appConfigOption.upsert({
