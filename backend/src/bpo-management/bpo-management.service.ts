@@ -80,7 +80,7 @@ export class BpoManagementService {
   // ── Available filter options (years / months / weeks with real data) ─────
 
   async filterOptions(roles: AccountRole[], sectionId: string | null, year?: number) {
-    const sectionFilter = roles.includes(AccountRole.super_admin) ? '' : `AND t.section_id = '${sectionId}'`;
+    const sectionFilter = roles.includes(AccountRole.super_admin) ? '' : `AND tt.section_id = '${sectionId}'`;
 
     if (!year) {
       const rows = await this.prisma.$queryRaw<{ y: number }[]>`
