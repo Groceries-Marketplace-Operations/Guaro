@@ -243,6 +243,7 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
 .s-done        { background: var(--green-bg); color: #027A48; }
 .s-failed      { background: var(--red-bg); color: #B42318; }
 .s-blocked     { background: var(--purple-bg); color: var(--purple); }
+.s-cancelled   { background: #F0F0F0; color: var(--text-muted); }
 .s-lead        { background: #F0F0F0; color: var(--text-secondary); }
 .s-application { background: var(--blue-bg); color: var(--blue); }
 .s-integrated  { background: var(--amber-bg); color: #B54708; }

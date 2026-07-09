@@ -79,6 +79,7 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'status.done': 'Done',
     'status.failed': 'Failed',
     'status.blocked': 'Blocked',
+    'status.cancelled': 'Cancelled',
     'status.lead': 'Lead',
     'status.application': 'Application',
     'status.integrated': 'Integrated',
@@ -539,6 +540,11 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.taskTypeDetail.ttDescLabel': 'Description',
     'pages.taskTypeDetail.ttSchedulableCheck': 'Schedulable — users can set a start/end window when creating a task',
     'pages.taskTypeDetail.deleteConfirm': 'Delete "{name}"? This cannot be undone. Existing tasks of this type will not be affected.',
+    'pages.taskTypeDetail.btnDuplicate': 'Duplicate',
+    'pages.taskTypeDetail.btnDuplicating': 'Duplicating…',
+    'pages.taskTypeDetail.bpoCountLabel': 'BPOs per step',
+    'pages.taskTypeDetail.bpoCountHint': 'One BPO per step (normal behavior).',
+    'pages.taskTypeDetail.bpoCountHintMultiple': '{n} parallel instances will be created. The first to complete / fail / block wins.',
 
     // ── BPO Queue ────────────────────────────────────────────────────────────
     'pages.bpoQueue.title': 'My Queue',
@@ -765,6 +771,7 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'status.done': 'Completada',
     'status.failed': 'Fallida',
     'status.blocked': 'Bloqueada',
+    'status.cancelled': 'Cancelada',
     'status.lead': 'Lead',
     'status.application': 'Aplicación',
     'status.integrated': 'Integrada',
@@ -1225,6 +1232,11 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.taskTypeDetail.ttDescLabel': 'Descripción',
     'pages.taskTypeDetail.ttSchedulableCheck': 'Programable — los usuarios pueden definir una ventana de inicio/fin al crear una tarea',
     'pages.taskTypeDetail.deleteConfirm': '¿Eliminar "{name}"? Esta acción no se puede deshacer. Las tareas existentes de este tipo no se verán afectadas.',
+    'pages.taskTypeDetail.btnDuplicate': 'Duplicar',
+    'pages.taskTypeDetail.btnDuplicating': 'Duplicando…',
+    'pages.taskTypeDetail.bpoCountLabel': 'BPOs por step',
+    'pages.taskTypeDetail.bpoCountHint': 'Un BPO por step (comportamiento normal).',
+    'pages.taskTypeDetail.bpoCountHintMultiple': 'Se crearán {n} instancias en paralelo. La primera en completar / fallar / bloquear gana.',
 
     // ── BPO Queue ────────────────────────────────────────────────────────────
     'pages.bpoQueue.title': 'Mi cola',

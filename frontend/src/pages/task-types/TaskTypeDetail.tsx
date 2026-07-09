@@ -414,7 +414,7 @@ export default function TaskTypeDetail() {
               {tt.active ? t('pages.taskTypeDetail.btnHide') : t('pages.taskTypeDetail.btnShow')}
             </button>
             <button className="btn btn-ghost btn-sm" onClick={copyTaskType} disabled={copying}>
-              {copying ? 'Copying…' : 'Duplicate'}
+              {copying ? t('pages.taskTypeDetail.btnDuplicating') : t('pages.taskTypeDetail.btnDuplicate')}
             </button>
             <button className="btn btn-ghost btn-sm" onClick={openEditTaskType}>
               <EditIcon /> {t('pages.taskTypeDetail.btnEdit')}
@@ -775,7 +775,7 @@ export default function TaskTypeDetail() {
           )}
           {(stepForm.assignmentStrategy === 'fixed' || stepForm.assignmentStrategy === 'manual') && stepForm.executionType !== 'automatic' && (
             <div className="form-group">
-              <label className="form-label">BPOs por step</label>
+              <label className="form-label">{t('pages.taskTypeDetail.bpoCountLabel')}</label>
               <input
                 className="form-input"
                 type="number"
@@ -787,8 +787,8 @@ export default function TaskTypeDetail() {
               />
               <p className="form-hint">
                 {stepForm.bpoCount > 1
-                  ? `Se crearán ${stepForm.bpoCount} instancias en paralelo. La primera en completar/fallar/bloquear gana.`
-                  : 'Un BPO por step (comportamiento normal).'}
+                  ? t('pages.taskTypeDetail.bpoCountHintMultiple').replace('{n}', String(stepForm.bpoCount))
+                  : t('pages.taskTypeDetail.bpoCountHint')}
               </p>
             </div>
           )}
