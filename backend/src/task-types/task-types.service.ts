@@ -122,6 +122,85 @@ export class TaskTypesService {
     });
   }
 
+  async copyTaskType(id: string, roles: AccountRole[], sectionId: string | null) {
+    const source = await this.findOne(id);
+    this.assertAdminOfSection(roles, sectionId, source.sectionId);
+
+    return this.prisma.$transaction(async (tx) => {
+      const newTT = await tx.taskType.create({
+        data: {
+          sectionId: source.sectionId,
+          name: `${source.name} (copy)`,
+          descripcion: (source as any).descripcion ?? null,
+          schedulable: source.schedulable,
+          active: false,
+        },
+      });
+
+      for (const field of source.formFields ?? []) {
+        await tx.formField.create({
+          data: {
+            taskTypeId: newTT.id,
+            label: field.label,
+            tipo: field.tipo as any,
+            required: field.required,
+            multiple: field.multiple ?? false,
+            options: field.options as any ?? undefined,
+            order: field.order,
+          },
+        });
+      }
+
+      for (const step of source.stepDefinitions ?? []) {
+        const newStep = await tx.stepDefinition.create({
+          data: {
+            taskTypeId: newTT.id,
+            name: step.name,
+            order: step.order,
+            executionType: step.executionType,
+            action: (step as any).action ?? null,
+            assignmentStrategy: step.assignmentStrategy,
+            weight: (step as any).weight ?? 1,
+            handlerId: step.handlerId ?? null,
+            bpoCount: (step as any).bpoCount ?? 1,
+          },
+        });
+
+        if (step.candidates?.length) {
+          await tx.stepDefinitionAccount.createMany({
+            data: step.candidates.map(c => ({
+              stepDefinitionId: newStep.id,
+              accountId: c.account.id,
+            })),
+          });
+        }
+
+        for (const sw of step.stepWebhooks ?? []) {
+          await tx.stepWebhook.create({
+            data: {
+              stepDefinitionId: newStep.id,
+              webhookId: sw.webhookId,
+              events: sw.events,
+            },
+          });
+        }
+      }
+
+      for (const tmpl of source.templates ?? []) {
+        await tx.taskTypeTemplate.create({
+          data: {
+            taskTypeId: newTT.id,
+            name: tmpl.name,
+            url: tmpl.url,
+            tipo: tmpl.tipo,
+          },
+        });
+      }
+
+      return tx.taskType.findUnique({ where: { id: newTT.id }, include: TASK_TYPE_INCLUDE });
+    });
+  }
+
   // ── StepDefinition ────────────────────────────────────────────────────────
 
   async createStep(taskTypeId: string, dto: CreateStepDto, roles: AccountRole[], sectionId: string | null) {

@@ -59,7 +59,7 @@ function errMsg(ex: unknown) {
   return Array.isArray(msg) ? msg.join(', ') : (msg ?? 'Unexpected error');
 }
 
-const EMPTY_STEP_FORM = { name: '', order: 1, executionType: 'manual_internal' as ExecutionType, assignmentStrategy: 'round_robin' as AssignmentStrategy, handlerId: '' };
+const EMPTY_STEP_FORM = { name: '', order: 1, executionType: 'manual_internal' as ExecutionType, assignmentStrategy: 'round_robin' as AssignmentStrategy, handlerId: '', bpoCount: 1 };
 const EMPTY_FIELD_FORM = { label: '', type: 'texto', required: true, multiple: false, order: 1, options: [] as string[], filteredById: '' };
 
 export default function TaskTypeDetail() {
@@ -83,6 +83,7 @@ export default function TaskTypeDetail() {
   const [openBpos, setOpenBpos] = useState<StepDefinition | null>(null);
 
   const [saving, setSaving] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [err, setErr] = useState('');
 
   // Edit task type header
@@ -102,6 +103,17 @@ export default function TaskTypeDetail() {
       qc.invalidateQueries({ queryKey: ['task-types'] });
       nav('/task-types', { replace: true });
     } catch { /* backend returns 403 if not in section */ }
+  };
+
+  const copyTaskType = async () => {
+    if (!tt) return;
+    setCopying(true);
+    try {
+      const res = await taskTypesApi.copy(id!);
+      qc.invalidateQueries({ queryKey: ['task-types'] });
+      nav(`/task-types/${res.data.id}`);
+    } catch { /* silently ignore */ }
+    finally { setCopying(false); }
   };
 
   const saveTaskType = async (e: React.FormEvent) => {
@@ -172,6 +184,7 @@ export default function TaskTypeDetail() {
       executionType: s.executionType,
       assignmentStrategy: s.assignmentStrategy,
       handlerId: s.handlerId ?? '',
+      bpoCount: s.bpoCount ?? 1,
     });
     setErr('');
     setOpenStep(true);
@@ -185,7 +198,12 @@ export default function TaskTypeDetail() {
   const saveStep = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
     try {
-      const payload = { ...stepForm, handlerId: stepForm.handlerId || undefined };
+      const useBpoCount = stepForm.assignmentStrategy === 'fixed' || stepForm.assignmentStrategy === 'manual';
+      const payload = {
+        ...stepForm,
+        handlerId: stepForm.handlerId || undefined,
+        bpoCount: useBpoCount ? stepForm.bpoCount : undefined,
+      };
       if (stepToEdit) {
         await taskTypesApi.updateStep(id!, stepToEdit.id, payload);
       } else {
@@ -395,6 +413,9 @@ export default function TaskTypeDetail() {
             >
               {tt.active ? t('pages.taskTypeDetail.btnHide') : t('pages.taskTypeDetail.btnShow')}
             </button>
+            <button className="btn btn-ghost btn-sm" onClick={copyTaskType} disabled={copying}>
+              {copying ? 'Copying…' : 'Duplicate'}
+            </button>
             <button className="btn btn-ghost btn-sm" onClick={openEditTaskType}>
               <EditIcon /> {t('pages.taskTypeDetail.btnEdit')}
             </button>
@@ -461,6 +482,7 @@ export default function TaskTypeDetail() {
                           <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
                             <span style={{ ...col, fontSize: '0.68rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999 }}>{execLabel(s.executionType)}</span>
                             <span style={{ fontSize: '0.68rem', fontWeight: 600, padding: '1px 7px', borderRadius: 999, background: '#F0F0F0', color: 'var(--text-secondary)' }}>{s.assignmentStrategy}</span>
+                            {(s.bpoCount ?? 1) > 1 && <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue)' }}>×{s.bpoCount} BPOs</span>}
                             {s.handler && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{s.handler.name}</span>}
                           </div>
                           {isManual && (s.candidates?.length ?? 0) > 0 && (
@@ -748,6 +770,25 @@ export default function TaskTypeDetail() {
                 {stepForm.assignmentStrategy === 'by_weight' ? t('pages.taskTypeDetail.strategyByWeight') : ''}
                 {stepForm.assignmentStrategy === 'manual' ? t('pages.taskTypeDetail.strategyManual') : ''}
                 {stepForm.assignmentStrategy !== 'brand_assignment' && stepForm.assignmentStrategy !== 'manual' && !stepToEdit && t('pages.taskTypeDetail.strategyAddNote')}
+              </p>
+            </div>
+          )}
+          {(stepForm.assignmentStrategy === 'fixed' || stepForm.assignmentStrategy === 'manual') && stepForm.executionType !== 'automatic' && (
+            <div className="form-group">
+              <label className="form-label">BPOs por step</label>
+              <input
+                className="form-input"
+                type="number"
+                min={1}
+                max={10}
+                value={stepForm.bpoCount}
+                onChange={e => setStepForm(f => ({ ...f, bpoCount: Math.max(1, parseInt(e.target.value) || 1) }))}
+                style={{ width: 80 }}
+              />
+              <p className="form-hint">
+                {stepForm.bpoCount > 1
+                  ? `Se crearán ${stepForm.bpoCount} instancias en paralelo. La primera en completar/fallar/bloquear gana.`
+                  : 'Un BPO por step (comportamiento normal).'}
               </p>
             </div>
           )}

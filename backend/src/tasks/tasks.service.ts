@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AccountRole, ExecutionType, Prisma, StepFailureReason, TaskStatus } from '@prisma/client';
+import { AccountRole, Prisma, StepFailureReason, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from './task-engine.service';
 import { CreateTaskDto } from './dto/create-task.dto';
@@ -62,13 +62,19 @@ export class TasksService {
         },
       });
 
-      // StepInstances
+      // StepInstances — create bpoCount instances for fixed/manual, 1 for others
       if (taskType.stepDefinitions.length > 0) {
         await tx.stepInstance.createMany({
-          data: taskType.stepDefinitions.map((sd) => ({
-            taskId: created.id,
-            stepDefinitionId: sd.id,
-          })),
+          data: taskType.stepDefinitions.flatMap((sd) => {
+            const count =
+              sd.assignmentStrategy === 'fixed' || sd.assignmentStrategy === 'manual'
+                ? (sd.bpoCount ?? 1)
+                : 1;
+            return Array.from({ length: count }, () => ({
+              taskId: created.id,
+              stepDefinitionId: sd.id,
+            }));
+          }),
         });
       }
 
@@ -89,19 +95,9 @@ export class TasksService {
       return created;
     });
 
-    // Activate first step if not scheduled
+    // Activate first step(s) if not scheduled — advanceTask handles multiple bpoCount instances
     if (!isScheduled && taskType.stepDefinitions.length > 0) {
-      const firstStep = await this.prisma.stepInstance.findFirst({
-        where: { taskId: task.id },
-        include: { stepDefinition: true },
-        orderBy: { stepDefinition: { order: 'asc' } },
-      });
-      if (firstStep) {
-        await this.engine.activateStep(firstStep.id);
-        if (firstStep.stepDefinition.executionType === ExecutionType.automatic) {
-          this.engine.emitAutoStep(firstStep.id, firstStep.stepDefinition.handlerId!, task.id);
-        }
-      }
+      await this.engine.advanceTask(task.id);
     }
 
     return this.findOne(task.id);

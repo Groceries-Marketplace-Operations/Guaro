@@ -36,4 +36,10 @@ export class CreateStepDto {
   @ValidateIf((o) => o.executionType === ExecutionType.automatic)
   @IsString()
   handlerId?: string;
+
+  // Only for fixed / manual strategies
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  bpoCount?: number;
 }

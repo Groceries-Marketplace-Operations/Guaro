@@ -50,6 +50,7 @@ export const taskTypesApi = {
     client.post(`/task-types/${id}/steps/${stepId}/webhooks`, data),
   removeWebhook: (id: string, stepId: string, webhookId: string) =>
     client.delete(`/task-types/${id}/steps/${stepId}/webhooks/${webhookId}`),
+  copy: (id: string) => client.post(`/task-types/${id}/copy`),
   addTemplate: (id: string, data: object) => client.post(`/task-types/${id}/templates`, data),
   uploadTemplate: (id: string, name: string, file: File) => {
     const fd = new FormData();

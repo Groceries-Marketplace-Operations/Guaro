@@ -103,6 +103,7 @@ enum StepStatus {
   blocked
   failed
   done
+  cancelled
 
   @@map("StepEstado")
 }
@@ -262,6 +263,7 @@ model StepDefinition {
   assignmentStrategy AssignmentStrategy @map("estrategia_asignacion")
   weight             Int                @default(1) @map("peso")
   handlerId          String?            @map("handler_id") @db.Uuid
+  bpoCount           Int                @default(1) @map("bpo_count")
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
 

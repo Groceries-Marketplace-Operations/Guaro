@@ -38,4 +38,9 @@ export class UpdateStepDto {
   @IsOptional()
   @IsString()
   handlerId?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  bpoCount?: number;
 }

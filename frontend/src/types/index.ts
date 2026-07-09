@@ -1,6 +1,6 @@
 export type AccountRole = 'user' | 'bpo' | 'admin' | 'super_admin' | 'director';
 export type TaskStatus = 'scheduled' | 'pending' | 'assigned' | 'in_progress' | 'blocked' | 'done' | 'failed';
-export type StepStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'blocked';
+export type StepStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'blocked' | 'cancelled';
 export type ExecutionType = 'manual_internal' | 'manual_external' | 'automatic';
 export type AssignmentStrategy = 'fixed' | 'round_robin' | 'brand_assignment' | 'by_weight' | 'manual';
 export type ShopStatus = 'lead' | 'application' | 'integrated' | 'online';
@@ -59,6 +59,7 @@ export interface StepDefinition {
   executionType: ExecutionType;
   assignmentStrategy: AssignmentStrategy;
   handlerId?: string;
+  bpoCount?: number;
   handler?: Handler;
   candidates?: { account: Account; weight?: number }[];
   stepWebhooks?: { id: string; webhookId: string; events: WebhookEvent[]; webhook: Webhook }[];

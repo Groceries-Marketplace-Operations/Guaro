@@ -128,15 +128,27 @@ export class TaskEngineService {
       ? Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)
       : 0;
 
-    await this.prisma.stepInstance.update({
-      where: { id: stepInstanceId },
-      data: {
-        status: StepStatus.done,
-        completedAt: now,
-        result: result as Prisma.InputJsonValue ?? Prisma.JsonNull,
-        note: note ?? null,
-        workedSeconds: (step.workedSeconds ?? 0) + currentPeriod,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.stepInstance.update({
+        where: { id: stepInstanceId },
+        data: {
+          status: StepStatus.done,
+          completedAt: now,
+          result: result as Prisma.InputJsonValue ?? Prisma.JsonNull,
+          note: note ?? null,
+          workedSeconds: (step.workedSeconds ?? 0) + currentPeriod,
+        },
+      });
+      // Cancel sibling instances for the same stepDefinition
+      await tx.stepInstance.updateMany({
+        where: {
+          taskId: step.taskId,
+          stepDefinitionId: step.stepDefinitionId,
+          id: { not: stepInstanceId },
+          status: { notIn: [StepStatus.done, StepStatus.failed, StepStatus.cancelled] },
+        },
+        data: { status: StepStatus.cancelled },
+      });
     });
 
     await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_complete, step.taskId);
@@ -168,6 +180,16 @@ export class TaskEngineService {
           completedAt: now,
           workedSeconds: (step.workedSeconds ?? 0) + currentPeriod,
         },
+      }),
+      // Cancel sibling instances for the same stepDefinition
+      this.prisma.stepInstance.updateMany({
+        where: {
+          taskId: step.taskId,
+          stepDefinitionId: step.stepDefinitionId,
+          id: { not: stepInstanceId },
+          status: { notIn: [StepStatus.done, StepStatus.failed, StepStatus.cancelled] },
+        },
+        data: { status: StepStatus.cancelled },
       }),
       this.prisma.task.update({
         where: { id: step.taskId },
@@ -207,6 +229,16 @@ export class TaskEngineService {
           startedAt: null,
         },
       }),
+      // Cancel sibling instances (pending or in_progress) for the same stepDefinition
+      this.prisma.stepInstance.updateMany({
+        where: {
+          taskId: step.taskId,
+          stepDefinitionId: step.stepDefinitionId,
+          id: { not: stepInstanceId },
+          status: { in: [StepStatus.pending, StepStatus.in_progress] },
+        },
+        data: { status: StepStatus.cancelled },
+      }),
       this.prisma.task.update({
         where: { id: step.taskId },
         data: { status: TaskStatus.blocked },
@@ -237,24 +269,32 @@ export class TaskEngineService {
   }
 
   // ── Advance task to next step ─────────────────────────────────────────────
+  // Finds all pending instances at the lowest step order and activates them all
+  // (supports bpoCount > 1 for fixed/manual strategies).
 
   async advanceTask(taskId: string): Promise<void> {
-    const nextStep = await this.prisma.stepInstance.findFirst({
+    const pendingInstances = await this.prisma.stepInstance.findMany({
       where: { taskId, status: StepStatus.pending },
       include: { stepDefinition: true },
       orderBy: { stepDefinition: { order: 'asc' } },
     });
 
-    if (!nextStep) {
+    if (!pendingInstances.length) {
       await this.prisma.task.update({ where: { id: taskId }, data: { status: TaskStatus.done } });
       return;
     }
 
-    await this.activateStep(nextStep.id);
+    const minOrder = pendingInstances[0].stepDefinition.order;
+    const nextInstances = pendingInstances.filter(i => i.stepDefinition.order === minOrder);
 
-    // If automatic, publish to queue (queue module handles this)
-    if (nextStep.stepDefinition.executionType === ExecutionType.automatic) {
-      this.emitAutoStep(nextStep.id, nextStep.stepDefinition.handlerId!, taskId);
+    for (const instance of nextInstances) {
+      await this.activateStep(instance.id);
+    }
+
+    for (const instance of nextInstances) {
+      if (instance.stepDefinition.executionType === ExecutionType.automatic) {
+        this.emitAutoStep(instance.id, instance.stepDefinition.handlerId!, taskId);
+      }
     }
   }
 
@@ -319,7 +359,11 @@ export class TaskEngineService {
     if (!candidates.length) return undefined;
 
     if (stepDef.assignmentStrategy === AssignmentStrategy.fixed) {
-      return candidates[0].accountId;
+      // For bpoCount > 1: pick the next candidate based on how many siblings already have one
+      const alreadyAssigned = await tx.stepInstance.count({
+        where: { taskId, stepDefinitionId: stepDef.id, assignedToId: { not: null } },
+      });
+      return candidates[alreadyAssigned % candidates.length]?.accountId;
     }
 
     // round_robin (also fallback for by_weight)

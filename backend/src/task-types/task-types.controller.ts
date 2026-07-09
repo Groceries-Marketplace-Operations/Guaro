@@ -81,6 +81,12 @@ export class TaskTypesController {
     return this.taskTypesService.remove(id, u.roles, u.sectionId);
   }
 
+  @Post(':id/copy')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  copy(@Param('id') id: string, @CurrentUser() u: JwtUser) {
+    return this.taskTypesService.copyTaskType(id, u.roles, u.sectionId);
+  }
+
   // ── Steps ─────────────────────────────────────────────────────────────────
 
   @Post(':id/steps')
