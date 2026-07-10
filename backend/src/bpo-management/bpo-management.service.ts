@@ -92,7 +92,7 @@ export class BpoManagementService {
           UNION
           SELECT EXTRACT(YEAR FROM ta.task_created_at)::int AS y
           FROM task_archive ta
-          WHERE TRUE ${Prisma.raw(sectionFilter.replace('t.section_id', 'ta.section_id'))}
+          WHERE TRUE ${Prisma.raw(sectionFilter.replace('tt.section_id', 'ta.section_id'))}
         ) sub
         ORDER BY y DESC
       `;
@@ -111,7 +111,7 @@ export class BpoManagementService {
           SELECT EXTRACT(MONTH FROM ta.task_created_at)::int AS m
           FROM task_archive ta
           WHERE EXTRACT(YEAR FROM ta.task_created_at) = ${year}
-          ${Prisma.raw(sectionFilter.replace('t.section_id', 'ta.section_id'))}
+          ${Prisma.raw(sectionFilter.replace('tt.section_id', 'ta.section_id'))}
         ) sub ORDER BY m
       `,
       this.prisma.$queryRaw<{ w: number }[]>`
@@ -125,7 +125,7 @@ export class BpoManagementService {
           SELECT EXTRACT(WEEK FROM ta.task_created_at)::int AS w
           FROM task_archive ta
           WHERE EXTRACT(YEAR FROM ta.task_created_at) = ${year}
-          ${Prisma.raw(sectionFilter.replace('t.section_id', 'ta.section_id'))}
+          ${Prisma.raw(sectionFilter.replace('tt.section_id', 'ta.section_id'))}
         ) sub ORDER BY w
       `,
     ]);
