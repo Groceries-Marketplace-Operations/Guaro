@@ -38,6 +38,11 @@ export class GlobalErrorFilter implements ExceptionFilter {
     const message = exception instanceof Error ? exception.message : String(exception);
     const stack   = exception instanceof Error ? (exception.stack ?? '') : '';
 
+    const user = (req as any).user as { name?: string; email?: string; roles?: string[] } | undefined;
+    const userLine = user
+      ? `User:    ${user.name ?? '?'} <${user.email ?? '?'}> [${(user.roles ?? []).join(', ')}]`
+      : `User:    unauthenticated`;
+
     // ── Write error log file ─────────────────────────────────────────────────
     const errorId  = randomBytes(4).toString('hex');
     const dateStr  = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -50,6 +55,7 @@ export class GlobalErrorFilter implements ExceptionFilter {
         `Date:    ${new Date().toISOString()}`,
         `Route:   ${req.method} ${req.url}`,
         `Status:  ${status}`,
+        userLine,
         `Message: ${message}`,
         '',
         '── Stack ──────────────────────────────────────────────────────────────',
@@ -70,6 +76,7 @@ export class GlobalErrorFilter implements ExceptionFilter {
             title: 'Error details',
             text: [
               `**Message:** ${message.slice(0, 300)}${message.length > 300 ? '…' : ''}`,
+              `**User:** ${user ? `${user.name ?? '?'} \`${user.email ?? '?'}\` — roles: \`${(user.roles ?? []).join(', ')}\`` : 'unauthenticated'}`,
               `**Log file:** \`${fileName}\``,
               `\`docker exec guaro-backend-1 cat /app/uploads/errors/${fileName}\``,
             ].join('\n'),
