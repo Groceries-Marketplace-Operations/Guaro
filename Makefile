@@ -29,6 +29,6 @@ logs-backend:
 
 # ── Scripts de importación ────────────────────────────────────────────────────
 import-brands:
-	$(DC) exec backend npx ts-node -r tsconfig-paths/register src/scripts/import-brands.ts /tmp/brands.xlsx
+	$(DC) exec backend node dist/scripts/import-brands.js /tmp/brands.xlsx
 
 .PHONY: deploy deploy-backend deploy-frontend migrate logs logs-backend import-brands
