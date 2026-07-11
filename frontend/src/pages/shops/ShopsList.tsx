@@ -117,7 +117,6 @@ export default function ShopsList() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const [form, setForm] = useState({ shopId: '', appShopId: '', brandId: '', city: '', latitude: '', longitude: '' });
-  const [brandLabel, setBrandLabel] = useState('');
 
   useEffect(() => {
     const timer = setTimeout(() => { setDq(q); setPage(1); }, 300);
@@ -145,7 +144,6 @@ export default function ShopsList() {
       qc.invalidateQueries({ queryKey: ['shops'] });
       setOpen(false);
       setForm({ shopId: '', appShopId: '', brandId: '', city: '', latitude: '', longitude: '' });
-      setBrandLabel('');
     } catch (ex: unknown) {
       const e2 = ex as { response?: { data?: { message?: string } } };
       setErr(Array.isArray(e2.response?.data?.message) ? (e2.response!.data!.message as unknown as string[]).join(', ') : (e2.response?.data?.message ?? 'Error'));
@@ -241,7 +239,7 @@ export default function ShopsList() {
               <label className="form-label">{t('pages.shopsList.brandLabel')}</label>
               <BrandCombobox
                 value={form.brandId}
-                onChange={(id, name) => { setForm(f => ({ ...f, brandId: id })); setBrandLabel(name); }}
+                onChange={(id, _name) => { setForm(f => ({ ...f, brandId: id })); }}
               />
             </div>
             <div className="form-group">
