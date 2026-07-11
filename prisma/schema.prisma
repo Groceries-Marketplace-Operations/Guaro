@@ -163,6 +163,15 @@ enum DayOfWeek {
   @@map("DiaSemana")
 }
 
+enum AutoOpenStatus {
+  pending
+  running
+  done
+  failed
+
+  @@map("AutoOpenEstado")
+}
+
 // ---------------------------- Actors ---------------------------------------
 model Account {
   id         String       @id @default(uuid()) @db.Uuid
@@ -323,8 +332,9 @@ model Webhook {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  stepWebhooks  StepWebhook[]
-  brandWebhooks BrandWebhook[]
+  stepWebhooks   StepWebhook[]
+  brandWebhooks  BrandWebhook[]
+  autoOpenPools  AutoOpenPool[]
 
   @@map("webhook")
 }
@@ -388,6 +398,7 @@ model Brand {
   shops       Shop[]
   tasks       Task[]
   formValues  FormValue[]
+  autoOpenPoolBrands AutoOpenPoolBrand[]
 
   @@index([ownerId])
   @@index([applicationId])
@@ -594,6 +605,52 @@ model AppConfigOption {
   @@unique([category, value])
   @@index([category])
   @@map("app_config_option")
+}
+
+// -------------------- Integrations: Auto Open Stores -------------------------
+model AutoOpenPool {
+  id             String         @id @default(uuid()) @db.Uuid
+  name           String
+  country        Country
+  active         Boolean        @default(true)
+  executionHours Int[]          @map("execution_hours")
+  webhookId      String?        @map("webhook_id") @db.Uuid
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  webhook    Webhook?            @relation(fields: [webhookId], references: [id])
+  brands     AutoOpenPoolBrand[]
+  executions AutoOpenExecution[]
+
+  @@map("auto_open_pool")
+}
+
+model AutoOpenPoolBrand {
+  poolId  String @map("pool_id") @db.Uuid
+  brandId String @map("brand_id") @db.Uuid
+
+  pool  AutoOpenPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  brand Brand        @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@id([poolId, brandId])
+  @@map("auto_open_pool_brand")
+}
+
+model AutoOpenExecution {
+  id          String         @id @default(uuid()) @db.Uuid
+  poolId      String         @map("pool_id") @db.Uuid
+  status      AutoOpenStatus @default(pending)
+  startedAt   DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt  DateTime?      @map("finished_at") @db.Timestamptz
+  totalShops  Int            @default(0) @map("total_shops")
+  shopsOpened Int            @default(0) @map("shops_opened")
+  logs        Json?
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  pool AutoOpenPool @relation(fields: [poolId], references: [id])
+
+  @@index([poolId])
+  @@map("auto_open_execution")
 }
 
 // -------------------------- Auth / invitations -----------------------------

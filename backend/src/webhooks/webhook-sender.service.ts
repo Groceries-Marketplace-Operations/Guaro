@@ -33,6 +33,11 @@ export class WebhookSenderService {
     await Promise.allSettled(alertWebhooks.map((w) => this.send(w.url, payload)));
   }
 
+  async sendToWebhook(webhookId: string, payload: WebhookPayload) {
+    const webhook = await this.prisma.webhook.findUnique({ where: { id: webhookId } });
+    if (webhook) await this.send(webhook.url, payload);
+  }
+
   private async send(url: string, payload: WebhookPayload) {
     try {
       await fetch(url, {

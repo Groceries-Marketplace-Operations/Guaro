@@ -212,3 +212,30 @@ export interface Invitation {
   expiresAt: string;
   createdAt: string;
 }
+
+export type AutoOpenStatus = 'pending' | 'running' | 'done' | 'failed';
+
+export interface AutoOpenPool {
+  id: string;
+  name: string;
+  country: Country;
+  active: boolean;
+  executionHours: number[];
+  webhookId?: string;
+  webhook?: { id: string; name: string };
+  brands: Array<{ poolId: string; brandId: string; brand: { id: string; brandName: string; brandId: string; country: Country } }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutoOpenExecution {
+  id: string;
+  poolId: string;
+  status: AutoOpenStatus;
+  startedAt?: string;
+  finishedAt?: string;
+  totalShops: number;
+  shopsOpened: number;
+  logs?: { brands: Array<{ brandName: string; shopsProcessed: number; shopsOpened: number; error?: string }> };
+  createdAt: string;
+}

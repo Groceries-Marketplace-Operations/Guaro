@@ -165,6 +165,17 @@ export const assignmentRulesApi = {
     client.delete(`/brands/assignment-rules/${ruleId}/candidates/${accountId}`),
 };
 
+/* ── Integrations: Auto Open ─────────────────────────────────── */
+export const integrationsApi = {
+  listPools: () => client.get('/integrations/auto-open/pools'),
+  createPool: (data: object) => client.post('/integrations/auto-open/pools', data),
+  updatePool: (id: string, data: object) => client.patch(`/integrations/auto-open/pools/${id}`, data),
+  deletePool: (id: string) => client.delete(`/integrations/auto-open/pools/${id}`),
+  runPool: (id: string) => client.post(`/integrations/auto-open/pools/${id}/run`),
+  listExecutions: (poolId: string, page = 1) =>
+    client.get(`/integrations/auto-open/pools/${poolId}/executions`, { params: { page } }),
+};
+
 // Helper type (used inline, exported for api file self-containment)
 export interface AppConfigOptionRaw {
   id: string; category: string; value: string; label: string; active: boolean; order: number;

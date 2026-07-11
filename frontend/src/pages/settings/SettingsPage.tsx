@@ -178,7 +178,7 @@ export default function SettingsPage() {
     return countryOrder.indexOf(a.country) - countryOrder.indexOf(b.country);
   });
 
-  const orderedCategories = CATEGORY_ORDER.filter(c => configRaw[c]);
+  const orderedCategories = CATEGORY_ORDER;
   const extraCategories = Object.keys(configRaw).filter(c => !CATEGORY_ORDER.includes(c));
 
   return (

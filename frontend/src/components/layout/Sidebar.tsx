@@ -143,6 +143,15 @@ export default function Sidebar() {
         </div>
       )}
 
+      {(isSA || canSeeModule('integrations')) && (
+        <div className="sidebar-section">
+          <div className="sidebar-section-label">{t('nav.integrations')}</div>
+          <NavLink to="/integrations/auto-open" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconBriefcase /> {t('nav.autoOpenStores')}
+          </NavLink>
+        </div>
+      )}
+
       {isAdmin && (
         <div className="sidebar-section">
           <div className="sidebar-section-label">{t('nav.admin')}</div>

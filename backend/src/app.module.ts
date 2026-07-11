@@ -17,6 +17,7 @@ import { BpoManagementModule } from './bpo-management/bpo-management.module';
 import { AccountsModule } from './accounts/accounts.module';
 import { AppConfigModule } from './app-config/app-config.module';
 import { DevModule } from './dev/dev.module';
+import { IntegrationsModule } from './integrations/integrations.module';
 
 const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
 
@@ -39,6 +40,7 @@ const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
     BpoManagementModule,
     AccountsModule,
     AppConfigModule,
+    IntegrationsModule,
     ...devModules,
   ],
 })

@@ -53,10 +53,11 @@ const CopyIcon = () => (
 );
 
 const ADMIN_MODULES = [
-  { key: 'applications', label: 'Applications' },
-  { key: 'bpo_team',     label: 'BPO Team' },
-  { key: 'webhooks',     label: 'Webhooks (Config)' },
-  { key: 'handlers',     label: 'Handlers (Config)' },
+  { key: 'applications',  label: 'Applications' },
+  { key: 'bpo_team',      label: 'BPO Team' },
+  { key: 'integrations',  label: 'Integrations' },
+  { key: 'webhooks',      label: 'Webhooks (Config)' },
+  { key: 'handlers',      label: 'Handlers (Config)' },
 ] as const;
 
 const BPO_PERMISSIONS = [
