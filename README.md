@@ -20,7 +20,8 @@ Panel interno para configurar y ejecutar tareas (workflows) sobre marcas, tienda
 12. [Variables de entorno](#12-variables-de-entorno)
 13. [Seed y datos iniciales](#13-seed-y-datos-iniciales)
 14. [Despliegue](#14-despliegue)
-15. [Patrones y convenciones](#15-patrones-y-convenciones)
+15. [Scripts de importación masiva](#15-scripts-de-importación-masiva)
+16. [Patrones y convenciones](#16-patrones-y-convenciones)
 
 ---
 
@@ -1187,18 +1188,25 @@ cd backend && npm run start:dev
 cd frontend && npm run dev
 ```
 
-### Producción
+### Producción — Makefile
+
+El servidor tiene un `Makefile` con los comandos más usados. Instalar `make` si no está disponible:
 
 ```bash
-# En el servidor
-cd ~/Guaro
-git pull
-docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+apt install make -y
 ```
 
-**IMPORTANTE**: Siempre especificar `-f docker-compose.prod.yml` en el servidor. El `docker-compose.yml` es solo para desarrollo local.
+| Comando | Qué hace |
+|---|---|
+| `make deploy` | `git pull` + build backend y frontend + `up -d` |
+| `make deploy-backend` | `git pull` + build y restart solo el backend |
+| `make deploy-frontend` | `git pull` + build y restart solo el frontend |
+| `make migrate` | `prisma migrate deploy` dentro del contenedor |
+| `make logs` | Logs en vivo de todos los servicios |
+| `make logs-backend` | Logs en vivo solo del backend |
+| `make import-brands` | Correr el script de importación de brands (requiere `/tmp/brands.xlsx`) |
 
-### Flujo de actualización de código
+### Flujo habitual de actualización
 
 ```bash
 # Local: commit y push
@@ -1206,13 +1214,21 @@ git add .
 git commit -m "feat: descripción"
 git push
 
-# Servidor: pull y rebuild
-cd ~/Guaro
-git pull
-docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+# Servidor
+make deploy       # pull + build + up
+make migrate      # solo si hay nuevas migraciones de Prisma
+```
 
-# Si hay cambios en el seed:
-docker exec guaro-backend-1 node dist/seed/seed.js
+### Flujo si solo cambia el frontend
+
+```bash
+make deploy-frontend
+```
+
+### Si hay cambios en el seed
+
+```bash
+docker compose -f docker-compose.prod.yml exec backend node dist/seed/seed.js
 ```
 
 ### Configurar Nginx (reverse proxy externo)
@@ -1236,7 +1252,54 @@ location / {
 
 ---
 
-## 15. Patrones y convenciones
+## 15. Scripts de importación masiva
+
+Los scripts viven en `backend/src/scripts/` y se corren con `ts-node`. Son **idempotentes**: si se corren dos veces no duplican datos (usan `upsert`).
+
+> **Archivos de datos**: Los Excel con datos reales nunca se suben al repo. La carpeta `backend/data/` está en `.gitignore`. Para producción, copiar el archivo al servidor vía `scp`, correr el script y borrar el archivo.
+
+### `import-brands.ts` — Importar brands desde Excel
+
+**Columnas esperadas** (el orden no importa, se detectan por nombre):
+
+| Columna | Campo en DB | Notas |
+|---|---|---|
+| `Brand Name` | `brandName` | Requerido |
+| `Brand Id` | `brandId` | Requerido. ID externo DiDi |
+| `Country` | `country` | Requerido. CO / MX / CR |
+| `Business Type` | `kaType` | Requerido. KA / CKA / SME |
+| `Business Category` | `category` | Opcional. Texto libre |
+| `OP` | `ownerId` | Opcional. Username sin `@didi-labs.com` |
+| `Menu Method` | `menuIntegration` | Opcional. BApp / API / SFTP |
+| `Checkout Mode` | `paymentMode` | Opcional. Food Mode / Prepaid Card / DiDi Payless (QR) |
+| `Picking Mode` | `pickingMode` | Opcional. Merchant Picking / 2in1 / 1+1 / 1+1 & 2in1 |
+
+**En local (dev):**
+
+```bash
+# Coloca el Excel en backend/data/brands.xlsx
+DATABASE_URL="postgresql://guaro:guaro@localhost:5432/guaro?schema=public" \
+  npx ts-node -r tsconfig-paths/register src/scripts/import-brands.ts ./data/brands.xlsx
+```
+
+**En producción (servidor):**
+
+```bash
+# Desde tu máquina local, copiar el Excel al servidor
+scp ./brands.xlsx usuario@servidor:/tmp/brands.xlsx
+
+# En el servidor
+make import-brands
+
+# Borrar el archivo del servidor
+rm /tmp/brands.xlsx
+```
+
+El script imprime cada fila procesada (`✓ Imported` / `↺ Updated`) y al final un resumen con las filas saltadas y el motivo.
+
+---
+
+## 16. Patrones y convenciones
 
 ### Soft-delete — nunca borrar físicamente
 
