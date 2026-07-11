@@ -56,34 +56,48 @@ const XSmall = () => (
 );
 
 interface BrandComboboxProps {
-  brands: Brand[];
   value: string;
   onChange: (id: string) => void;
   placeholder?: string;
 }
 
-function BrandCombobox({ brands, value, onChange, placeholder = 'Search brand…' }: BrandComboboxProps) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+function BrandCombobox({ value, onChange, placeholder = 'Search brand…' }: BrandComboboxProps) {
+  const [query, setQuery]       = useState('');
+  const [dQuery, setDQuery]     = useState('');
+  const [open, setOpen]         = useState(false);
+  const [label, setLabel]       = useState('');
+  const containerRef            = useRef<HTMLDivElement>(null);
 
-  const selected = brands.find(b => b.id === value);
-  const displayValue = open ? query : (selected ? `${selected.brandName} · ${selected.country}` : '');
+  useEffect(() => {
+    const t = setTimeout(() => setDQuery(query), 250);
+    return () => clearTimeout(t);
+  }, [query]);
 
-  const filtered = useMemo(() => {
-    const q = query.toLowerCase();
-    if (!q) return brands.slice(0, 50);
-    return brands.filter(b =>
-      b.brandName.toLowerCase().includes(q) || b.brandId.toLowerCase().includes(q)
-    ).slice(0, 50);
-  }, [brands, query]);
+  const { data: results = [] } = useQuery<Brand[]>({
+    queryKey: ['brands-search', dQuery],
+    queryFn: () => brandsApi.list({ q: dQuery, limit: 20 }).then(r => (r.data as { data: Brand[] }).data),
+    enabled: open && dQuery.length >= 1,
+  });
 
-  const select = (b: Brand) => { onChange(b.id); setQuery(''); setOpen(false); };
-  const clear = (e: React.MouseEvent) => { e.stopPropagation(); onChange(''); setQuery(''); setOpen(false); };
+  const select = (b: Brand) => {
+    onChange(b.id);
+    setLabel(`${b.brandName} · ${b.country}`);
+    setQuery('');
+    setOpen(false);
+  };
+
+  const clear = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange('');
+    setLabel('');
+    setQuery('');
+  };
 
   const handleBlur = useCallback((e: React.FocusEvent) => {
     if (!containerRef.current?.contains(e.relatedTarget as Node)) { setOpen(false); setQuery(''); }
   }, []);
+
+  const displayValue = open ? query : (label || '');
 
   return (
     <div ref={containerRef} style={{ position: 'relative' }} onBlur={handleBlur}>
@@ -93,7 +107,7 @@ function BrandCombobox({ brands, value, onChange, placeholder = 'Search brand…
           value={displayValue}
           placeholder={placeholder}
           onChange={e => { setQuery(e.target.value); setOpen(true); if (!e.target.value) onChange(''); }}
-          onFocus={() => { setOpen(true); if (selected) setQuery(''); }}
+          onFocus={() => { setOpen(true); if (label) setQuery(''); }}
           style={{ paddingRight: value ? 32 : 12 }}
         />
         {value && (
@@ -103,12 +117,12 @@ function BrandCombobox({ brands, value, onChange, placeholder = 'Search brand…
           </button>
         )}
       </div>
-      {open && (
+      {open && dQuery.length >= 1 && (
         <div style={{ position: 'absolute', zIndex: 200, top: 'calc(100% + 4px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', maxHeight: 240, overflowY: 'auto' }}>
-          {filtered.length === 0 ? (
-            <div style={{ padding: '10px 14px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{placeholder}</div>
+          {results.length === 0 ? (
+            <div style={{ padding: '10px 14px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>No results for "{dQuery}"</div>
           ) : (
-            filtered.map(b => (
+            results.map(b => (
               <div key={b.id} onMouseDown={() => select(b)}
                 style={{ padding: '9px 14px', cursor: 'pointer', fontSize: '0.84rem', background: value === b.id ? 'rgba(255,105,0,0.08)' : 'transparent', color: value === b.id ? 'var(--orange)' : 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                 onMouseEnter={e => (e.currentTarget.style.background = value === b.id ? 'rgba(255,105,0,0.12)' : 'var(--surface-2)')}
@@ -117,11 +131,6 @@ function BrandCombobox({ brands, value, onChange, placeholder = 'Search brand…
                 <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{b.brandId} · {b.country}</span>
               </div>
             ))
-          )}
-          {brands.length > 50 && filtered.length === 50 && (
-            <div style={{ padding: '6px 14px', fontSize: '0.72rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
-              {placeholder}
-            </div>
           )}
         </div>
       )}
@@ -183,11 +192,6 @@ export default function NewTaskPage() {
 
   const anySelectedBrand = Object.values(selectedBrandIds)[0] ?? '';
 
-  const { data: brands = [] } = useQuery<Brand[]>({
-    queryKey: ['brands', 'all'],
-    queryFn: () => brandsApi.list({ limit: 100 }).then(r => (r.data as { data: Brand[] }).data),
-    enabled: hasBrandField,
-  });
 
   const { data: shops = [] } = useQuery<Shop[]>({
     queryKey: ['shops', 'for-task', anySelectedBrand],
@@ -399,7 +403,6 @@ export default function NewTaskPage() {
       <div className="form-group" key={f.id}>
         {label}
         <BrandCombobox
-          brands={brands}
           value={strVal}
           onChange={id => setField(f.id, id)}
           placeholder={t('pages.newTask.noBrandsFound')}
