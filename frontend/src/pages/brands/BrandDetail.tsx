@@ -4,7 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
-import { brandsApi, shopsApi, tasksApi, taskTypesApi, applicationsApi, accountsApi } from '../../api';
+import { brandsApi, shopsApi, tasksApi, taskTypesApi, applicationsApi, accountsApi, appConfigApi } from '../../api';
+import type { AppConfigOption } from '../../types';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
 import type { Brand, Shop, Task, TaskType, Paginated, Application, Country } from '../../types';
@@ -96,6 +97,12 @@ export default function BrandDetail() {
     enabled: !!brand?.country && openChangeApp,
   });
   const availableApps = appsResult?.data ?? [];
+
+  const { data: bizCategories = [] } = useQuery<AppConfigOption[]>({
+    queryKey: ['app-config', 'biz_category'],
+    queryFn: () => appConfigApi.byCategory('biz_category').then(r => r.data as AppConfigOption[]),
+    enabled: openEdit,
+  });
 
   const isBpoOp = isBpo && !!brand && brand.owner?.id === account?.id;
   const canEdit = isAdmin || isBpoOp;
@@ -622,8 +629,13 @@ export default function BrandDetail() {
 
           <div className="form-group">
             <label className="form-label">{t('pages.brandDetail.categoryLabel')}</label>
-            <input className="form-input" placeholder={t('pages.brandDetail.categoryPlaceholder')} value={editForm.category}
-              onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))} />
+            <select className="form-select" value={editForm.category}
+              onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))}>
+              <option value="">{t('pages.brandDetail.categoryPlaceholder')}</option>
+              {bizCategories.filter(c => c.active).map(c => (
+                <option key={c.id} value={c.value}>{c.label}</option>
+              ))}
+            </select>
           </div>
 
           <div className="form-row">
