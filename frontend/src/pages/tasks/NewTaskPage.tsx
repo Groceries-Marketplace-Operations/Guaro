@@ -185,7 +185,7 @@ export default function NewTaskPage() {
 
   const { data: brands = [] } = useQuery<Brand[]>({
     queryKey: ['brands', 'all'],
-    queryFn: () => brandsApi.list({ limit: 500 }).then(r => (r.data as { data: Brand[] }).data),
+    queryFn: () => brandsApi.list({ limit: 100 }).then(r => (r.data as { data: Brand[] }).data),
     enabled: hasBrandField,
   });
 

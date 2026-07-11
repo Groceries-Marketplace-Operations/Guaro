@@ -221,6 +221,7 @@ export interface AutoOpenPool {
   country: Country;
   active: boolean;
   executionHours: number[];
+  timezone: string;
   webhookId?: string;
   webhook?: { id: string; name: string };
   brands: Array<{ poolId: string; brandId: string; brand: { id: string; brandName: string; brandId: string; country: Country } }>;

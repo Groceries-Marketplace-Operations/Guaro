@@ -614,6 +614,7 @@ model AutoOpenPool {
   country        Country
   active         Boolean        @default(true)
   executionHours Int[]          @map("execution_hours")
+  timezone       String         @default("UTC")
   webhookId      String?        @map("webhook_id") @db.Uuid
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz

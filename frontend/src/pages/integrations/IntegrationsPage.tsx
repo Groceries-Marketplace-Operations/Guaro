@@ -1,9 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
-import { integrationsApi, webhooksApi } from '../../api';
-import { brandsApi } from '../../api';
+import { integrationsApi, webhooksApi, brandsApi } from '../../api';
 import { useT } from '../../i18n';
 import type { AutoOpenPool, AutoOpenExecution, Webhook, Brand, Country } from '../../types';
 
@@ -13,44 +12,210 @@ function errMsg(e: unknown) {
   return Array.isArray(msg) ? msg.join(', ') : (msg ?? 'Unexpected error');
 }
 
+// ── Timezones ─────────────────────────────────────────────────────────────────
+const TIMEZONES = [
+  { label: 'Bogotá',       value: 'America/Bogota' },
+  { label: 'Mexico City',  value: 'America/Mexico_City' },
+  { label: 'Sao Paulo',    value: 'America/Sao_Paulo' },
+  { label: 'Tijuana',      value: 'America/Tijuana' },
+];
+
+function getTzOffset(tz: string): number {
+  const now = new Date();
+  const local = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+  const utc   = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
+  return (local.getTime() - utc.getTime()) / 3_600_000;
+}
+
+function localToUtc(h: number, tz: string): number {
+  return ((h - getTzOffset(tz)) % 24 + 24) % 24;
+}
+
+function utcToLocal(h: number, tz: string): number {
+  return ((h + getTzOffset(tz)) % 24 + 24) % 24;
+}
+
+function fmtHour(h: number) {
+  return `${String(h).padStart(2, '0')}:00`;
+}
+
 const COUNTRIES: Country[] = ['CO', 'MX', 'CR'];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
 const statusColor: Record<string, string> = {
-  pending:  'var(--text-muted)',
-  running:  'var(--orange)',
-  done:     '#027A48',
-  failed:   'var(--red)',
+  pending: 'var(--text-muted)',
+  running: 'var(--orange)',
+  done:    '#027A48',
+  failed:  'var(--red)',
 };
 const statusBg: Record<string, string> = {
-  pending:  'var(--surface-2)',
-  running:  'var(--orange-muted)',
-  done:     'var(--green-bg)',
-  failed:   'rgba(220,53,69,0.1)',
+  pending: 'var(--surface-2)',
+  running: 'var(--orange-muted)',
+  done:    'var(--green-bg)',
+  failed:  'rgba(220,53,69,0.1)',
 };
 
+// ── Brand search multi-select ─────────────────────────────────────────────────
+interface BrandSearchProps {
+  brands: Brand[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}
+
+function BrandSearch({ brands, selected, onChange }: BrandSearchProps) {
+  const [q, setQ] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const filtered = useMemo(() => {
+    const lq = q.toLowerCase();
+    return lq
+      ? brands.filter(b => b.brandName.toLowerCase().includes(lq) || b.brandId.toLowerCase().includes(lq)).slice(0, 50)
+      : brands.slice(0, 50);
+  }, [brands, q]);
+
+  const toggle = (id: string) =>
+    onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]);
+
+  const removeChip = (id: string) => onChange(selected.filter(x => x !== id));
+
+  const selectedBrands = brands.filter(b => selected.includes(b.id));
+
+  return (
+    <div>
+      <input
+        ref={inputRef}
+        className="form-input"
+        placeholder="Search brands…"
+        value={q}
+        onChange={e => setQ(e.target.value)}
+        style={{ marginBottom: 8 }}
+      />
+
+      {selectedBrands.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
+          {selectedBrands.map(b => (
+            <span key={b.id} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              background: 'var(--orange-muted)', color: 'var(--orange)',
+              fontSize: '0.75rem', fontWeight: 600,
+              padding: '2px 8px 2px 10px', borderRadius: 999,
+            }}>
+              {b.brandName}
+              <button
+                type="button"
+                onClick={() => removeChip(b.id)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--orange)', padding: 0, display: 'flex', lineHeight: 1 }}
+              >×</button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div style={{ border: '1px solid var(--border)', borderRadius: 8, maxHeight: 200, overflowY: 'auto' }}>
+        {brands.length === 0 ? (
+          <div style={{ padding: '10px 12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>No brands for this country.</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: '10px 12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>No results for "{q}"</div>
+        ) : (
+          filtered.map(b => {
+            const sel = selected.includes(b.id);
+            return (
+              <label key={b.id} style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', cursor: 'pointer',
+                background: sel ? 'rgba(255,105,0,0.06)' : 'transparent',
+                borderBottom: '1px solid var(--border)',
+              }}>
+                <input type="checkbox" checked={sel} onChange={() => toggle(b.id)}
+                  style={{ accentColor: 'var(--orange)', width: 14, height: 14, flexShrink: 0 }} />
+                <span style={{ fontSize: '0.84rem', fontWeight: sel ? 600 : 400 }}>{b.brandName}</span>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>{b.brandId}</span>
+              </label>
+            );
+          })
+        )}
+      </div>
+
+      {selected.length > 0 && (
+        <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 5 }}>
+          {selected.length} brand{selected.length > 1 ? 's' : ''} selected
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Hour picker ───────────────────────────────────────────────────────────────
+interface HourPickerProps {
+  /** UTC hours stored in DB */
+  utcHours: number[];
+  timezone: string;
+  onChange: (utcHours: number[]) => void;
+}
+
+function HourPicker({ utcHours, timezone, onChange }: HourPickerProps) {
+  const localSelected = useMemo(
+    () => utcHours.map(h => utcToLocal(h, timezone)),
+    [utcHours, timezone],
+  );
+
+  const toggle = (localH: number) => {
+    const utcH = localToUtc(localH, timezone);
+    const next = localSelected.includes(localH)
+      ? utcHours.filter(h => h !== utcH)
+      : [...utcHours, utcH].sort((a, b) => a - b);
+    onChange(next);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      {HOURS.map(localH => {
+        const sel = localSelected.includes(localH);
+        return (
+          <button key={localH} type="button" onClick={() => toggle(localH)}
+            style={{
+              padding: '3px 8px', borderRadius: 6, fontSize: '0.78rem', fontWeight: 600,
+              border: '1px solid', cursor: 'pointer',
+              background: sel ? 'var(--orange)' : 'transparent',
+              borderColor: sel ? 'var(--orange)' : 'var(--border)',
+              color: sel ? '#fff' : 'var(--text-primary)',
+            }}
+          >
+            {fmtHour(localH)}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Form state ────────────────────────────────────────────────────────────────
 interface PoolForm {
   name: string;
   country: Country;
-  executionHours: number[];
+  executionHours: number[]; // UTC
+  timezone: string;
   webhookId: string;
   brandIds: string[];
 }
 
-const EMPTY_FORM: PoolForm = { name: '', country: 'CO', executionHours: [], webhookId: '', brandIds: [] };
+const EMPTY_FORM: PoolForm = {
+  name: '', country: 'CO', executionHours: [],
+  timezone: 'America/Bogota', webhookId: '', brandIds: [],
+};
 
+// ── Main page ─────────────────────────────────────────────────────────────────
 export default function IntegrationsPage() {
   const t = useT();
   const qc = useQueryClient();
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingPool, setEditingPool] = useState<AutoOpenPool | null>(null);
-  const [form, setForm] = useState<PoolForm>(EMPTY_FORM);
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState('');
-  const [runningId, setRunningId] = useState<string | null>(null);
+  const [modalOpen, setModalOpen]       = useState(false);
+  const [editingPool, setEditingPool]   = useState<AutoOpenPool | null>(null);
+  const [form, setForm]                 = useState<PoolForm>(EMPTY_FORM);
+  const [saving, setSaving]             = useState(false);
+  const [err, setErr]                   = useState('');
+  const [runningId, setRunningId]       = useState<string | null>(null);
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId]     = useState<string | null>(null);
 
   const { data: pools = [], isLoading } = useQuery<AutoOpenPool[]>({
     queryKey: ['auto-open-pools'],
@@ -64,23 +229,22 @@ export default function IntegrationsPage() {
   });
 
   const { data: brandsResult } = useQuery<{ data: Brand[] }>({
-    queryKey: ['brands', 'all-for-integration'],
-    queryFn: () => brandsApi.list({ limit: 500 }).then(r => r.data as { data: Brand[] }),
+    queryKey: ['brands', 'by-country', form.country],
+    queryFn: () => brandsApi.list({ country: form.country, limit: 500 }).then(r => r.data as { data: Brand[] }),
     enabled: modalOpen,
   });
   const allBrands = brandsResult?.data ?? [];
 
-  const { data: executionsResult } = useQuery<{ data: AutoOpenExecution[]; total: number }>({
+  const { data: executionsResult } = useQuery<{ data: AutoOpenExecution[] }>({
     queryKey: ['auto-open-executions', selectedPoolId],
-    queryFn: () => integrationsApi.listExecutions(selectedPoolId!).then(r => r.data as { data: AutoOpenExecution[]; total: number }),
+    queryFn: () => integrationsApi.listExecutions(selectedPoolId!).then(r => r.data as { data: AutoOpenExecution[] }),
     enabled: !!selectedPoolId,
   });
   const executions = executionsResult?.data ?? [];
 
-  const filteredBrands = useMemo(
-    () => allBrands.filter(b => b.country === form.country),
-    [allBrands, form.country],
-  );
+  const filteredBrands = allBrands;
+
+  const tzLabel = useCallback((tz: string) => TIMEZONES.find(t => t.value === tz)?.label ?? tz, []);
 
   const openCreate = () => {
     setEditingPool(null);
@@ -95,27 +259,12 @@ export default function IntegrationsPage() {
       name: pool.name,
       country: pool.country,
       executionHours: [...pool.executionHours],
+      timezone: pool.timezone ?? 'America/Bogota',
       webhookId: pool.webhookId ?? '',
       brandIds: pool.brands.map(b => b.brandId),
     });
     setErr('');
     setModalOpen(true);
-  };
-
-  const toggleHour = (h: number) => {
-    setForm(f => ({
-      ...f,
-      executionHours: f.executionHours.includes(h)
-        ? f.executionHours.filter(x => x !== h)
-        : [...f.executionHours, h].sort((a, b) => a - b),
-    }));
-  };
-
-  const toggleBrand = (id: string) => {
-    setForm(f => ({
-      ...f,
-      brandIds: f.brandIds.includes(id) ? f.brandIds.filter(x => x !== id) : [...f.brandIds, id],
-    }));
   };
 
   const save = async () => {
@@ -125,6 +274,7 @@ export default function IntegrationsPage() {
         name: form.name,
         country: form.country,
         executionHours: form.executionHours,
+        timezone: form.timezone,
         webhookId: form.webhookId || undefined,
         brandIds: form.brandIds,
       };
@@ -143,35 +293,36 @@ export default function IntegrationsPage() {
   };
 
   const toggleActive = async (pool: AutoOpenPool) => {
-    try {
-      await integrationsApi.updatePool(pool.id, { active: !pool.active });
-      qc.invalidateQueries({ queryKey: ['auto-open-pools'] });
-    } catch { /* ignore */ }
+    await integrationsApi.updatePool(pool.id, { active: !pool.active }).catch(() => null);
+    qc.invalidateQueries({ queryKey: ['auto-open-pools'] });
   };
 
   const runNow = async (pool: AutoOpenPool) => {
     setRunningId(pool.id);
     try {
       await integrationsApi.runPool(pool.id);
-      qc.invalidateQueries({ queryKey: ['auto-open-executions', pool.id] });
       setSelectedPoolId(pool.id);
-    } catch { /* ignore */ }
-    finally { setRunningId(null); }
+      qc.invalidateQueries({ queryKey: ['auto-open-executions', pool.id] });
+    } finally {
+      setRunningId(null);
+    }
   };
 
   const deletePool = async (id: string) => {
     setDeletingId(id);
-    try {
-      await integrationsApi.deletePool(id);
-      qc.invalidateQueries({ queryKey: ['auto-open-pools'] });
-      if (selectedPoolId === id) setSelectedPoolId(null);
-    } catch { /* ignore */ }
-    finally { setDeletingId(null); }
+    await integrationsApi.deletePool(id).catch(() => null);
+    qc.invalidateQueries({ queryKey: ['auto-open-pools'] });
+    if (selectedPoolId === id) setSelectedPoolId(null);
+    setDeletingId(null);
   };
 
-  const formatHour = (h: number) => `${String(h).padStart(2, '0')}:00`;
-
-  const selectedPool = pools.find(p => p.id === selectedPoolId);
+  const formatPoolHours = (pool: AutoOpenPool) => {
+    if (!pool.executionHours.length) return '—';
+    const tz = pool.timezone ?? 'UTC';
+    return pool.executionHours
+      .map(h => fmtHour(utcToLocal(h, tz)))
+      .join(', ') + ` (${tzLabel(tz)})`;
+  };
 
   return (
     <>
@@ -196,15 +347,12 @@ export default function IntegrationsPage() {
             <div key={pool.id} className="card" style={{ padding: '16px 20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                  <button
-                    onClick={() => toggleActive(pool)}
-                    style={{
-                      fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                      border: 'none', cursor: 'pointer', flexShrink: 0,
-                      background: pool.active ? 'var(--green-bg)' : 'var(--surface-2)',
-                      color: pool.active ? '#027A48' : 'var(--text-muted)',
-                    }}
-                  >
+                  <button onClick={() => toggleActive(pool)} style={{
+                    fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                    border: 'none', cursor: 'pointer', flexShrink: 0,
+                    background: pool.active ? 'var(--green-bg)' : 'var(--surface-2)',
+                    color: pool.active ? '#027A48' : 'var(--text-muted)',
+                  }}>
                     {pool.active ? t('common.active') : t('common.inactive')}
                   </button>
                   <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{pool.name}</span>
@@ -212,20 +360,17 @@ export default function IntegrationsPage() {
                     {pool.country}
                   </span>
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', flexShrink: 0 }}>
-                    {pool.brands.length} {t('common.brands')}
+                    {pool.brands.length} brands
                   </span>
                   {pool.executionHours.length > 0 && (
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>
-                      🕐 {pool.executionHours.map(formatHour).join(', ')} UTC
+                      🕐 {formatPoolHours(pool)}
                     </span>
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ padding: '4px 10px' }}
-                    onClick={() => setSelectedPoolId(selectedPoolId === pool.id ? null : pool.id)}
-                  >
+                  <button className="btn btn-ghost btn-sm" style={{ padding: '4px 10px' }}
+                    onClick={() => setSelectedPoolId(selectedPoolId === pool.id ? null : pool.id)}>
                     {selectedPoolId === pool.id ? t('pages.integrations.hideHistory') : t('pages.integrations.viewHistory')}
                   </button>
                   <button
@@ -236,17 +381,11 @@ export default function IntegrationsPage() {
                   >
                     {runningId === pool.id ? t('pages.integrations.running') : t('pages.integrations.runNow')}
                   </button>
-                  <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }} onClick={() => openEdit(pool)}>
-                    ✎
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
+                  <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }} onClick={() => openEdit(pool)}>✎</button>
+                  <button className="btn btn-ghost btn-sm"
                     style={{ padding: '4px 8px', color: 'var(--red)', opacity: deletingId === pool.id ? 0.5 : 1 }}
                     disabled={deletingId === pool.id}
-                    onClick={() => deletePool(pool.id)}
-                  >
-                    ×
-                  </button>
+                    onClick={() => deletePool(pool.id)}>×</button>
                 </div>
               </div>
 
@@ -259,9 +398,7 @@ export default function IntegrationsPage() {
                     <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>{t('pages.integrations.noExecutions')}</p>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {executions.map(ex => (
-                        <ExecutionRow key={ex.id} execution={ex} t={t} />
-                      ))}
+                      {executions.map(ex => <ExecutionRow key={ex.id} execution={ex} t={t} />)}
                     </div>
                   )}
                 </div>
@@ -294,41 +431,55 @@ export default function IntegrationsPage() {
 
           <div className="form-group">
             <label className="form-label">{t('pages.integrations.poolName')}</label>
-            <input className="form-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
+            <input className="form-input" value={form.name}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
           </div>
 
-          <div className="form-group">
-            <label className="form-label">{t('common.country')}</label>
-            <select className="form-select" value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value as Country, brandIds: [] }))}>
-              {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">{t('pages.integrations.executionHours')} <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.78rem' }}>(UTC)</span></label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {HOURS.map(h => {
-                const sel = form.executionHours.includes(h);
-                return (
-                  <button key={h} type="button" onClick={() => toggleHour(h)}
-                    style={{
-                      padding: '3px 8px', borderRadius: 6, fontSize: '0.78rem', fontWeight: 600,
-                      border: '1px solid', cursor: 'pointer',
-                      background: sel ? 'var(--orange)' : 'transparent',
-                      borderColor: sel ? 'var(--orange)' : 'var(--border)',
-                      color: sel ? '#fff' : 'var(--text-primary)',
-                    }}
-                  >
-                    {formatHour(h)}
-                  </button>
-                );
-              })}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="form-group">
+              <label className="form-label">Country</label>
+              <select className="form-select" value={form.country}
+                onChange={e => setForm(f => ({ ...f, country: e.target.value as Country, brandIds: [] }))}>
+                {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">{t('pages.integrations.timezone')}</label>
+              <select className="form-select" value={form.timezone}
+                onChange={e => setForm(f => ({ ...f, timezone: e.target.value, executionHours: [] }))}>
+                {TIMEZONES.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+              </select>
             </div>
           </div>
 
           <div className="form-group">
-            <label className="form-label">{t('pages.integrations.webhook')} <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.78rem' }}>({t('common.optional')})</span></label>
-            <select className="form-select" value={form.webhookId} onChange={e => setForm(f => ({ ...f, webhookId: e.target.value }))}>
+            <label className="form-label">
+              {t('pages.integrations.executionHours')}
+              {form.timezone && (
+                <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.78rem', marginLeft: 6 }}>
+                  ({tzLabel(form.timezone)})
+                </span>
+              )}
+            </label>
+            <HourPicker
+              utcHours={form.executionHours}
+              timezone={form.timezone}
+              onChange={h => setForm(f => ({ ...f, executionHours: h }))}
+            />
+            {form.executionHours.length > 0 && (
+              <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 5 }}>
+                UTC: {form.executionHours.map(fmtHour).join(', ')}
+              </p>
+            )}
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">
+              {t('pages.integrations.webhook')}
+              <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.78rem', marginLeft: 4 }}>({t('common.optional')})</span>
+            </label>
+            <select className="form-select" value={form.webhookId}
+              onChange={e => setForm(f => ({ ...f, webhookId: e.target.value }))}>
               <option value="">{t('pages.integrations.noWebhook')}</option>
               {webhooks.filter(w => !w.isAlerts).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
@@ -336,36 +487,19 @@ export default function IntegrationsPage() {
 
           <div className="form-group">
             <label className="form-label">
-              {t('common.brands')} ({filteredBrands.length} {t('pages.integrations.availableInCountry')})
+              Brands
+              <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.78rem', marginLeft: 4 }}>
+                ({filteredBrands.length} {t('pages.integrations.availableInCountry')})
+              </span>
             </label>
-            <div style={{ border: '1px solid var(--border)', borderRadius: 8, maxHeight: 220, overflowY: 'auto', padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {filteredBrands.length === 0 ? (
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', padding: '8px 0' }}>{t('pages.integrations.noBrandsForCountry')}</p>
-              ) : (
-                filteredBrands.map(b => {
-                  const sel = form.brandIds.includes(b.id);
-                  return (
-                    <label key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '3px 0' }}>
-                      <input type="checkbox" checked={sel} onChange={() => toggleBrand(b.id)}
-                        style={{ accentColor: 'var(--orange)', width: 14, height: 14, flexShrink: 0 }} />
-                      <span style={{ fontSize: '0.84rem' }}>{b.brandName}</span>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{b.brandId}</span>
-                    </label>
-                  );
-                })
-              )}
-            </div>
-            {form.brandIds.length > 0 && (
-              <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                {form.brandIds.length} {t('pages.integrations.brandsSelected')}
-              </p>
-            )}
+            <BrandSearch
+              brands={filteredBrands}
+              selected={form.brandIds}
+              onChange={ids => setForm(f => ({ ...f, brandIds: ids }))}
+            />
           </div>
         </Modal>
       )}
-
-      {/* Suppress unused selectedPool warning */}
-      {selectedPool && null}
     </>
   );
 }
@@ -379,13 +513,12 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
       <div
-        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: execution.logs ? 'pointer' : 'default', background: 'var(--surface-2)' }}
         onClick={() => execution.logs && setExpanded(e => !e)}
+        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: execution.logs ? 'pointer' : 'default', background: 'var(--surface-2)' }}
       >
         <span style={{
-          fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+          fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, flexShrink: 0,
           background: statusBg[execution.status], color: statusColor[execution.status],
-          flexShrink: 0,
         }}>
           {execution.status}
         </span>
@@ -398,9 +531,7 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
           </span>
         )}
         {dur !== null && (
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>
-            {dur}s
-          </span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>{dur}s</span>
         )}
         {execution.logs && (
           <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
@@ -414,11 +545,10 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
                 {b.error ? '✗' : '✓'}
               </span>
               <span style={{ fontWeight: 500 }}>{b.brandName}</span>
-              {b.error ? (
-                <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>{b.error}</span>
-              ) : (
-                <span style={{ color: 'var(--text-muted)' }}>{b.shopsOpened}/{b.shopsProcessed} opened</span>
-              )}
+              {b.error
+                ? <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>{b.error}</span>
+                : <span style={{ color: 'var(--text-muted)' }}>{b.shopsOpened}/{b.shopsProcessed} opened</span>
+              }
             </div>
           ))}
         </div>

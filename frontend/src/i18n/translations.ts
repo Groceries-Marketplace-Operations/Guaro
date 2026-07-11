@@ -91,6 +91,7 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.integrations.availableInCountry': 'available in country',
     'pages.integrations.noBrandsForCountry': 'No brands found for this country.',
     'pages.integrations.brandsSelected': 'brands selected',
+    'pages.integrations.timezone': 'Timezone',
 
     // ── Status labels ────────────────────────────────────────────────────────
     'status.pending': 'Pending',
@@ -805,6 +806,7 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.integrations.availableInCountry': 'disponibles en el país',
     'pages.integrations.noBrandsForCountry': 'No hay brands para este país.',
     'pages.integrations.brandsSelected': 'brands seleccionados',
+    'pages.integrations.timezone': 'Zona horaria',
 
     // ── Status labels ────────────────────────────────────────────────────────
     'status.pending': 'Pendiente',

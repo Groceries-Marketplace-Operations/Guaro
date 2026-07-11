@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import Topbar from '../../components/layout/Topbar';
@@ -11,6 +11,88 @@ import type { Shop, Brand, ShopStatus, Paginated } from '../../types';
 
 const STATUSES: ShopStatus[] = ['lead', 'application', 'integrated', 'online'];
 const LIMIT = 25;
+
+const XSmall = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" width="12" height="12">
+    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+  </svg>
+);
+
+function BrandCombobox({ value, onChange }: { value: string; onChange: (id: string, name: string) => void }) {
+  const [query, setQuery]       = useState('');
+  const [dQuery, setDQuery]     = useState('');
+  const [dropOpen, setDropOpen] = useState(false);
+  const [label, setLabel]       = useState('');
+  const containerRef            = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDQuery(query), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const { data: brands = [] } = useQuery<Brand[]>({
+    queryKey: ['brands-search', dQuery],
+    queryFn: () => brandsApi.list({ q: dQuery, limit: 20 }).then(r => (r.data as { data: Brand[] }).data),
+    enabled: dropOpen && dQuery.length >= 1,
+  });
+
+  const select = (b: Brand) => {
+    onChange(b.id, `${b.brandName} (${b.country})`);
+    setLabel(`${b.brandName} (${b.country})`);
+    setQuery('');
+    setDropOpen(false);
+  };
+
+  const clear = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange('', '');
+    setLabel('');
+    setQuery('');
+  };
+
+  const handleBlur = useCallback((e: React.FocusEvent) => {
+    if (!containerRef.current?.contains(e.relatedTarget as Node)) setDropOpen(false);
+  }, []);
+
+  const displayValue = dropOpen ? query : (label || '');
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative' }} onBlur={handleBlur}>
+      <div style={{ position: 'relative' }}>
+        <input
+          className="form-input"
+          placeholder="Type to search brand…"
+          value={displayValue}
+          onChange={e => { setQuery(e.target.value); setDropOpen(true); if (!e.target.value) onChange('', ''); }}
+          onFocus={() => { setDropOpen(true); if (label) setQuery(''); }}
+          style={{ paddingRight: value ? 32 : 12 }}
+          required
+        />
+        {value && (
+          <button type="button" onMouseDown={clear} tabIndex={-1}
+            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}>
+            <XSmall />
+          </button>
+        )}
+      </div>
+      {dropOpen && dQuery.length >= 1 && (
+        <div style={{ position: 'absolute', zIndex: 200, top: 'calc(100% + 4px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', maxHeight: 240, overflowY: 'auto' }}>
+          {brands.length === 0 ? (
+            <div style={{ padding: '10px 14px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>No brands found for "{dQuery}"</div>
+          ) : brands.map(b => (
+            <div key={b.id} onMouseDown={() => select(b)}
+              style={{ padding: '9px 14px', cursor: 'pointer', fontSize: '0.84rem', background: value === b.id ? 'rgba(255,105,0,0.08)' : 'transparent', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              onMouseEnter={e => (e.currentTarget.style.background = value === b.id ? 'rgba(255,105,0,0.12)' : 'var(--surface-2)')}
+              onMouseLeave={e => (e.currentTarget.style.background = value === b.id ? 'rgba(255,105,0,0.08)' : 'transparent')}>
+              <span style={{ fontWeight: value === b.id ? 600 : 400 }}>{b.brandName}</span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{b.brandId} · {b.country}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const PlusIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -35,6 +117,7 @@ export default function ShopsList() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const [form, setForm] = useState({ shopId: '', appShopId: '', brandId: '', city: '', latitude: '', longitude: '' });
+  const [brandLabel, setBrandLabel] = useState('');
 
   useEffect(() => {
     const timer = setTimeout(() => { setDq(q); setPage(1); }, 300);
@@ -52,14 +135,8 @@ export default function ShopsList() {
     queryFn: () => shopsApi.list(params).then(r => r.data),
   });
 
-  const { data: brandsResult } = useQuery<Paginated<Brand>>({
-    queryKey: ['brands', { limit: 5000 }],
-    queryFn: () => brandsApi.list({ limit: 5000 }).then(r => r.data),
-  });
-
-  const shops  = result?.data ?? [];
-  const total  = result?.total ?? 0;
-  const brands = brandsResult?.data ?? [];
+  const shops = result?.data ?? [];
+  const total = result?.total ?? 0;
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
@@ -68,6 +145,7 @@ export default function ShopsList() {
       qc.invalidateQueries({ queryKey: ['shops'] });
       setOpen(false);
       setForm({ shopId: '', appShopId: '', brandId: '', city: '', latitude: '', longitude: '' });
+      setBrandLabel('');
     } catch (ex: unknown) {
       const e2 = ex as { response?: { data?: { message?: string } } };
       setErr(Array.isArray(e2.response?.data?.message) ? (e2.response!.data!.message as unknown as string[]).join(', ') : (e2.response?.data?.message ?? 'Error'));
@@ -161,10 +239,10 @@ export default function ShopsList() {
             </div>
             <div className="form-group">
               <label className="form-label">{t('pages.shopsList.brandLabel')}</label>
-              <select className="form-select" value={form.brandId} onChange={e => setForm(f => ({ ...f, brandId: e.target.value }))} required>
-                <option value="">{t('pages.shopsList.brandPlaceholder')}</option>
-                {brands.map(b => <option key={b.id} value={b.id}>{b.brandName} ({b.country})</option>)}
-              </select>
+              <BrandCombobox
+                value={form.brandId}
+                onChange={(id, name) => { setForm(f => ({ ...f, brandId: id })); setBrandLabel(name); }}
+              />
             </div>
             <div className="form-group">
               <label className="form-label">{t('pages.shopsList.cityLabel')}</label>

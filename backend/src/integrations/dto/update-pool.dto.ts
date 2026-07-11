@@ -11,6 +11,9 @@ export class UpdatePoolDto {
   @IsOptional() @IsArray() @IsInt({ each: true }) @Min(0, { each: true }) @Max(23, { each: true })
   executionHours?: number[];
 
+  @IsOptional() @IsString()
+  timezone?: string;
+
   @IsOptional() @IsUUID()
   webhookId?: string | null;
 
