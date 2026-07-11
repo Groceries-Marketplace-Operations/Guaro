@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
@@ -173,7 +173,6 @@ export default function NewTaskPage() {
     [selectedTT],
   );
 
-  const hasBrandField   = fields.some(f => f.tipo === 'select_brand');
   const hasStoreField   = fields.some(f => f.tipo === 'select_store');
   const hasKaTypeField      = fields.some(f => f.tipo === 'select_ka_type');
   const hasCountryField     = fields.some(f => f.tipo === 'select_country');
