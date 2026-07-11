@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import Paginator from '../../components/ui/Paginator';
-import { brandsApi, applicationsApi, webhooksApi } from '../../api';
+import { brandsApi, applicationsApi, webhooksApi, appConfigApi } from '../../api';
+import type { AppConfigOption } from '../../types';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
 import type { Brand, Country, KaType, MenuIntegration, PickingMode, PaymentMode, Paginated, Application, Webhook } from '../../types';
@@ -84,7 +85,7 @@ export default function BrandsList() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const [form, setForm] = useState({
-    brandId: '', brandName: '',
+    brandId: '', brandName: '', category: '',
     country: 'MX' as Country,
     kaType: 'KA' as KaType,
     menuIntegration: '' as MenuIntegration | '',
@@ -92,6 +93,12 @@ export default function BrandsList() {
     paymentMode: '' as PaymentMode | '',
     applicationId: '',
     webhookIds: [] as string[],
+  });
+
+  const { data: bizCategories = [] } = useQuery<AppConfigOption[]>({
+    queryKey: ['app-config', 'biz_category'],
+    queryFn: () => appConfigApi.byCategory('biz_category').then(r => r.data as AppConfigOption[]),
+    enabled: open,
   });
 
   const { data: applications = [] } = useQuery<Application[]>({
@@ -134,7 +141,7 @@ export default function BrandsList() {
   const total  = result?.total ?? 0;
 
   const resetForm = () => setForm({
-    brandId: '', brandName: '', country: 'MX', kaType: 'KA',
+    brandId: '', brandName: '', category: '', country: 'MX', kaType: 'KA',
     menuIntegration: '', pickingMode: '', paymentMode: '',
     applicationId: '', webhookIds: [],
   });
@@ -153,6 +160,7 @@ export default function BrandsList() {
         brandName: form.brandName,
         country: form.country,
         kaType: form.kaType,
+        ...(form.category        && { category: form.category }),
         ...(form.menuIntegration && { menuIntegration: form.menuIntegration }),
         ...(form.pickingMode     && { pickingMode: form.pickingMode }),
         ...(form.paymentMode     && { paymentMode: form.paymentMode }),
@@ -338,6 +346,17 @@ export default function BrandsList() {
                   {KA_TYPES.map(k => <option key={k} value={k}>{k}</option>)}
                 </select>
               </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">{t('pages.brandDetail.categoryLabel')}</label>
+              <select className="form-select" value={form.category}
+                onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+                <option value="">—</option>
+                {bizCategories.filter(c => c.active).map(c => (
+                  <option key={c.id} value={c.value}>{c.label}</option>
+                ))}
+              </select>
             </div>
 
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 8px' }}>

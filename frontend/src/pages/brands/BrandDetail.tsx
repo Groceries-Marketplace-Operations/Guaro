@@ -38,7 +38,7 @@ export default function BrandDetail() {
   const [savingTask, setSavingTask] = useState(false);
   const [openEdit, setOpenEdit] = useState(false);
   const [editForm, setEditForm] = useState({
-    brandName: '', category: '',
+    brandId: '', brandName: '', category: '',
     menuIntegration: '', pickingMode: '', paymentMode: '', kaType: '',
   });
   const [savingEdit, setSavingEdit] = useState(false);
@@ -122,6 +122,7 @@ export default function BrandDetail() {
   const openEditModal = () => {
     if (!brand) return;
     setEditForm({
+      brandId:         brand.brandId ?? '',
       brandName:       brand.brandName ?? '',
       category:        brand.category ?? '',
       menuIntegration: brand.menuIntegration ?? '',
@@ -143,7 +144,8 @@ export default function BrandDetail() {
         pickingMode:     (editForm.pickingMode     || null) as string | null,
         paymentMode:     (editForm.paymentMode     || null) as string | null,
       };
-      if (isAdmin && editForm.kaType) payload.kaType = editForm.kaType;
+      if (editForm.kaType) payload.kaType = editForm.kaType;
+      if (isAdmin && editForm.brandId) payload.brandId = editForm.brandId;
       await brandsApi.update(id!, payload);
       await refetchBrand();
       qc.invalidateQueries({ queryKey: ['brands'] });
@@ -621,10 +623,19 @@ export default function BrandDetail() {
         >
           {editErr && <div className="error-banner">{editErr}</div>}
 
-          <div className="form-group">
-            <label className="form-label">{t('pages.brandDetail.brandNameLabel')}</label>
-            <input className="form-input" value={editForm.brandName}
-              onChange={e => setEditForm(f => ({ ...f, brandName: e.target.value }))} />
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">{t('pages.brandDetail.brandNameLabel')}</label>
+              <input className="form-input" value={editForm.brandName}
+                onChange={e => setEditForm(f => ({ ...f, brandName: e.target.value }))} />
+            </div>
+            {isAdmin && (
+              <div className="form-group">
+                <label className="form-label">Brand ID <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>(DiDi)</span></label>
+                <input className="form-input" value={editForm.brandId}
+                  onChange={e => setEditForm(f => ({ ...f, brandId: e.target.value }))} />
+              </div>
+            )}
           </div>
 
           <div className="form-group">
@@ -666,15 +677,13 @@ export default function BrandDetail() {
                 {PAYMENT_MODES.map(v => <option key={v} value={v}>{fmt(v)}</option>)}
               </select>
             </div>
-            {isAdmin && (
-              <div className="form-group">
-                <label className="form-label">{t('pages.brandDetail.kaTypeLabel')}</label>
-                <select className="form-select" value={editForm.kaType}
-                  onChange={e => setEditForm(f => ({ ...f, kaType: e.target.value }))}>
-                  {KA_TYPES.map(v => <option key={v} value={v}>{v}</option>)}
-                </select>
-              </div>
-            )}
+            <div className="form-group">
+              <label className="form-label">{t('pages.brandDetail.kaTypeLabel')}</label>
+              <select className="form-select" value={editForm.kaType}
+                onChange={e => setEditForm(f => ({ ...f, kaType: e.target.value }))}>
+                {KA_TYPES.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
           </div>
         </Modal>
       )}
