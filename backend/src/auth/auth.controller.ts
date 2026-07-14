@@ -42,7 +42,9 @@ export class AuthController {
   async me(@CurrentUser() user: JwtUser) {
     const account = await this.authService.findAccountById(user.id);
     if (!account) return user;
-    return { id: account.id, name: account.name, email: account.email, roles: account.roles, sectionId: account.sectionId, adminModules: account.adminModules, bpoPermissions: account.bpoPermissions };
+    // Re-issue JWT so role/permission changes take effect without requiring logout
+    const token = this.authService.issueToken(account);
+    return { id: account.id, name: account.name, email: account.email, roles: account.roles, sectionId: account.sectionId, adminModules: account.adminModules, bpoPermissions: account.bpoPermissions, token };
   }
 
   // Only available in development — issues JWT by email without going through Google

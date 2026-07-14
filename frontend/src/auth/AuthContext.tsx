@@ -23,7 +23,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem('token');
     if (!stored) { setLoading(false); return; }
     authApi.me()
-      .then((r) => { setToken(stored); setAccount(r.data); })
+      .then((r) => {
+        const fresh = r.data.token ?? stored;
+        if (fresh !== stored) localStorage.setItem('token', fresh);
+        setToken(fresh);
+        setAccount(r.data);
+      })
       .catch(() => { localStorage.removeItem('token'); localStorage.removeItem('account'); })
       .finally(() => setLoading(false));
   }, []);
