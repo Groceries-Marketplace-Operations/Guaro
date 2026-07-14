@@ -268,6 +268,32 @@ export class TaskEngineService {
     ]);
   }
 
+  // ── Force-retry a failed or blocked step (admin/super_admin only) ─────────
+
+  async forceRetryStep(stepInstanceId: string): Promise<void> {
+    const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
+    if (!step) throw new NotFoundException('StepInstance not found');
+    if (step.status !== StepStatus.failed && step.status !== StepStatus.blocked) {
+      throw new BadRequestException('Only failed or blocked steps can be force-retried');
+    }
+    await this.prisma.$transaction([
+      this.prisma.stepInstance.update({
+        where: { id: stepInstanceId },
+        data: {
+          status: StepStatus.in_progress,
+          note: null,
+          failureReason: null,
+          startedAt: new Date(),
+          completedAt: null,
+        },
+      }),
+      this.prisma.task.update({
+        where: { id: step.taskId },
+        data: { status: TaskStatus.in_progress },
+      }),
+    ]);
+  }
+
   // ── Advance task to next step ─────────────────────────────────────────────
   // Finds all pending instances at the lowest step order and activates them all
   // (supports bpoCount > 1 for fixed/manual strategies).

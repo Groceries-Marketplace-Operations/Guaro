@@ -85,6 +85,12 @@ export class TasksController {
     return this.tasksService.retryStep(id, stepId);
   }
 
+  @Patch(':id/steps/:stepId/force-retry')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  forceRetryStep(@Param('id') id: string, @Param('stepId') stepId: string) {
+    return this.tasksService.forceRetryStep(id, stepId);
+  }
+
   @Patch(':id/steps/:stepId/start')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   startStep(@Param('id') id: string, @Param('stepId') stepId: string) {

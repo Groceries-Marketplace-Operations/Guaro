@@ -211,6 +211,12 @@ export class TasksService {
     return this.findOne(taskId);
   }
 
+  async forceRetryStep(taskId: string, stepId: string) {
+    await this.assertStepOfTask(taskId, stepId);
+    await this.engine.forceRetryStep(stepId);
+    return this.findOne(taskId);
+  }
+
   async startStep(taskId: string, stepId: string) {
     await this.assertStepOfTask(taskId, stepId);
     await this.engine.startStep(stepId);

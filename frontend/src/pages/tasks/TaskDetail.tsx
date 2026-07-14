@@ -120,6 +120,17 @@ export default function TaskDetail() {
     qc.invalidateQueries({ queryKey: ['task', id] });
   };
 
+  const handleForceRetry = async (step: StepInstance) => {
+    setSaving(true); setErr('');
+    try {
+      await tasksApi.forceRetryStep(id!, step.id);
+      qc.invalidateQueries({ queryKey: ['task', id] });
+    } catch (ex: unknown) {
+      const e = ex as { response?: { data?: { message?: string } } };
+      setErr(e.response?.data?.message ?? 'Error reactivating step');
+    } finally { setSaving(false); }
+  };
+
   const handleStart = async (step: StepInstance) => {
     setSaving(true); setErr('');
     try {
@@ -266,6 +277,16 @@ export default function TaskDetail() {
                             <XIcon />
                           </button>
                         </div>
+                      )}
+                      {canManualAssign && s.status === 'failed' && s.stepDefinition?.executionType !== 'automatic' && (
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          disabled={saving}
+                          title={t('pages.taskDetail.forceRetry')}
+                          onClick={() => handleForceRetry(s)}
+                        >
+                          <RefreshIcon /> {t('pages.taskDetail.forceRetry')}
+                        </button>
                       )}
                     </td>
                   </tr>

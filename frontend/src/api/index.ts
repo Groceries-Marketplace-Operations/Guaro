@@ -115,6 +115,8 @@ export const tasksApi = {
     client.patch(`/tasks/${taskId}/steps/${stepId}/fail`, data),
   retryStep: (taskId: string, stepId: string) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/retry`),
+  forceRetryStep: (taskId: string, stepId: string) =>
+    client.patch(`/tasks/${taskId}/steps/${stepId}/force-retry`),
   startStep: (taskId: string, stepId: string) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/start`),
   assignStep: (taskId: string, stepId: string, accountId: string) =>
