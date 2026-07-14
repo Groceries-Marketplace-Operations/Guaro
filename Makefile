@@ -31,4 +31,7 @@ logs-backend:
 import-brands:
 	$(DC) exec backend node dist/scripts/import-brands.js /tmp/brands.xlsx
 
-.PHONY: deploy deploy-backend deploy-frontend migrate logs logs-backend import-brands
+import-applications:
+	$(DC) exec backend node dist/scripts/import-applications.js /tmp/apps.xlsx
+
+.PHONY: deploy deploy-backend deploy-frontend migrate logs logs-backend import-brands import-applications

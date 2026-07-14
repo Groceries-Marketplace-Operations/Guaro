@@ -1205,6 +1205,7 @@ apt install make -y
 | `make logs` | Logs en vivo de todos los servicios |
 | `make logs-backend` | Logs en vivo solo del backend |
 | `make import-brands` | Correr el script de importación de brands (requiere `/tmp/brands.xlsx`) |
+| `make import-applications` | Correr el script de importación de apps (requiere `/tmp/apps.xlsx`) |
 
 ### Flujo habitual de actualización
 
@@ -1296,6 +1297,45 @@ rm /tmp/brands.xlsx
 ```
 
 El script imprime cada fila procesada (`✓ Imported` / `↺ Updated`) y al final un resumen con las filas saltadas y el motivo.
+
+### `import-applications.ts` — Importar apps desde Excel
+
+**Columnas esperadas:**
+
+| Columna | Campo en DB | Notas |
+|---|---|---|
+| `Country` | `application.country` | Requerido. CO / MX / CR |
+| `Brand` | lookup por `brandName` | Requerido. Debe existir en DB con ese country |
+| `App_Name` | `appName` | Requerido |
+| `App_Id` | `appId` | Requerido. Clave de upsert |
+| `App_Secret` | `appSecret` (cifrado) | Requerido. Se cifra con AES-256-GCM antes de guardar |
+
+> **Seguridad:** El `App_Secret` **nunca** aparece en logs ni en la respuesta. El Excel con secrets **no se sube al repo ni se deja en el servidor** — copiar, correr, borrar.
+
+**Requiere** la variable `APP_SECRET_ENCRYPTION_KEY` en el entorno (igual que el backend en producción).
+
+**En local (dev):**
+
+```bash
+DATABASE_URL="postgresql://guaro:guaro@localhost:5432/guaro?schema=public" \
+APP_SECRET_ENCRYPTION_KEY="<tu-clave-hex-32-bytes>" \
+  npx ts-node -r tsconfig-paths/register src/scripts/import-applications.ts ./data/apps.xlsx
+```
+
+**En producción (servidor):**
+
+```bash
+# Copiar el Excel al servidor
+scp ./apps.xlsx usuario@servidor:/tmp/apps.xlsx
+
+# En el servidor (la variable APP_SECRET_ENCRYPTION_KEY ya está en el entorno del contenedor)
+make import-applications
+
+# Borrar el archivo del servidor
+rm /tmp/apps.xlsx
+```
+
+El script busca cada brand por nombre + country. Si no la encuentra la fila se salta con un mensaje de error. Después de crear/actualizar la app, vincula la brand con `applicationId`.
 
 ---
 

@@ -32,23 +32,29 @@ export class InvitationsService {
         sectionId: dto.sectionId ?? null,
         createdById: creatorId,
         expiresAt,
+        maxUses: dto.maxUses ?? null,
       },
-      select: { id: true, token: true, rol: true, sectionId: true, expiresAt: true },
+      select: { id: true, token: true, rol: true, sectionId: true, expiresAt: true, maxUses: true },
     });
   }
 
   async use(token: string, dto: UseInvitationDto) {
-    const invitation = await this.prisma.invitation.findUnique({
-      where: { token },
-    });
+    const invitation = await this.prisma.invitation.findUnique({ where: { token } });
 
     if (!invitation) throw new NotFoundException('Invitation not found');
-    if (invitation.usedAt) throw new BadRequestException('Invitation already used');
     if (invitation.expiresAt && invitation.expiresAt < new Date()) {
       throw new BadRequestException('Invitation expired');
     }
 
-    // Email must belong to the allowed domain so Google OAuth can later find the account
+    const isMultiUse = invitation.maxUses !== null;
+
+    if (!isMultiUse && invitation.usedAt) {
+      throw new BadRequestException('Invitation already used');
+    }
+    if (isMultiUse && invitation.useCount >= invitation.maxUses!) {
+      throw new BadRequestException('Invitation has reached its maximum number of uses');
+    }
+
     const ALLOWED_DOMAIN = 'didi-labs.com';
     if (!dto.email.endsWith(`@${ALLOWED_DOMAIN}`)) {
       throw new BadRequestException(`Email must be a @${ALLOWED_DOMAIN} address`);
@@ -69,7 +75,11 @@ export class InvitationsService {
 
       await tx.invitation.update({
         where: { token },
-        data: { usedAt: new Date(), accountId: newAccount.id },
+        data: {
+          useCount: { increment: 1 },
+          // Single-use: mark as consumed and link the account (preserves old behavior)
+          ...(!isMultiUse ? { usedAt: new Date(), accountId: newAccount.id } : {}),
+        },
       });
 
       return newAccount;
@@ -100,6 +110,8 @@ export class InvitationsService {
           section: { select: { id: true, name: true } },
           usedAt: true,
           expiresAt: true,
+          maxUses: true,
+          useCount: true,
           createdAt: true,
           account: { select: { id: true, name: true, email: true } },
         },

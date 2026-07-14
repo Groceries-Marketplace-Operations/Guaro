@@ -15,6 +15,8 @@ interface InvitationRow {
   section?: { name: string };
   usedAt?: string | null;
   expiresAt: string;
+  maxUses?: number | null;
+  useCount?: number;
   createdAt: string;
   account?: { id: string; name: string; email: string } | null;
 }
@@ -91,7 +93,7 @@ export default function Config() {
   const [editWhForm, setEditWhForm] = useState({ name: '', url: '', isAlerts: false });
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedInvId, setCopiedInvId] = useState<string | null>(null);
-  const [invForm, setInvForm] = useState({ role: 'bpo' as AccountRole, sectionId: '' });
+  const [invForm, setInvForm] = useState({ role: 'bpo' as AccountRole, sectionId: '', maxUses: '' });
 
   const [invPage, setInvPage] = useState(1);
   const INV_LIMIT = 25;
@@ -214,7 +216,12 @@ export default function Config() {
   const createInvitation = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
     try {
-      const res = await invitationsApi.create(invForm);
+      const payload = {
+        role: invForm.role,
+        sectionId: invForm.sectionId || undefined,
+        ...(invForm.maxUses ? { maxUses: Number(invForm.maxUses) } : {}),
+      };
+      const res = await invitationsApi.create(payload);
       qc.invalidateQueries({ queryKey: ['invitations'] });
       setOpenInvite(false);
       setInviteLink(`${window.location.origin}${import.meta.env.BASE_URL}invite/${res.data.token}`);
@@ -379,8 +386,12 @@ export default function Config() {
                     <tr><td colSpan={6}><div className="empty-state"><p>{t('pages.config.noInvitations')}</p></div></td></tr>
                   )}
                   {invitations.map(inv => {
-                    const isPending = !inv.usedAt;
-                    const expired = !inv.usedAt && new Date(inv.expiresAt) < new Date();
+                    const isMultiUse = !!inv.maxUses;
+                    const useCount = inv.useCount ?? 0;
+                    const isExhausted = isMultiUse && useCount >= inv.maxUses!;
+                    const isUsed = !isMultiUse && !!inv.usedAt;
+                    const expired = !isUsed && !isExhausted && new Date(inv.expiresAt) < new Date();
+                    const isActive = !isUsed && !isExhausted && !expired;
                     return (
                       <tr key={inv.id}>
                         <td>
@@ -390,16 +401,24 @@ export default function Config() {
                         </td>
                         <td className="text-muted">{inv.section?.name ?? '—'}</td>
                         <td>
-                          {inv.usedAt
+                          {isUsed
                             ? <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.78rem' }}>{t('pages.config.invStatusUsed')}</span>
+                            : isExhausted
+                            ? <span style={{ color: 'var(--green)', fontWeight: 600, fontSize: '0.78rem' }}>{t('pages.config.invStatusExhausted')} ({useCount}/{inv.maxUses})</span>
                             : expired
                             ? <span style={{ color: 'var(--red)', fontSize: '0.78rem' }}>{t('pages.config.invStatusExpired')}</span>
+                            : isMultiUse
+                            ? <span style={{ color: 'var(--amber)', fontWeight: 600, fontSize: '0.78rem' }}>{useCount}/{inv.maxUses} usos</span>
                             : <span style={{ color: 'var(--amber)', fontWeight: 600, fontSize: '0.78rem' }}>{t('pages.config.invStatusPending')}</span>}
                         </td>
-                        <td className="text-muted text-sm">{inv.account?.name ?? '—'}</td>
+                        <td className="text-muted text-sm">
+                          {isMultiUse
+                            ? useCount > 0 ? `${useCount} persona${useCount !== 1 ? 's' : ''}` : '—'
+                            : inv.account?.name ?? '—'}
+                        </td>
                         <td className="text-muted text-sm">{new Date(inv.expiresAt).toLocaleDateString()}</td>
                         <td>
-                          {isPending && (
+                          {isActive && (
                             <div style={{ display: 'flex', gap: 4 }}>
                               <button
                                 className="btn btn-ghost btn-sm"
@@ -633,6 +652,20 @@ export default function Config() {
               <option value="">{t('pages.config.invSectionPlaceholder')}</option>
               {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">{t('pages.config.invMaxUsesLabel')}</label>
+            <input
+              className="form-input"
+              type="number"
+              min={2}
+              placeholder="Ej: 20"
+              value={invForm.maxUses}
+              onChange={e => setInvForm(f => ({ ...f, maxUses: e.target.value }))}
+            />
+            <p className="text-muted" style={{ fontSize: '0.78rem', marginTop: 4 }}>
+              {t('pages.config.invMaxUsesHint')}
+            </p>
           </div>
         </Modal>
       )}

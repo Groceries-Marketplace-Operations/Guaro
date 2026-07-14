@@ -1,4 +1,5 @@
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 import { AccountRole } from '@prisma/client';
 
 export class CreateInvitationDto {
@@ -8,4 +9,10 @@ export class CreateInvitationDto {
   @IsOptional()
   @IsString()
   sectionId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  maxUses?: number;
 }
