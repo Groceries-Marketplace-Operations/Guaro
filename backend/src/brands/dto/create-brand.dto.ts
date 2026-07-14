@@ -28,6 +28,14 @@ export class CreateBrandDto {
 
   @IsOptional()
   @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsUUID()
+  ownerId?: string;
+
+  @IsOptional()
+  @IsString()
   applicationId?: string;
 
   @IsOptional()
