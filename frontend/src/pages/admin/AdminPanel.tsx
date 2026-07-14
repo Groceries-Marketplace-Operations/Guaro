@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { adminApi } from '../../api';
 import { useT } from '../../i18n';
+import Topbar from '../../components/layout/Topbar';
 
 type Tab = 'queues' | 'logs';
 type LogStatus = '' | 'done' | 'failed' | 'in_progress' | 'pending';
@@ -161,6 +162,8 @@ export default function AdminPanel() {
   const totalPages = logs ? Math.ceil(logs.total / logs.limit) : 1;
 
   return (
+    <div className="main-content">
+    <Topbar breadcrumb={[{ label: t('admin.title') }]} />
     <div style={{ padding: '24px 28px', maxWidth: 1100 }}>
       <div style={{ marginBottom: 20 }}>
         <h2 style={{ margin: 0, fontWeight: 700, fontSize: 20 }}>{t('admin.title')}</h2>
@@ -264,6 +267,7 @@ export default function AdminPanel() {
           )}
         </div>
       )}
+    </div>
     </div>
   );
 }
