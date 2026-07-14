@@ -16,12 +16,13 @@ Panel interno para configurar y ejecutar tareas (workflows) sobre marcas, tienda
 8. [Sistema de colas y handlers](#8-sistema-de-colas-y-handlers)
 9. [Cómo crear un handler nuevo](#9-cómo-crear-un-handler-nuevo)
 10. [Webhooks](#10-webhooks)
-11. [Frontend](#11-frontend)
-12. [Variables de entorno](#12-variables-de-entorno)
-13. [Seed y datos iniciales](#13-seed-y-datos-iniciales)
-14. [Despliegue](#14-despliegue)
-15. [Scripts de importación masiva](#15-scripts-de-importación-masiva)
-16. [Patrones y convenciones](#16-patrones-y-convenciones)
+11. [Módulo de integraciones — Auto Open](#11-módulo-de-integraciones--auto-open)
+12. [Frontend](#12-frontend)
+13. [Variables de entorno](#13-variables-de-entorno)
+14. [Seed y datos iniciales](#14-seed-y-datos-iniciales)
+15. [Despliegue](#15-despliegue)
+16. [Scripts de importación masiva](#16-scripts-de-importación-masiva)
+17. [Patrones y convenciones](#17-patrones-y-convenciones)
 
 ---
 
@@ -54,12 +55,14 @@ Guaro-1/
 │       ├── common/             # Utilidades (crypto, filtros de error)
 │       ├── dev/                # Endpoints solo para desarrollo
 │       ├── handlers/           # CRUD de handlers (registro en DB)
-│       ├── invitations/        # Invitaciones con token de un solo uso
+│       ├── integrations/       # Módulo de integraciones (Auto Open pools)
+│       ├── invitations/        # Invitaciones con token (single o multi-uso)
 │       ├── prisma/             # PrismaService (singleton)
 │       ├── queue/              # BullMQ: processor + implementaciones de handlers
 │       │   └── handlers/       # Un archivo por handler
 │       ├── scheduler/          # Cron para activar tareas programadas
 │       ├── sections/           # Secciones organizacionales (teams)
+│       ├── scripts/            # Scripts de importación masiva (brands, applications)
 │       ├── seed/               # Script de seed
 │       ├── shops/              # Tiendas dentro de marcas
 │       ├── task-types/         # Plantillas de tareas (pasos, campos, webhooks)
@@ -262,6 +265,46 @@ Account ──< Invitation (createdBy)
 | `note` | string? | Notas acumuladas |
 | `failureReason` | StepFailureReason? | Solo si `status = failed` |
 
+#### `Brand` — Marca
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `id` | uuid PK | |
+| `brandId` | string unique | ID externo DiDi (clave de importación) |
+| `brandName` | string | Nombre de la marca |
+| `country` | Country | CO / MX / CR |
+| `kaType` | KaType | KA / CKA / SME |
+| `category` | string? | Categoría del negocio (opciones de `biz_category` en AppConfig) |
+| `ownerId` | uuid? | Account del OP responsable de la marca |
+| `applicationId` | uuid? | App de DiDi Food vinculada |
+| `menuIntegration` | MenuIntegration? | Método de integración de menú |
+| `paymentMode` | PaymentMode? | Modo de pago |
+| `pickingMode` | PickingMode? | Modo de picking |
+| `deletedAt` | datetime? | Soft-delete |
+
+#### `Invitation` — Invitación de usuario
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `id` | uuid PK | |
+| `token` | string unique | Token aleatorio de 32 bytes (hex) |
+| `rol` | AccountRole | Rol que tendrá la cuenta creada |
+| `sectionId` | uuid? | Section a la que se asigna la cuenta |
+| `maxUses` | int? | `null` = un solo uso (legado); `N` = multi-uso (mín. 2) |
+| `useCount` | int | Cuántas veces se ha usado el link |
+| `usedAt` | datetime? | Solo para links de un solo uso: fecha en que se usó |
+| `accountId` | uuid? | Solo para links de un solo uso: cuenta creada |
+| `expiresAt` | datetime? | Vence 7 días después de crearse |
+
+#### `AutoOpenPool` — Pool de apertura automática de tiendas
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `id` | uuid PK | |
+| `name` | string | Nombre del pool |
+| `country` | Country | País al que aplica |
+| `active` | bool | Si está activo (cron lo ignora si es false) |
+| `executionHours` | int[] | Horas UTC en las que se dispara la apertura |
+| `timezone` | string | Zona horaria de referencia (IANA, ej. `America/Bogota`) |
+| `webhookId` | uuid? | Webhook para notificar ejecuciones |
+
 #### `Handler` — Handler registrado en la DB
 | Campo | Tipo | Descripción |
 |---|---|---|
@@ -290,11 +333,24 @@ Son strings almacenados en `Account.bpoPermissions`. Los checks se hacen en el c
 if (user.bpoPermissions.includes('create_brand')) { ... }
 ```
 
-Ejemplos activos:
+Permisos activos:
 - `create_brand` — Puede crear marcas
 - `create_application` — Puede crear aplicaciones DiDi
 
 Solo el `super_admin` puede otorgar o revocar estos permisos vía `PATCH /accounts/:id`.
+
+### `adminModules` — Módulos habilitados para Admin
+
+Son strings almacenados en `Account.adminModules`. Permiten dar acceso a un admin a módulos específicos sin darle `super_admin`:
+
+```typescript
+if (user.adminModules.includes('integrations')) { ... }
+```
+
+Módulos activos:
+- `integrations` — Acceso al módulo de Auto Open (pools de apertura automática)
+
+Solo el `super_admin` puede configurar `adminModules` vía `PATCH /accounts/:id`.
 
 ### Cómo proteger una ruta
 
@@ -373,10 +429,10 @@ El campo `google_sub` se vincula automáticamente en el primer login con Google.
 #### Invitations — `/invitations`
 | Método | Ruta | Descripción |
 |---|---|---|
-| POST | `/invitations` | Crear invitación (admin crea para su section; super_admin para cualquiera) |
-| GET | `/invitations` | Listar invitaciones |
-| DELETE | `/invitations/:id` | Cancelar |
-| POST | `/invitations/:token/use` | Redimir token (crea la Account) |
+| POST | `/invitations` | Crear invitación. Body: `{ role, sectionId?, maxUses? }`. `maxUses ≥ 2` genera un link multi-uso. |
+| GET | `/invitations` | Listar invitaciones (paginado) |
+| DELETE | `/invitations/:id` | Cancelar invitación activa |
+| POST | `/invitations/:token/use` | Redimir token — crea la `Account` con el rol y sección del link |
 
 #### Sections — `/sections`
 | Método | Ruta | Roles |
@@ -435,7 +491,8 @@ El campo `google_sub` se vincula automáticamente en el primer login con Google.
 | GET | `/task-types` | Todos |
 | GET | `/task-types/:id` | Con pasos, campos, webhooks |
 | POST/PATCH/DELETE | `/task-types/:id` | admin+ |
-| PATCH | `/task-types/:id/toggle-active` | admin+ |
+| PATCH | `/task-types/:id/toggle-active` | Activar/desactivar |
+| POST | `/task-types/:id/copy` | Duplicar el TaskType completo (pasos, campos) |
 | POST | `/task-types/:id/steps` | Crear paso |
 | PATCH | `/task-types/:id/steps/reorder` | Reordenar pasos |
 | PATCH/DELETE | `/task-types/:id/steps/:stepId` | |
@@ -445,6 +502,18 @@ El campo `google_sub` se vincula automáticamente en el primer login con Google.
 | PATCH/DELETE | `/task-types/:id/fields/:fieldId` | |
 | PATCH | `/task-types/:id/fields/reorder` | |
 | POST | `/task-types/:id/templates/upload` | Subir archivo de plantilla |
+
+#### Integrations — `/integrations/auto-open`
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/integrations/auto-open/pools` | Listar pools de apertura |
+| POST | `/integrations/auto-open/pools` | Crear pool |
+| PATCH | `/integrations/auto-open/pools/:id` | Editar pool |
+| DELETE | `/integrations/auto-open/pools/:id` | Eliminar pool |
+| POST | `/integrations/auto-open/pools/:id/run` | Ejecutar apertura manualmente ahora |
+| GET | `/integrations/auto-open/pools/:id/executions` | Historial de ejecuciones (paginado) |
+
+Requiere: rol `admin` + módulo `integrations` habilitado, o `super_admin`.
 
 #### Tasks — `/tasks`
 | Método | Ruta | Descripción |
@@ -941,6 +1010,7 @@ De lo contrario, BullMQ no encontrará el archivo al reintentar.
 
 ## 10. Webhooks
 
+
 ### Estructura del payload (estilo Mattermost)
 
 ```typescript
@@ -990,7 +1060,56 @@ Configurar su URL en `ALERT_WEBHOOK_URL` o crear uno en la UI y marcarlo como "d
 
 ---
 
-## 11. Frontend
+## 11. Módulo de integraciones — Auto Open
+
+El módulo de Auto Open permite configurar **pools** de marcas que se abren automáticamente a ciertas horas del día mediante un cron interno.
+
+### Cómo funciona
+
+```
+Cron (cada hora, en punto)
+    → revisa todos los pools activos
+    → para cada pool, comprueba si la hora UTC actual está en executionHours[]
+    → si sí: lanza una ejecución (AutoOpenExecution)
+        → itera sobre las marcas del pool
+        → para cada marca, llama a la API de DiDi Food con las credenciales de la Application vinculada
+        → abre todas las tiendas (Shop) de esa marca que estén en estado integrated/online
+        → registra resultado por marca en los logs de la ejecución
+```
+
+### Pool — campos configurables
+
+| Campo | Descripción |
+|---|---|
+| `name` | Nombre descriptivo del pool (ej. "CO — Restaurantes QSR") |
+| `country` | CO / MX / CR |
+| `active` | Si está desactivado, el cron lo ignora |
+| `executionHours` | Array de horas en formato UTC (0–23). Ej: `[11, 17]` = 11:00 UTC y 17:00 UTC |
+| `timezone` | Zona horaria de referencia para mostrar en el frontend (IANA). No afecta el cron (que siempre usa UTC). Opciones: `America/Bogota`, `America/Mexico_City`, `America/Sao_Paulo`, `America/Tijuana` |
+| `webhookId` | Webhook que recibe un mensaje al terminar cada ejecución |
+| `brands[]` | Lista de marcas en el pool (con sus Application vinculadas) |
+
+> **Prerequisito:** cada marca del pool debe tener una `Application` vinculada con `appId` y `appSecret` válidos. El frontend advierte si alguna marca del pool no tiene app.
+
+### Frontend — `/integrations/auto-open`
+
+Accesible para `super_admin` y para `admin` con el módulo `integrations` habilitado.
+
+La página muestra tarjetas por pool. Cada tarjeta permite:
+- Ver las horas de ejecución convertidas a la zona horaria configurada
+- Editar marcas del pool, horas, webhook, timezone
+- Ejecutar el pool manualmente (botón "Run now")
+- Ver el historial de ejecuciones (status, tiendas abiertas, errores)
+
+### Habilitar el módulo de integraciones para un Admin
+
+Solo el `super_admin` puede hacerlo desde **Config → Usuarios → editar usuario**:
+- Marcar el módulo `integrations` en los `adminModules` de la cuenta.
+
+---
+
+## 12. Frontend
+
 
 ### Configuración de rutas
 
@@ -1018,6 +1137,7 @@ Base URL: `/guaro` (configurado en `vite.config.ts` como `base: '/guaro'`)
       <Route path="bpo-management" element={<BpoManagement />} />
       <Route path="sections"      element={<SectionsList />} />
       <Route path="applications"  element={<ApplicationsPage />} />
+      <Route path="integrations/auto-open" element={<IntegrationsPage />} />
       <Route path="config"        element={<Config />} />
       <Route path="settings"      element={<SettingsPage />} />
     </Route>
@@ -1104,7 +1224,7 @@ function MiComponente() {
 
 ---
 
-## 12. Variables de entorno
+## 13. Variables de entorno
 
 ### Backend (requeridas en producción)
 
@@ -1131,7 +1251,7 @@ function MiComponente() {
 
 ---
 
-## 13. Seed y datos iniciales
+## 14. Seed y datos iniciales
 
 **Archivo**: `backend/src/seed/seed.ts`
 
@@ -1177,7 +1297,7 @@ Usar **siempre `upsert`** en el seed para que sea idempotente (se puede correr m
 
 ---
 
-## 14. Despliegue
+## 15. Despliegue
 
 ### Desarrollo local
 
@@ -1253,7 +1373,7 @@ location / {
 
 ---
 
-## 15. Scripts de importación masiva
+## 16. Scripts de importación masiva
 
 Los scripts viven en `backend/src/scripts/` y se corren con `ts-node`. Son **idempotentes**: si se corren dos veces no duplican datos (usan `upsert`).
 
@@ -1339,7 +1459,7 @@ El script busca cada brand por nombre + country. Si no la encuentra la fila se s
 
 ---
 
-## 16. Patrones y convenciones
+## 17. Patrones y convenciones
 
 ### Soft-delete — nunca borrar físicamente
 
