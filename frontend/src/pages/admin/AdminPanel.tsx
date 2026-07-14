@@ -113,7 +113,7 @@ function LogRow({ row }: { row: Record<string, unknown> }) {
       {open && (
         <tr>
           <td colSpan={7} style={{ padding: '0 12px 12px', background: 'var(--surface)' }}>
-            {row.note && (
+            {!!row.note && (
               <div style={{ marginTop: 8 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 4, textTransform: 'uppercase' }}>Note</div>
                 <pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{row.note as string}</pre>
@@ -123,7 +123,7 @@ function LogRow({ row }: { row: Record<string, unknown> }) {
               <div style={{ marginTop: 8 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 4, textTransform: 'uppercase' }}>Result</div>
                 <pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {JSON.stringify(row.result, null, 2)}
+                  {JSON.stringify(row.result as object, null, 2)}
                 </pre>
               </div>
             )}
