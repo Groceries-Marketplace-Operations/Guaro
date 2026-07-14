@@ -95,7 +95,7 @@ export class BrandsService {
       }
     }
 
-    const { applicationId, ownerId, kaType, ...rest } = dto;
+    const { applicationId, ownerId, kaType, brandId: _brandId, ...rest } = dto;
     const data: Prisma.BrandUpdateInput = { ...rest };
 
     // If ka_type changes, auto-reassign owner (unless ownerId is also being set manually)
