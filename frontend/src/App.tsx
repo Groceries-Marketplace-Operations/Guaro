@@ -25,6 +25,7 @@ import AuthCallback from './pages/AuthCallback';
 import AuthError from './pages/AuthError';
 import NotFound from './pages/NotFound';
 import IntegrationsPage from './pages/integrations/IntegrationsPage';
+import AdminPanel from './pages/admin/AdminPanel';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
 
@@ -57,6 +58,7 @@ export default function App() {
               <Route path="settings" element={<SettingsPage />} />
               <Route path="applications" element={<ApplicationsPage />} />
               <Route path="integrations/auto-open" element={<IntegrationsPage />} />
+              <Route path="admin" element={<AdminPanel />} />
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>

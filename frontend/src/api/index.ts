@@ -178,6 +178,13 @@ export const integrationsApi = {
     client.post('/integrations/auto-open/notify', data),
 };
 
+/* ── Admin (super_admin only) ────────────────────────────────── */
+export const adminApi = {
+  queueStatus: () => client.get('/admin/queue-status'),
+  handlerLogs: (params?: { page?: number; limit?: number; status?: string }) =>
+    client.get('/admin/handler-logs', { params }),
+};
+
 // Helper type (used inline, exported for api file self-containment)
 export interface AppConfigOptionRaw {
   id: string; category: string; value: string; label: string; active: boolean; order: number;

@@ -728,6 +728,14 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.applications.editSecretHint': 'Stored encrypted. Only fill to rotate the secret.',
     'pages.applications.saving': 'Saving…',
     'pages.applications.deleteConfirm': 'Delete application "{name}"?',
+
+    // ── Admin Panel ──────────────────────────────────────────────────────────
+    'nav.systemPanel': 'System Panel',
+    'admin.title': 'System Panel',
+    'admin.subtitle': 'BullMQ queue status and automatic handler execution logs.',
+    'admin.tabQueues': 'Queue Status',
+    'admin.tabLogs': 'Handler Logs',
+    'admin.totalLogs': 'total executions',
   },
 
   es: {
@@ -1459,5 +1467,13 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.applications.editSecretHint': 'Se almacena cifrado. Solo llenar para rotar el secreto.',
     'pages.applications.saving': 'Guardando…',
     'pages.applications.deleteConfirm': '¿Eliminar la aplicación "{name}"?',
+
+    // ── Admin Panel ──────────────────────────────────────────────────────────
+    'nav.systemPanel': 'Panel del Sistema',
+    'admin.title': 'Panel del Sistema',
+    'admin.subtitle': 'Estado de colas BullMQ y logs de ejecución de handlers automáticos.',
+    'admin.tabQueues': 'Estado de Colas',
+    'admin.tabLogs': 'Logs de Handlers',
+    'admin.totalLogs': 'ejecuciones totales',
   },
 };
