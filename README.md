@@ -391,17 +391,32 @@ interface JwtUser {
 
 ### Cómo crear un nuevo super_admin en la DB
 
-```sql
+Usa un heredoc para evitar problemas de escape de shell. El tipo enum en PostgreSQL se llama `"AccountRol"` (nombre generado por Prisma, sin la 'e' final).
+
+```bash
+# Insertar cuenta nueva (o actualizar si ya existe)
+docker exec -i guaro-guaro-db-1 psql -U guaro -d guaro << 'EOF'
 INSERT INTO account (id, nombre, email, roles, created_at, updated_at)
 VALUES (
   gen_random_uuid(),
   'Nombre Apellido',
   'email@didi-labs.com',
-  ARRAY['super_admin']::"AccountRol"[],
+  '{super_admin}'::"AccountRol"[],
   NOW(), NOW()
 )
-ON CONFLICT (email) DO UPDATE SET roles = ARRAY['super_admin']::"AccountRol"[];
+ON CONFLICT (email) DO UPDATE SET roles = '{super_admin}'::"AccountRol"[];
+EOF
 ```
+
+```bash
+# Actualizar solo el rol de una cuenta existente
+docker exec -i guaro-guaro-db-1 psql -U guaro -d guaro << 'EOF'
+UPDATE account SET roles = '{super_admin}'::"AccountRol"[]
+WHERE email = 'email@didi-labs.com';
+EOF
+```
+
+> **Nota:** tras el primer login el JWT se re-emite con el nuevo rol. No hace falta cerrar sesión manualmente.
 
 El campo `google_sub` se vincula automáticamente en el primer login con Google.
 
@@ -514,6 +529,19 @@ El campo `google_sub` se vincula automáticamente en el primer login con Google.
 | GET | `/integrations/auto-open/pools/:id/executions` | Historial de ejecuciones (paginado) |
 
 Requiere: rol `admin` + módulo `integrations` habilitado, o `super_admin`.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| POST | `/integrations/auto-open/notify` | Enviar notificación manual a uno o más webhooks |
+
+#### Admin — `/admin`
+
+Todos los endpoints requieren rol `super_admin`.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/admin/queue-status` | Estado de colas BullMQ (`handlers` y `auto-open`): job counts + últimos jobs fallidos |
+| GET | `/admin/handler-logs` | Logs de StepInstances automáticos (paginado, filtrable por `status`) |
 
 #### Tasks — `/tasks`
 | Método | Ruta | Descripción |
@@ -1106,6 +1134,55 @@ La página muestra tarjetas por pool. Cada tarjeta permite:
 Solo el `super_admin` puede hacerlo desde **Config → Usuarios → editar usuario**:
 - Marcar el módulo `integrations` en los `adminModules` de la cuenta.
 
+### Notificaciones manuales
+
+La pestaña **Manual Notifications** dentro de `/integrations/auto-open` permite enviar un mensaje personalizado (título, cuerpo Markdown, color de acento) a uno o varios webhooks configurados. El mensaje no se guarda en la DB — se despacha en el momento vía `POST /integrations/auto-open/notify`.
+
+---
+
+## 11b. Panel del Sistema (`/admin`)
+
+Solo accesible para `super_admin`. Aparece en el sidebar como **System Panel / Panel del Sistema**.
+
+### Tab: Queue Status
+
+Muestra el estado en tiempo real de las dos colas BullMQ (`handlers` y `auto-open`). Se auto-refresca cada 10 segundos.
+
+| Contador | Descripción |
+|---|---|
+| `active` | Jobs ejecutándose ahora mismo |
+| `waiting` | Jobs en cola esperando un worker |
+| `delayed` | Jobs con backoff programado para el futuro |
+| `completed` | Jobs completados (se retienen hasta 100 / 200 según config) |
+| `failed` | Jobs en dead-letter (agotaron reintentos) |
+
+Si `failed > 0`, el contador se pone en rojo. Se puede expandir para ver el payload y el mensaje de error de cada job fallido.
+
+### Tab: Handler Logs
+
+Tabla paginada (25 registros por página) de todos los `StepInstance` de tipo automático, ordenados del más reciente al más antiguo. Filtrable por status.
+
+| Columna | Descripción |
+|---|---|
+| Status | `done`, `failed`, `in_progress`, `pending` |
+| Handler | Nombre del handler que ejecutó el paso |
+| Task Type | Tipo de tarea al que pertenece el paso |
+| Step | Nombre del step definition |
+| Brand | Marca asociada a la tarea (si aplica) |
+| Failure Reason | `error_handler`, `system_timed_out`, etc. |
+| Completed | Fecha/hora de completación o última actualización |
+
+Cada fila es expandible para ver el `note` (líneas que el handler escribió con `ctx.addNote()`) y el `result` JSON completo.
+
+### Endpoints de backend
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/admin/queue-status` | Counts de jobs + últimos fallidos por cola |
+| GET | `/admin/handler-logs` | StepInstances automáticos paginados (`?page&limit&status`) |
+
+Ambos requieren `super_admin`. Implementados en `backend/src/admin/`.
+
 ---
 
 ## 12. Frontend
@@ -1138,6 +1215,7 @@ Base URL: `/guaro` (configurado en `vite.config.ts` como `base: '/guaro'`)
       <Route path="sections"      element={<SectionsList />} />
       <Route path="applications"  element={<ApplicationsPage />} />
       <Route path="integrations/auto-open" element={<IntegrationsPage />} />
+      <Route path="admin"         element={<AdminPanel />} />
       <Route path="config"        element={<Config />} />
       <Route path="settings"      element={<SettingsPage />} />
     </Route>
