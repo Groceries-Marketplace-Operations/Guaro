@@ -203,10 +203,20 @@ const EMPTY_FORM: PoolForm = {
   timezone: 'America/Bogota', webhookId: '', brandIds: [],
 };
 
+// ── Color options for notifications ──────────────────────────────────────────
+const NOTIFY_COLORS = [
+  { label: 'Azul',    value: '#2D9CDB' },
+  { label: 'Verde',   value: '#27AE60' },
+  { label: 'Amarillo',value: '#E2B93B' },
+  { label: 'Rojo',    value: '#EB5757' },
+];
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function IntegrationsPage() {
   const t = useT();
   const qc = useQueryClient();
+
+  const [tab, setTab] = useState<'auto-open' | 'notify'>('auto-open');
 
   const [modalOpen, setModalOpen]       = useState(false);
   const [editingPool, setEditingPool]   = useState<AutoOpenPool | null>(null);
@@ -217,6 +227,13 @@ export default function IntegrationsPage() {
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
   const [deletingId, setDeletingId]     = useState<string | null>(null);
 
+  // Notify tab state
+  const [notifyForm, setNotifyForm] = useState({ title: '', message: '', color: '' });
+  const [notifyWebhookIds, setNotifyWebhookIds] = useState<string[]>([]);
+  const [sending, setSending]   = useState(false);
+  const [notifyErr, setNotifyErr] = useState('');
+  const [notifyOk, setNotifyOk]  = useState(false);
+
   const { data: pools = [], isLoading } = useQuery<AutoOpenPool[]>({
     queryKey: ['auto-open-pools'],
     queryFn: () => integrationsApi.listPools().then(r => r.data as AutoOpenPool[]),
@@ -225,7 +242,7 @@ export default function IntegrationsPage() {
   const { data: webhooks = [] } = useQuery<Webhook[]>({
     queryKey: ['webhooks'],
     queryFn: () => webhooksApi.list().then(r => r.data as Webhook[]),
-    enabled: modalOpen,
+    enabled: modalOpen || tab === 'notify',
   });
 
   const { data: brandsResult } = useQuery<{ data: Brand[] }>({
@@ -316,6 +333,27 @@ export default function IntegrationsPage() {
     setDeletingId(null);
   };
 
+  const sendNotification = async () => {
+    if (!notifyForm.message.trim() || notifyWebhookIds.length === 0) return;
+    setSending(true); setNotifyErr(''); setNotifyOk(false);
+    try {
+      await integrationsApi.sendNotification({
+        title: notifyForm.title.trim() || undefined,
+        message: notifyForm.message.trim(),
+        webhookIds: notifyWebhookIds,
+        color: notifyForm.color || undefined,
+      });
+      setNotifyOk(true);
+      setNotifyForm({ title: '', message: '', color: '' });
+      setNotifyWebhookIds([]);
+      setTimeout(() => setNotifyOk(false), 4000);
+    } catch (e) {
+      setNotifyErr(errMsg(e));
+    } finally {
+      setSending(false);
+    }
+  };
+
   const formatPoolHours = (pool: AutoOpenPool) => {
     if (!pool.executionHours.length) return '—';
     const tz = pool.timezone ?? 'UTC';
@@ -326,20 +364,31 @@ export default function IntegrationsPage() {
 
   return (
     <>
-      <Topbar breadcrumb={[{ label: t('nav.integrations') }, { label: t('nav.autoOpenStores') }]} />
+      <Topbar breadcrumb={[{ label: t('nav.integrations') }]} />
       <main className="main-content">
         <div className="page-header">
           <div className="page-header-info">
-            <h1>{t('nav.autoOpenStores')}</h1>
-            <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
-              {t('pages.integrations.subtitle')}
-            </p>
+            <h1>{t('nav.integrations')}</h1>
           </div>
-          <button className="btn btn-primary" onClick={openCreate}>
-            + {t('pages.integrations.newPool')}
-          </button>
+          {tab === 'auto-open' && (
+            <button className="btn btn-primary" onClick={openCreate}>
+              + {t('pages.integrations.newPool')}
+            </button>
+          )}
         </div>
 
+        {/* Tabs */}
+        <div className="tabs" style={{ marginBottom: 20 }}>
+          <div className={`tab ${tab === 'auto-open' ? 'active' : ''}`} onClick={() => setTab('auto-open')}>
+            {t('nav.autoOpenStores')}
+          </div>
+          <div className={`tab ${tab === 'notify' ? 'active' : ''}`} onClick={() => setTab('notify')}>
+            {t('pages.integrations.tabNotify')}
+          </div>
+        </div>
+
+        {/* ── Auto Open tab ─────────────────────────────────────────────── */}
+        {tab === 'auto-open' && (<>
         {isLoading && <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Loading…</p>}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -410,6 +459,121 @@ export default function IntegrationsPage() {
         {!isLoading && pools.length === 0 && (
           <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
             <p style={{ fontSize: '0.9rem' }}>{t('pages.integrations.noPools')}</p>
+          </div>
+        )}
+        </>)}
+
+        {/* ── Notify tab ────────────────────────────────────────────────── */}
+        {tab === 'notify' && (
+          <div style={{ maxWidth: 640 }}>
+            <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', marginBottom: 20 }}>
+              {t('pages.integrations.notifySubtitle')}
+            </p>
+
+            {notifyErr && <div className="error-banner" style={{ marginBottom: 16 }}>{notifyErr}</div>}
+            {notifyOk && (
+              <div style={{ background: 'var(--green-bg)', color: '#027A48', borderRadius: 8, padding: '10px 14px', fontSize: '0.84rem', fontWeight: 600, marginBottom: 16 }}>
+                ✓ {t('pages.integrations.notifySent')}
+              </div>
+            )}
+
+            <div className="form-group">
+              <label className="form-label">{t('pages.integrations.notifyTitle')}</label>
+              <input
+                className="form-input"
+                placeholder={t('pages.integrations.notifyTitlePlaceholder')}
+                value={notifyForm.title}
+                onChange={e => setNotifyForm(f => ({ ...f, title: e.target.value }))}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">{t('pages.integrations.notifyMessage')} *</label>
+              <textarea
+                className="form-input"
+                rows={5}
+                placeholder={t('pages.integrations.notifyMessagePlaceholder')}
+                value={notifyForm.message}
+                onChange={e => setNotifyForm(f => ({ ...f, message: e.target.value }))}
+                style={{ resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: '0.84rem' }}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">{t('pages.integrations.notifyColor')}</label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => setNotifyForm(f => ({ ...f, color: '' }))}
+                  style={{
+                    padding: '5px 12px', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer',
+                    border: '1px solid', fontWeight: notifyForm.color === '' ? 700 : 400,
+                    background: notifyForm.color === '' ? 'var(--surface-2)' : 'transparent',
+                    borderColor: notifyForm.color === '' ? 'var(--text-primary)' : 'var(--border)',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  {t('pages.integrations.notifyColorNone')}
+                </button>
+                {NOTIFY_COLORS.map(c => (
+                  <button
+                    key={c.value}
+                    type="button"
+                    onClick={() => setNotifyForm(f => ({ ...f, color: c.value }))}
+                    style={{
+                      padding: '5px 14px', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer',
+                      border: `2px solid ${c.value}`,
+                      background: notifyForm.color === c.value ? c.value : 'transparent',
+                      color: notifyForm.color === c.value ? '#fff' : c.value,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">{t('pages.integrations.notifyWebhooks')} *</label>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                {webhooks.filter(w => !w.isAlerts).length === 0 ? (
+                  <div style={{ padding: '12px 14px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                    {t('pages.integrations.notifyNoWebhooks')}
+                  </div>
+                ) : (
+                  webhooks.filter(w => !w.isAlerts).map(w => {
+                    const sel = notifyWebhookIds.includes(w.id);
+                    return (
+                      <label key={w.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                        cursor: 'pointer', borderBottom: '1px solid var(--border)',
+                        background: sel ? 'rgba(255,105,0,0.05)' : 'transparent',
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={sel}
+                          onChange={() => setNotifyWebhookIds(ids =>
+                            sel ? ids.filter(id => id !== w.id) : [...ids, w.id]
+                          )}
+                          style={{ accentColor: 'var(--orange)', width: 15, height: 15, flexShrink: 0 }}
+                        />
+                        <span style={{ fontSize: '0.86rem', fontWeight: sel ? 600 : 400 }}>{w.name}</span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <button
+              className="btn btn-primary"
+              disabled={sending || !notifyForm.message.trim() || notifyWebhookIds.length === 0}
+              onClick={sendNotification}
+              style={{ marginTop: 4 }}
+            >
+              {sending ? t('pages.integrations.notifySending') : t('pages.integrations.notifySendBtn')}
+            </button>
           </div>
         )}
       </main>

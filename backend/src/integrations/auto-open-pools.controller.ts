@@ -11,6 +11,7 @@ import { JwtUser } from '../auth/types/jwt-user.interface';
 import { AutoOpenPoolsService } from './auto-open-pools.service';
 import { CreatePoolDto } from './dto/create-pool.dto';
 import { UpdatePoolDto } from './dto/update-pool.dto';
+import { SendNotificationDto } from './dto/send-notification.dto';
 import { ForbiddenException } from '@nestjs/common';
 
 function canAccess(user: JwtUser): boolean {
@@ -68,5 +69,12 @@ export class AutoOpenPoolsController {
   ) {
     if (!canAccess(u)) throw new ForbiddenException();
     return this.svc.listExecutions(id, page, limit);
+  }
+
+  @Post('notify')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  notify(@Body() dto: SendNotificationDto, @CurrentUser() u: JwtUser) {
+    if (!canAccess(u)) throw new ForbiddenException();
+    return this.svc.sendNotification(dto);
   }
 }

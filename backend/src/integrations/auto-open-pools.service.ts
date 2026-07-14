@@ -2,8 +2,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { CreatePoolDto } from './dto/create-pool.dto';
 import { UpdatePoolDto } from './dto/update-pool.dto';
+import { SendNotificationDto } from './dto/send-notification.dto';
 
 const POOL_INCLUDE = {
   webhook: { select: { id: true, name: true } },
@@ -18,6 +20,7 @@ const POOL_INCLUDE = {
 export class AutoOpenPoolsService {
   constructor(
     private prisma: PrismaService,
+    private webhookSender: WebhookSenderService,
     @InjectQueue('auto-open') private queue: Queue,
   ) {}
 
@@ -82,6 +85,29 @@ export class AutoOpenPoolsService {
     });
     await this.queue.add('run-pool', { executionId: execution.id }, { jobId: execution.id });
     return execution;
+  }
+
+  async sendNotification(dto: SendNotificationDto) {
+    const webhooks = await this.prisma.webhook.findMany({
+      where: { id: { in: dto.webhookIds } },
+      select: { id: true, name: true },
+    });
+
+    const payload = {
+      text: dto.title ? `**${dto.title}**` : dto.message,
+      ...(dto.title ? {
+        attachments: [{
+          text: dto.message,
+          ...(dto.color ? { color: dto.color } : {}),
+        }],
+      } : {}),
+    };
+
+    await Promise.allSettled(
+      webhooks.map(w => this.webhookSender.sendToWebhook(w.id, payload)),
+    );
+
+    return { sent: webhooks.length, webhooks: webhooks.map(w => w.name) };
   }
 
   async listExecutions(poolId: string, page = 1, limit = 20) {

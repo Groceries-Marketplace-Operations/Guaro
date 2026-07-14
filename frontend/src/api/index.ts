@@ -174,6 +174,8 @@ export const integrationsApi = {
   runPool: (id: string) => client.post(`/integrations/auto-open/pools/${id}/run`),
   listExecutions: (poolId: string, page = 1) =>
     client.get(`/integrations/auto-open/pools/${poolId}/executions`, { params: { page } }),
+  sendNotification: (data: { title?: string; message: string; webhookIds: string[]; color?: string }) =>
+    client.post('/integrations/auto-open/notify', data),
 };
 
 // Helper type (used inline, exported for api file self-containment)
