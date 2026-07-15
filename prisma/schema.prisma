@@ -71,6 +71,7 @@ enum FormFieldTipo {
   numero
   select
   select_brand
+  multiple_brands     // multi-select: one FormValue row per brand
   select_store
   select_ka_type      // dropdown populated from AppConfig category=ka_type
   select_country      // dropdown populated from AppConfig category=country

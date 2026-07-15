@@ -139,7 +139,89 @@ function BrandCombobox({ value, onChange, placeholder = 'Search brand…' }: Bra
 }
 
 type FileFieldValue = { name: string; tempPath: string };
-type FieldValue = string | string[] | FileFieldValue;
+type FieldValue = string | string[] | FileFieldValue | Brand[];
+
+interface MultiBrandComboboxProps {
+  value: Brand[];
+  onChange: (brands: Brand[]) => void;
+}
+
+function MultiBrandCombobox({ value, onChange }: MultiBrandComboboxProps) {
+  const [query, setQuery]   = useState('');
+  const [dQuery, setDQuery] = useState('');
+  const [open, setOpen]     = useState(false);
+  const containerRef        = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDQuery(query), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const { data: results = [] } = useQuery<Brand[]>({
+    queryKey: ['brands-search-multi', dQuery],
+    queryFn: () => brandsApi.list({ q: dQuery, limit: 20 }).then(r => (r.data as { data: Brand[] }).data),
+    enabled: open && dQuery.length >= 1,
+  });
+
+  const selectedIds = new Set(value.map(b => b.id));
+
+  const toggle = (b: Brand) => {
+    if (selectedIds.has(b.id)) onChange(value.filter(x => x.id !== b.id));
+    else onChange([...value, b]);
+    setQuery('');
+  };
+
+  const remove = (id: string) => onChange(value.filter(b => b.id !== id));
+
+  const handleBlur = useCallback((e: React.FocusEvent) => {
+    if (!containerRef.current?.contains(e.relatedTarget as Node)) { setOpen(false); setQuery(''); }
+  }, []);
+
+  return (
+    <div ref={containerRef} onBlur={handleBlur}>
+      {value.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          {value.map(b => (
+            <span key={b.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(255,105,0,0.1)', color: 'var(--orange)', borderRadius: 6, padding: '3px 8px', fontSize: '0.8rem', fontWeight: 500 }}>
+              {b.brandName} <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>· {(b as Brand & { country?: string }).country}</span>
+              <button type="button" onClick={() => remove(b.id)}
+                style={{ marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--orange)', display: 'flex', padding: 0, lineHeight: 1 }}>
+                <XSmall />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div style={{ position: 'relative' }}>
+        <input
+          className="form-input"
+          value={query}
+          placeholder="Search and add brands…"
+          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+        />
+        {open && dQuery.length >= 1 && (
+          <div style={{ position: 'absolute', zIndex: 200, top: 'calc(100% + 4px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', maxHeight: 240, overflowY: 'auto' }}>
+            {results.length === 0 ? (
+              <div style={{ padding: '10px 14px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>No results for "{dQuery}"</div>
+            ) : results.map(b => {
+              const selected = selectedIds.has(b.id);
+              return (
+                <div key={b.id} onMouseDown={() => toggle(b)}
+                  style={{ padding: '9px 14px', cursor: 'pointer', fontSize: '0.84rem', background: selected ? 'rgba(255,105,0,0.08)' : 'transparent', color: selected ? 'var(--orange)' : 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = selected ? 'rgba(255,105,0,0.12)' : 'var(--surface-2)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = selected ? 'rgba(255,105,0,0.08)' : 'transparent')}>
+                  <span style={{ fontWeight: selected ? 600 : 400 }}>{b.brandName}</span>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{b.brandId} · {(b as Brand & { country?: string }).country}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function NewTaskPage() {
   const nav = useNavigate();
@@ -273,13 +355,17 @@ export default function NewTaskPage() {
         const val = formValues[f.id];
         if (f.tipo === 'select_brand') {
           if (val) fvPayload.push({ formFieldId: f.id, brandId: val as string });
+        } else if (f.tipo === 'multiple_brands') {
+          for (const b of (val as Brand[]) ?? []) {
+            fvPayload.push({ formFieldId: f.id, brandId: b.id });
+          }
         } else if (f.tipo === 'select_store') {
           if (val) fvPayload.push({ formFieldId: f.id, shopId: val as string });
         } else if (f.tipo === 'file') {
           const fv = val as FileFieldValue | undefined;
           if (fv?.tempPath) fvPayload.push({ formFieldId: f.id, value: fv.tempPath });
         } else if (f.multiple && Array.isArray(val)) {
-          for (const v of val) {
+          for (const v of val as string[]) {
             if (v) fvPayload.push({ formFieldId: f.id, value: v });
           }
         } else {
@@ -418,6 +504,16 @@ export default function NewTaskPage() {
           value={strVal}
           onChange={id => setField(f.id, id)}
           placeholder={t('pages.newTask.noBrandsFound')}
+        />
+      </div>
+    );
+
+    if (f.tipo === 'multiple_brands') return (
+      <div className="form-group" key={f.id}>
+        {label}
+        <MultiBrandCombobox
+          value={(formValues[f.id] as Brand[]) ?? []}
+          onChange={brands => setField(f.id, brands)}
         />
       </div>
     );

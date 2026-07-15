@@ -300,21 +300,43 @@ export default function TaskDetail() {
           <div className="card mt-2">
             <div className="card-header"><span className="card-title">{t('pages.taskDetail.cardFormInputs')}</span></div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: '0 16px 16px' }}>
-              {task.formValues.map((fv) => {
-                const isTextBox = fv.formField?.tipo === 'text_box';
-                return (
-                  <div key={fv.id} style={isTextBox ? { gridColumn: '1 / -1' } : undefined}>
-                    <div className="text-sm text-muted">{fv.formField?.label ?? fv.formFieldId}</div>
-                    {isTextBox ? (
-                      <pre style={{ fontFamily: 'inherit', fontWeight: 500, marginTop: 2, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                        {fv.valor ?? '—'}
-                      </pre>
-                    ) : (
-                      <div style={{ fontWeight: 500, marginTop: 2 }}>{formValueDisplay(fv)}</div>
-                    )}
-                  </div>
-                );
-              })}
+              {(() => {
+                // Group multiple_brands values by formFieldId
+                const grouped = new Map<string, typeof task.formValues>();
+                const order: string[] = [];
+                for (const fv of task.formValues!) {
+                  const key = fv.formField?.tipo === 'multiple_brands' ? fv.formFieldId : fv.id;
+                  if (!grouped.has(key)) { grouped.set(key, []); order.push(key); }
+                  grouped.get(key)!.push(fv);
+                }
+                return order.map(key => {
+                  const group = grouped.get(key)!;
+                  const fv = group[0];
+                  const tipo = fv.formField?.tipo;
+                  const isTextBox = tipo === 'text_box';
+                  const isMultiBrand = tipo === 'multiple_brands';
+                  return (
+                    <div key={key} style={(isTextBox || isMultiBrand) ? { gridColumn: '1 / -1' } : undefined}>
+                      <div className="text-sm text-muted">{fv.formField?.label ?? fv.formFieldId}</div>
+                      {isTextBox ? (
+                        <pre style={{ fontFamily: 'inherit', fontWeight: 500, marginTop: 2, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {fv.valor ?? '—'}
+                        </pre>
+                      ) : isMultiBrand ? (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                          {group.map(g => (
+                            <span key={g.id} style={{ background: 'rgba(255,105,0,0.1)', color: 'var(--orange)', borderRadius: 6, padding: '3px 10px', fontSize: '0.8rem', fontWeight: 500 }}>
+                              {g.brand ? `${g.brand.brandName} · ${g.brand.brandId}` : '—'}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ fontWeight: 500, marginTop: 2 }}>{formValueDisplay(fv)}</div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
         )}
