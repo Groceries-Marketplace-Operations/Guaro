@@ -338,6 +338,19 @@ export default function NewTaskPage() {
       </div>
     );
 
+    if (f.tipo === 'text_box') return (
+      <div className="form-group" key={f.id}>
+        {label}
+        <textarea
+          className="form-input"
+          rows={5}
+          style={{ resize: 'vertical', minHeight: 100 }}
+          value={strVal}
+          onChange={e => setField(f.id, e.target.value)}
+        />
+      </div>
+    );
+
     if (f.tipo === 'numero') return (
       <div className="form-group" key={f.id}>
         {label}

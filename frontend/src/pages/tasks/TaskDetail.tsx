@@ -300,12 +300,21 @@ export default function TaskDetail() {
           <div className="card mt-2">
             <div className="card-header"><span className="card-title">{t('pages.taskDetail.cardFormInputs')}</span></div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: '0 16px 16px' }}>
-              {task.formValues.map((fv) => (
-                <div key={fv.id}>
-                  <div className="text-sm text-muted">{fv.formField?.label ?? fv.formFieldId}</div>
-                  <div style={{ fontWeight: 500, marginTop: 2 }}>{formValueDisplay(fv)}</div>
-                </div>
-              ))}
+              {task.formValues.map((fv) => {
+                const isTextBox = fv.formField?.tipo === 'text_box';
+                return (
+                  <div key={fv.id} style={isTextBox ? { gridColumn: '1 / -1' } : undefined}>
+                    <div className="text-sm text-muted">{fv.formField?.label ?? fv.formFieldId}</div>
+                    {isTextBox ? (
+                      <pre style={{ fontFamily: 'inherit', fontWeight: 500, marginTop: 2, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {fv.valor ?? '—'}
+                      </pre>
+                    ) : (
+                      <div style={{ fontWeight: 500, marginTop: 2 }}>{formValueDisplay(fv)}</div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

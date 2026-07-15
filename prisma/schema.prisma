@@ -67,6 +67,7 @@ enum FormFieldTipo {
   link
   link_spreadsheet
   texto
+  text_box            // multi-line free text area
   numero
   select
   select_brand
