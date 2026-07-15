@@ -28,7 +28,7 @@ const EditIcon = () => (
 );
 
 const EXECUTION_TYPES: ExecutionType[] = ['manual_internal', 'manual_external', 'automatic'];
-const STRATEGIES: AssignmentStrategy[] = ['fixed', 'round_robin', 'brand_assignment', 'by_weight', 'manual'];
+const STRATEGIES: AssignmentStrategy[] = ['fixed', 'round_robin', 'brand_assignment', 'by_weight', 'manual', 'same_previous_step'];
 const TIPO_OPTIONS = [
   { v: 'link',  l: 'Link (URL)' },
   { v: 'xlsx',  l: 'Excel (.xlsx)' },
@@ -769,7 +769,8 @@ export default function TaskTypeDetail() {
                 {stepForm.assignmentStrategy === 'brand_assignment' ? t('pages.taskTypeDetail.strategyBrandAssignment') : ''}
                 {stepForm.assignmentStrategy === 'by_weight' ? t('pages.taskTypeDetail.strategyByWeight') : ''}
                 {stepForm.assignmentStrategy === 'manual' ? t('pages.taskTypeDetail.strategyManual') : ''}
-                {stepForm.assignmentStrategy !== 'brand_assignment' && stepForm.assignmentStrategy !== 'manual' && !stepToEdit && t('pages.taskTypeDetail.strategyAddNote')}
+                {stepForm.assignmentStrategy === 'same_previous_step' ? t('pages.taskTypeDetail.strategySamePreviousStep') : ''}
+                {stepForm.assignmentStrategy !== 'brand_assignment' && stepForm.assignmentStrategy !== 'manual' && stepForm.assignmentStrategy !== 'same_previous_step' && !stepToEdit && t('pages.taskTypeDetail.strategyAddNote')}
               </p>
             </div>
           )}

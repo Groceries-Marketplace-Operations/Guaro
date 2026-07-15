@@ -51,6 +51,7 @@ enum AssignmentStrategy {
   by_weight      // on hold — not used in code; kept for DB compatibility
   brand_assignment // assign via BrandAssignmentRule (ka_type × country)
   manual        // admin selects BPO at runtime
+  same_previous_step // assign the same BPO who worked the previous step
 
   @@map("EstrategiaAsignacion")
 }

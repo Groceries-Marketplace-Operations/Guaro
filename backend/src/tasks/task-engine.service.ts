@@ -42,7 +42,7 @@ export class TaskEngineService {
       if (!step) throw new NotFoundException('StepInstance not found');
       if (step.status !== StepStatus.pending) return;
 
-      const assignedToId = await this.assignBpo(tx, step.stepDefinition, step.taskId);
+      const assignedToId = await this.assignBpo(tx, step.stepDefinition, step.taskId, step.id);
       isAutomatic = step.stepDefinition.executionType === ExecutionType.automatic;
 
       if (isAutomatic) {
@@ -364,13 +364,31 @@ export class TaskEngineService {
 
   private async assignBpo(
     tx: Tx,
-    stepDef: { id: string; assignmentStrategy: AssignmentStrategy; weight: number },
+    stepDef: { id: string; assignmentStrategy: AssignmentStrategy; weight: number; order: number },
     taskId: string,
+    stepInstanceId: string,
   ): Promise<string | undefined> {
 
     // ── Manual: admin assigns at runtime, no automatic assignment ────────────
     if (stepDef.assignmentStrategy === AssignmentStrategy.manual) {
       return undefined;
+    }
+
+    // ── Same previous step: inherit the BPO from the last completed step ──────
+    if (stepDef.assignmentStrategy === AssignmentStrategy.same_previous_step) {
+      const prev = await tx.stepInstance.findFirst({
+        where: {
+          taskId,
+          id: { not: stepInstanceId },
+          assignedToId: { not: null },
+          stepDefinition: { order: { lt: stepDef.order } },
+        },
+        orderBy: { stepDefinition: { order: 'desc' } },
+        select: { assignedToId: true },
+      });
+      if (prev?.assignedToId) return prev.assignedToId;
+      // Fallback: round_robin over the pool if no previous step has an assignee
+      return this.roundRobinFromStep(tx, stepDef.id);
     }
 
     // ── Brand assignment: resolve BPO via BrandAssignmentRule ─────────────────
