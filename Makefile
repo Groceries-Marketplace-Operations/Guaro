@@ -5,15 +5,11 @@ deploy:
 	git pull
 	$(DC) build --no-cache backend frontend
 	$(DC) up -d
-	sleep 5
-	$(DC) exec backend npx prisma migrate deploy --schema=./prisma/schema.prisma
 
 deploy-backend:
 	git pull
 	$(DC) build --no-cache backend
 	$(DC) up -d backend
-	sleep 5
-	$(DC) exec backend npx prisma migrate deploy --schema=./prisma/schema.prisma
 
 deploy-frontend:
 	git pull
