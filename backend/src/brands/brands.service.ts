@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AccountRole, AssignmentMode, Country, KaType, MenuIntegration, PaymentMode, PickingMode, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddRuleCandidateDto } from './dto/add-rule-candidate.dto';
@@ -66,17 +66,24 @@ export class BrandsService {
   async create(dto: CreateBrandDto, createdById: string) {
     const { webhookIds, ...brandData } = dto;
     const ownerId = await this.assignOwner(dto.kaType, dto.country);
-    return this.prisma.brand.create({
-      data: {
-        ...brandData,
-        ownerId: ownerId ?? undefined,
-        createdById,
-        ...(webhookIds?.length && {
-          webhooks: { create: webhookIds.map(webhookId => ({ webhookId })) },
-        }),
-      },
-      include: BRAND_INCLUDE,
-    });
+    try {
+      return await this.prisma.brand.create({
+        data: {
+          ...brandData,
+          ownerId: ownerId ?? undefined,
+          createdById,
+          ...(webhookIds?.length && {
+            webhooks: { create: webhookIds.map(webhookId => ({ webhookId })) },
+          }),
+        },
+        include: BRAND_INCLUDE,
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new BadRequestException(`A brand with Brand ID "${dto.brandId}" already exists.`);
+      }
+      throw e;
+    }
   }
 
   async update(id: string, dto: UpdateBrandDto, requesterId?: string, requesterRoles?: AccountRole[]) {
