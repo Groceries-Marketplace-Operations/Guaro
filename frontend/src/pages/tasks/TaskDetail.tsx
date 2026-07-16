@@ -279,14 +279,26 @@ export default function TaskDetail() {
                         </div>
                       )}
                       {s.status === 'done' && (s.result as { fileKey?: string } | null)?.fileKey && (
-                        <a
-                          href={`/api/tasks/downloads/${(s.result as { fileKey: string }).fileKey}`}
-                          download
+                        <button
                           className="btn btn-sm btn-primary"
-                          style={{ textDecoration: 'none' }}
+                          onClick={async () => {
+                            const fileKey = (s.result as { fileKey: string }).fileKey;
+                            const token = localStorage.getItem('token');
+                            const res = await fetch(`/api/tasks/downloads/${fileKey}`, {
+                              headers: token ? { Authorization: `Bearer ${token}` } : {},
+                            });
+                            if (!res.ok) return;
+                            const blob = await res.blob();
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = fileKey;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
                         >
                           ↓ {t('pages.taskDetail.downloadFile')}
-                        </a>
+                        </button>
                       )}
                       {canManualAssign && s.status === 'failed' && s.stepDefinition?.executionType !== 'automatic' && (
                         <button
