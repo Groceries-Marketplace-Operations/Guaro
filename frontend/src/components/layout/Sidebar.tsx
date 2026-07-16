@@ -83,7 +83,7 @@ export default function Sidebar() {
   const isBpo      = hasAny(roles, 'bpo');
   const isSA       = roles.includes('super_admin');
   const isDirector = roles.includes('director');
-  const canCreate  = !isDirector && !(isBpo && !isAdmin);
+  const canCreate  = !isDirector;
   const adminMods  = account?.adminModules ?? [];
   const canSeeModule = (mod: string) => isSA || adminMods.includes(mod);
 

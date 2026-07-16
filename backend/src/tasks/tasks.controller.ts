@@ -45,7 +45,7 @@ export class TasksController {
   }
 
   @Post()
-  @Roles(AccountRole.user, AccountRole.admin, AccountRole.super_admin)
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateTaskDto) {
     return this.tasksService.create(dto, u.id);
   }
