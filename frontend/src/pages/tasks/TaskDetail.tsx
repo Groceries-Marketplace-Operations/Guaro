@@ -278,6 +278,16 @@ export default function TaskDetail() {
                           </button>
                         </div>
                       )}
+                      {s.status === 'done' && (s.result as { fileKey?: string } | null)?.fileKey && (
+                        <a
+                          href={`/api/tasks/downloads/${(s.result as { fileKey: string }).fileKey}`}
+                          download
+                          className="btn btn-sm btn-primary"
+                          style={{ textDecoration: 'none' }}
+                        >
+                          ↓ {t('pages.taskDetail.downloadFile')}
+                        </a>
+                      )}
                       {canManualAssign && s.status === 'failed' && s.stepDefinition?.executionType !== 'automatic' && (
                         <button
                           className="btn btn-sm btn-ghost"

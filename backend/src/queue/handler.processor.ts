@@ -40,6 +40,7 @@ export interface HandlerContext {
     brandId: string;
     brandName: string;
     country: string;
+    kaType: string | null;
     category: string | null;
     application: {
       appId: string;
@@ -156,6 +157,7 @@ export class HandlerProcessor extends WorkerHost {
           brandId: rawBrand.brandId,
           brandName: rawBrand.brandName,
           country: rawBrand.country,
+          kaType: rawBrand.kaType,
           category: rawBrand.category,
           application: rawBrand.application
             ? {
