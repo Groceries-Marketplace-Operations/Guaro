@@ -115,8 +115,10 @@ export class TasksController {
       throw new NotFoundException('File not found');
     }
     const filepath = join(process.cwd(), 'uploads', 'exports', fileKey);
+    let fileSize: number;
     try {
-      await stat(filepath);
+      const s = await stat(filepath);
+      fileSize = s.size;
     } catch {
       throw new NotFoundException('File not found or already downloaded');
     }
@@ -127,6 +129,7 @@ export class TasksController {
     return new StreamableFile(stream, {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       disposition: `attachment; filename="${fileKey}"`,
+      length: fileSize,
     });
   }
 
