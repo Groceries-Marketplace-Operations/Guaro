@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
-import Exceljs from 'exceljs';
+import * as Exceljs from 'exceljs';
 import { registerHandler, HandlerContext } from '../handler.processor';
 import {
   DIDI_BASE,
@@ -132,8 +132,9 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
       const shop = batch[i];
       const dr = detailResults[i];
       if (dr.status === 'rejected' || dr.value?.errno !== 0 || !dr.value?.data) {
-        const reason = dr.status === 'rejected' ? (dr.reason as Error).message : dr.value?.errmsg;
+        const reason = dr.status === 'rejected' ? (dr.reason as Error).message : `errno=${dr.value?.errno} ${dr.value?.errmsg}`;
         logger.warn(`Detail failed for ${shop.appShopId}: ${reason}`);
+        ctx.addNote(`⚠ ${shop.appShopId}: ${reason}`);
         continue;
       }
       const d = dr.value.data;
