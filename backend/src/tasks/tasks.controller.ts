@@ -1,7 +1,6 @@
 import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { createReadStream } from 'fs';
 import { unlink, stat } from 'fs/promises';
 import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
@@ -123,13 +122,9 @@ export class TasksController {
       throw new NotFoundException('File not found or already downloaded');
     }
 
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileKey}"`);
-
-    const stream = createReadStream(filepath);
-    stream.pipe(res);
-    stream.on('end', () => unlink(filepath).catch(() => {}));
-    stream.on('error', () => { try { res.end(); } catch { /* ignore */ } });
+    res.download(filepath, fileKey, (err) => {
+      if (!err) unlink(filepath).catch(() => {});
+    });
   }
 
   @Post('upload-excel')
