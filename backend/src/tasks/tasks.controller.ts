@@ -1,8 +1,7 @@
-import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query, Redirect, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { createReadStream } from 'fs';
-import { unlink, stat } from 'fs/promises';
+import { stat } from 'fs/promises';
 import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
 import { AccountRole, TaskStatus } from '@prisma/client';
@@ -110,27 +109,18 @@ export class TasksController {
 
   @Get('downloads/:fileKey')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
-  async downloadExport(@Param('fileKey') fileKey: string): Promise<StreamableFile> {
+  @Redirect()
+  async downloadExport(@Param('fileKey') fileKey: string) {
     if (!/^shops-[a-zA-Z0-9_-]+-\d+\.xlsx$/.test(fileKey)) {
       throw new NotFoundException('File not found');
     }
     const filepath = join(process.cwd(), 'uploads', 'exports', fileKey);
-    let fileSize: number;
     try {
-      const s = await stat(filepath);
-      fileSize = s.size;
+      await stat(filepath);
     } catch {
       throw new NotFoundException('File not found or already downloaded');
     }
-
-    const stream = createReadStream(filepath);
-    stream.on('close', () => unlink(filepath).catch(() => {}));
-
-    return new StreamableFile(stream, {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      disposition: `attachment; filename="${fileKey}"`,
-      length: fileSize,
-    });
+    return { url: `/uploads/exports/${fileKey}`, statusCode: 302 };
   }
 
   @Post('upload-excel')
