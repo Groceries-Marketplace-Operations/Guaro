@@ -120,7 +120,7 @@ export class TasksController {
     } catch {
       throw new NotFoundException('File not found or already downloaded');
     }
-    return { url: `/uploads/exports/${fileKey}`, statusCode: 302 };
+    return { url: `/api/uploads/exports/${fileKey}`, statusCode: 302 };
   }
 
   @Post('upload-excel')
