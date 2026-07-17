@@ -527,7 +527,7 @@ export class TaskEngineService {
     const lines = [
       task.brand ? `🏷️ ${task.brand.brandName} (${task.brand.country})` : null,
       stepLabel     ? `📋 ${stepLabel}`                    : null,
-      bpoHandle     ? `👤 BPO: @${bpoHandle}`              : null,
+      bpoHandle     ? `👤 PoC: @${bpoHandle}`              : null,
       creatorHandle ? `✏️ Created by: @${creatorHandle}`   : null,
       `🔗 ${taskUrl}`,
     ].filter(Boolean).join('\n');

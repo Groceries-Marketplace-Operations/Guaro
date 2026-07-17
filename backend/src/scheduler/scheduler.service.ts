@@ -88,13 +88,13 @@ export class SchedulerService {
         const lines = [
           `📋 Step: ${step.stepDefinition.name}`,
           step.task.brand ? `🏷️ ${step.task.brand.brandName} (${step.task.brand.country})` : null,
-          bpoHandle     ? `👤 BPO: @${bpoHandle}`          : null,
+          bpoHandle     ? `👤 PoC: @${bpoHandle}`          : null,
           creatorHandle ? `✏️ Created by: @${creatorHandle}` : null,
           `🔗 ${taskUrl}`,
         ].filter(Boolean).join('\n');
         await this.webhookSender.sendAlert({
-          text: `⏰ BPO timeout — **${step.task.taskType.name}**`,
-          attachments: [{ title: 'BPO Timeout', text: lines, color: '#FF9800' }],
+          text: `⏰ PoC timeout — **${step.task.taskType.name}**`,
+          attachments: [{ title: 'PoC Timeout', text: lines, color: '#FF9800' }],
         });
       } catch (err) {
         this.logger.error(`Error on bpo timeout ${step.id}: ${(err as Error).message}`);
