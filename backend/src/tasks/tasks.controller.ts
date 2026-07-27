@@ -1,7 +1,7 @@
-import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query, Redirect, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { stat } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
 import { AccountRole, TaskStatus } from '@prisma/client';
@@ -109,7 +109,6 @@ export class TasksController {
 
   @Get(':id/steps/:stepId/download')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
-  @Redirect()
   async downloadExport(
     @Param('id') id: string,
     @Param('stepId') stepId: string,
@@ -121,13 +120,17 @@ export class TasksController {
       { roles: u.roles, accountId: u.id, sectionId: u.sectionId },
     );
     const filepath = join(process.cwd(), 'uploads', 'exports', fileKey);
+    let data: Buffer;
     try {
-      await stat(filepath);
+      data = await readFile(filepath);
     } catch {
       throw new NotFoundException('File not found or already downloaded');
     }
-    const apiPrefix = process.env.NODE_ENV === 'production' ? '/api' : '';
-    return { url: `${apiPrefix}/uploads/exports/${fileKey}`, statusCode: 302 };
+    return {
+      fileKey,
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      contentBase64: data.toString('base64'),
+    };
   }
 
   @Post('upload-excel')

@@ -122,7 +122,9 @@ export const tasksApi = {
   assignStep: (taskId: string, stepId: string, accountId: string) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/assign`, { accountId }),
   downloadStepExport: (taskId: string, stepId: string) =>
-    client.get<Blob>(`/tasks/${taskId}/steps/${stepId}/download`, { responseType: 'blob' }),
+    client.get<{ fileKey: string; mimeType: string; contentBase64: string }>(
+      `/tasks/${taskId}/steps/${stepId}/download`,
+    ),
   uploadExcel: (formData: FormData) =>
     client.post<{ tempPath: string; originalName: string }>('/tasks/upload-excel', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

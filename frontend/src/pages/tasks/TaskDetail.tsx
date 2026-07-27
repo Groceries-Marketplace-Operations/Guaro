@@ -285,7 +285,10 @@ export default function TaskDetail() {
                             const fileKey = (s.result as { fileKey: string }).fileKey;
                             try {
                               const res = await tasksApi.downloadStepExport(id!, s.id);
-                              const url = URL.createObjectURL(res.data);
+                              const binary = atob(res.data.contentBase64);
+                              const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+                              const blob = new Blob([bytes], { type: res.data.mimeType });
+                              const url = URL.createObjectURL(blob);
                               const a = document.createElement('a');
                               a.href = url;
                               a.download = fileKey;
