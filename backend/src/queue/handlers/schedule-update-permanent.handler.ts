@@ -6,7 +6,7 @@ import { registerHandler, HandlerContext } from '../handler.processor';
 import {
   DIDI_BASE, BATCH_SIZE, COOLDOWN_BATCH_MS,
   sleep, parseJsonKeepingIds,
-  isClosed, parseScheduleString, applyBuffer, minutesToHHMM,
+  isClosed, parseScheduleString, minutesToHHMM,
   isRawShopId, fetchShopIdMap, getAuthToken,
 } from './didi-food.util';
 
@@ -52,8 +52,8 @@ async function readExcel(filePath: string): Promise<ShopSchedule[]> {
         dayBizTime.push(null);
       } else {
         try {
-          const buffered = applyBuffer(parseScheduleString(raw));
-          dayBizTime.push(buffered.map(r => ({ begin: minutesToHHMM(r.begin), end: minutesToHHMM(r.end) })));
+          const ranges = parseScheduleString(raw);
+          dayBizTime.push(ranges.map(r => ({ begin: minutesToHHMM(r.begin), end: minutesToHHMM(r.end) })));
         } catch {
           logger.warn(`Row ${rowNum}: invalid schedule "${raw}" for shop ${shopId} col ${col} — treating as closed`);
           dayBizTime.push(null);

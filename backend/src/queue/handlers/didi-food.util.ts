@@ -8,7 +8,6 @@ export const COOLDOWN_PAGE_MS    = 500;   // between pagination calls
 export const COOLDOWN_BATCH_MS   = 1500;  // between shop batches
 export const COOLDOWN_RETRY_MS   = 2000;  // before retry on transient error
 export const COOLDOWN_SHOPLIST_MS = 20000; // between shop list pagination pages (DiDi rate limit)
-const BUFFER_MINUTES = 15;             // buffer added to outermost schedule edges
 
 // ── Primitives ────────────────────────────────────────────────────────────────
 
@@ -66,21 +65,6 @@ export function parseScheduleString(s: string): { begin: number; end: number }[]
     const [eh, em] = endStr.split(':').map(Number);
     return { begin: sh * 60 + (sm || 0), end: eh * 60 + (em || 0) };
   });
-}
-
-/**
- * Expand the outermost edges of a schedule by BUFFER_MINUTES.
- * Only first.begin and last.end are adjusted — split-point edges are untouched.
- */
-export function applyBuffer(
-  ranges: { begin: number; end: number }[],
-  bufferMins = BUFFER_MINUTES,
-): { begin: number; end: number }[] {
-  if (ranges.length === 0) return ranges;
-  const result = ranges.map(r => ({ ...r }));
-  result[0].begin = Math.max(0, result[0].begin - bufferMins);
-  result[result.length - 1].end = Math.min(23 * 60 + 59, result[result.length - 1].end + bufferMins);
-  return result;
 }
 
 /** Convert minutes-from-midnight to "HH:MM" string. */
