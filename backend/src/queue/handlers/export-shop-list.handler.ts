@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
 import * as Exceljs from 'exceljs';
@@ -52,6 +53,7 @@ async function fetchAllShopsBasic(appId: string, appSecret: string, onPage: (n: 
   const all: BasicShop[] = [];
   let pageNo = 1;
   let totalKnown = Infinity;
+  let rateLimitRetries = 0;
 
   while (all.length < totalKnown) {
     const timestamp = String(Math.floor(Date.now() / 1000));
@@ -64,12 +66,16 @@ async function fetchAllShopsBasic(appId: string, appSecret: string, onPage: (n: 
       body: JSON.stringify(params),
     });
 
+    if (!res.ok) throw new Error(`DiDi shop list HTTP error: ${res.status}`);
     const body = parseJsonKeepingIds(await res.text());
 
     if (body.errno === 10005) {
+      rateLimitRetries++;
+      if (rateLimitRetries > 3) throw new Error(`DiDi shop list rate limit persisted on page ${pageNo}`);
       await sleep(COOLDOWN_SHOPLIST_MS);
       continue;
     }
+    rateLimitRetries = 0;
     if (body.errno !== 0) {
       throw new Error(`DiDi shop list failed (page ${pageNo}): ${body.errmsg} (errno=${body.errno})`);
     }
@@ -123,7 +129,8 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
     const detailResults = await Promise.allSettled(
       tokenResults.map(async (tr, i) => {
         if (tr.status === 'rejected') throw tr.reason;
-        const res = await fetch(`${DIDI_BASE}/v1/shop/shop/detail?auth_token=${tr.value}`);
+        const res = await fetch(`${DIDI_BASE}/v1/shop/shop/detail?auth_token=${encodeURIComponent(tr.value)}`);
+        if (!res.ok) throw new Error(`DiDi shop detail HTTP error: ${res.status}`);
         return parseJsonKeepingIds(await res.text());
       }),
     );
@@ -156,6 +163,10 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
 
   ctx.addNote(`Details fetched: ${rows.length}/${shops.length} shops. Building file…`);
 
+  if (shops.length > 0 && rows.length === 0) {
+    throw new Error('Could not fetch details for any shop; export file was not generated');
+  }
+
   // ── 3. Build .xlsx ────────────────────────────────────────────────────────
   const wb = new Exceljs.Workbook();
   const ws = wb.addWorksheet('Tiendas');
@@ -184,7 +195,7 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
   // ── 4. Save to disk ───────────────────────────────────────────────────────
   const exportsDir = join(process.cwd(), 'uploads', 'exports');
   await mkdir(exportsDir, { recursive: true });
-  const filename = `shops-${brand.brandId}-${Date.now()}.xlsx`;
+  const filename = `shops-${randomUUID()}.xlsx`;
   await wb.xlsx.writeFile(join(exportsDir, filename));
 
   logger.log(`Saved: ${filename} (${rows.length} rows)`);

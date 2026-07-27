@@ -283,18 +283,19 @@ export default function TaskDetail() {
                           className="btn btn-sm btn-primary"
                           onClick={async () => {
                             const fileKey = (s.result as { fileKey: string }).fileKey;
-                            const token = localStorage.getItem('token');
-                            const res = await fetch(`/api/tasks/downloads/${fileKey}`, {
-                              headers: token ? { Authorization: `Bearer ${token}` } : {},
-                            });
-                            if (!res.ok) return;
-                            const blob = await res.blob();
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = fileKey;
-                            a.click();
-                            URL.revokeObjectURL(url);
+                            try {
+                              const res = await tasksApi.downloadStepExport(id!, s.id);
+                              const url = URL.createObjectURL(res.data);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = fileKey;
+                              document.body.appendChild(a);
+                              a.click();
+                              a.remove();
+                              setTimeout(() => URL.revokeObjectURL(url), 1000);
+                            } catch {
+                              setErr(t('pages.taskDetail.errorDownloading'));
+                            }
                           }}
                         >
                           ↓ {t('pages.taskDetail.downloadFile')}

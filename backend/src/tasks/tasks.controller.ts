@@ -107,20 +107,27 @@ export class TasksController {
     return this.taskEngine.assignStepManually(stepId, accountId);
   }
 
-  @Get('downloads/:fileKey')
+  @Get(':id/steps/:stepId/download')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
   @Redirect()
-  async downloadExport(@Param('fileKey') fileKey: string) {
-    if (!/^shops-[a-zA-Z0-9_-]+-\d+\.xlsx$/.test(fileKey)) {
-      throw new NotFoundException('File not found');
-    }
+  async downloadExport(
+    @Param('id') id: string,
+    @Param('stepId') stepId: string,
+    @CurrentUser() u: JwtUser,
+  ) {
+    const fileKey = await this.tasksService.getStepExport(
+      id,
+      stepId,
+      { roles: u.roles, accountId: u.id, sectionId: u.sectionId },
+    );
     const filepath = join(process.cwd(), 'uploads', 'exports', fileKey);
     try {
       await stat(filepath);
     } catch {
       throw new NotFoundException('File not found or already downloaded');
     }
-    return { url: `/api/uploads/exports/${fileKey}`, statusCode: 302 };
+    const apiPrefix = process.env.NODE_ENV === 'production' ? '/api' : '';
+    return { url: `${apiPrefix}/uploads/exports/${fileKey}`, statusCode: 302 };
   }
 
   @Post('upload-excel')

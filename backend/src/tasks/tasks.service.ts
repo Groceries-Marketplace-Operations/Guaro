@@ -185,6 +185,22 @@ export class TasksService {
     return task;
   }
 
+  async getStepExport(
+    taskId: string,
+    stepId: string,
+    viewer: { roles: AccountRole[]; accountId: string; sectionId: string | null },
+  ): Promise<string> {
+    const task = await this.findOne(taskId, viewer);
+    const step = task.stepInstances.find((item) => item.id === stepId);
+    if (!step) throw new NotFoundException('Step not found in this task');
+
+    const fileKey = (step.result as { fileKey?: unknown } | null)?.fileKey;
+    if (step.status !== 'done' || typeof fileKey !== 'string' ||
+        !/^shops-[a-zA-Z0-9_-]+\.xlsx$/.test(fileKey)) {
+      throw new NotFoundException('Export file not found');
+    }
+    return fileKey;
+  }
   // ── Step actions ──────────────────────────────────────────────────────────
 
   async completeStep(taskId: string, stepId: string, result?: unknown, note?: string) {

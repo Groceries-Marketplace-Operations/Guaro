@@ -9,6 +9,9 @@ import { WebhookSenderService } from './webhooks/webhook-sender.service';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  // Static downloads need CORS when frontend and backend use different origins.
+  app.enableCors();
+
   // Serve uploaded template files as static assets
   app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
 
@@ -22,8 +25,6 @@ async function bootstrap() {
       transform: true,
     }),
   );
-
-  app.enableCors();
 
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
