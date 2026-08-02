@@ -338,6 +338,7 @@ model Webhook {
   stepWebhooks   StepWebhook[]
   brandWebhooks  BrandWebhook[]
   autoOpenPools  AutoOpenPool[]
+  autoTurnOffPools AutoTurnOffPool[]
 
   @@map("webhook")
 }
@@ -402,6 +403,7 @@ model Brand {
   tasks       Task[]
   formValues  FormValue[]
   autoOpenPoolBrands AutoOpenPoolBrand[]
+  autoTurnOffRules   AutoTurnOffRule[]
 
   @@index([ownerId])
   @@index([applicationId])
@@ -655,6 +657,72 @@ model AutoOpenExecution {
 
   @@index([poolId])
   @@map("auto_open_execution")
+}
+
+// -------------------- Integrations: Auto Turn Off Items ---------------------
+model AutoTurnOffPool {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  active    Boolean  @default(true)
+  webhookId String?  @map("webhook_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  webhook    Webhook?               @relation(fields: [webhookId], references: [id], onDelete: SetNull)
+  rules      AutoTurnOffRule[]
+  executions AutoTurnOffExecution[]
+
+  @@map("auto_turn_off_pool")
+}
+
+model AutoTurnOffRule {
+  id              String    @id @default(uuid()) @db.Uuid
+  poolId          String    @map("pool_id") @db.Uuid
+  brandId         String    @map("brand_id") @db.Uuid
+  name            String
+  active          Boolean   @default(true)
+  intervalMinutes Int       @map("interval_minutes")
+  upcs            String[]
+  shopIds         String[]  @map("shop_ids")
+  resolvedShopIds Json?     @map("resolved_shop_ids")
+  stockEndpoint   String    @default("setStock") @map("stock_endpoint")
+  startsAt        DateTime  @map("starts_at") @db.Timestamptz
+  nextRunAt       DateTime  @map("next_run_at") @db.Timestamptz
+  lastRunAt       DateTime? @map("last_run_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  pool       AutoTurnOffPool        @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  brand      Brand                  @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  executions AutoTurnOffExecution[]
+
+  @@index([poolId])
+  @@index([brandId])
+  @@index([active, nextRunAt])
+  @@map("auto_turn_off_rule")
+}
+
+model AutoTurnOffExecution {
+  id             String         @id @default(uuid()) @db.Uuid
+  poolId         String         @map("pool_id") @db.Uuid
+  ruleId         String         @map("rule_id") @db.Uuid
+  status         AutoOpenStatus @default(pending)
+  trigger        String         @default("scheduled")
+  startedAt      DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt     DateTime?      @map("finished_at") @db.Timestamptz
+  totalShops     Int            @default(0) @map("total_shops")
+  shopsSucceeded Int            @default(0) @map("shops_succeeded")
+  itemsTurnedOff Int            @default(0) @map("items_turned_off")
+  logs           Json?
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  pool AutoTurnOffPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  rule AutoTurnOffRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([poolId])
+  @@index([ruleId])
+  @@index([createdAt])
+  @@map("auto_turn_off_execution")
 }
 
 // -------------------------- Auth / invitations -----------------------------

@@ -240,3 +240,61 @@ export interface AutoOpenExecution {
   logs?: { brands: Array<{ brandName: string; shopsProcessed: number; shopsOpened: number; error?: string }> };
   createdAt: string;
 }
+
+export interface AutoTurnOffRule {
+  id: string;
+  poolId: string;
+  brandId: string;
+  name: string;
+  active: boolean;
+  intervalMinutes: number;
+  upcs: string[];
+  shopIds: string[];
+  stockEndpoint: 'setStock' | 'setstockSync';
+  startsAt: string;
+  nextRunAt: string;
+  lastRunAt?: string;
+  executions?: Array<{ id: string; status: AutoOpenStatus }>;
+  brand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutoTurnOffPool {
+  id: string;
+  name: string;
+  active: boolean;
+  webhookId?: string;
+  webhook?: { id: string; name: string };
+  rules: AutoTurnOffRule[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutoTurnOffExecution {
+  id: string;
+  poolId: string;
+  ruleId: string;
+  status: AutoOpenStatus;
+  trigger: 'manual' | 'scheduled';
+  startedAt?: string;
+  finishedAt?: string;
+  totalShops: number;
+  shopsSucceeded: number;
+  itemsTurnedOff: number;
+  rule: { id: string; name: string; brand: { brandName: string } };
+  logs?: {
+    shops: Array<{
+      shopId: string;
+      appShopId: string;
+      endpoint: 'setStock' | 'setstockSync';
+      success: boolean;
+      itemsSucceeded: number;
+      itemsFailed: number;
+      taskId?: string;
+      failedItems?: Array<{ appItemId: string; reason: string }>;
+      error?: string;
+    }>;
+  };
+  createdAt: string;
+}

@@ -133,9 +133,11 @@ export async function getAuthToken(
 export async function fetchShopIdMap(
   appId: string,
   appSecret: string,
+  targetShopIds?: readonly string[],
 ): Promise<Map<string, string>> {
   const pageSize = 100;
   const allShops: { shopId: string; appShopId: string }[] = [];
+  const unresolved = targetShopIds ? new Set(targetShopIds) : null;
   let pageNo = 1;
 
   while (true) {
@@ -161,11 +163,13 @@ export async function fetchShopIdMap(
 
     const shops: { shop_id: string; app_shop_id: string }[] = body.data?.shop_list ?? [];
     for (const s of shops) {
-      allShops.push({ shopId: String(s.shop_id), appShopId: String(s.app_shop_id) });
+      const shopId = String(s.shop_id);
+      allShops.push({ shopId, appShopId: String(s.app_shop_id) });
+      unresolved?.delete(shopId);
     }
 
     const total: number = body.data?.total ?? 0;
-    if (allShops.length >= total || shops.length < pageSize) break;
+    if (unresolved?.size === 0 || allShops.length >= total || shops.length < pageSize) break;
 
     pageNo++;
     await sleep(COOLDOWN_SHOPLIST_MS);

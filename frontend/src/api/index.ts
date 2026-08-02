@@ -184,6 +184,20 @@ export const integrationsApi = {
     client.post('/integrations/auto-open/notify', data),
 };
 
+/* ── Integrations: Auto Turn Off Items ─────────────────────────────────── */
+export const autoTurnOffApi = {
+  listPools: () => client.get('/integrations/auto-turn-off/pools'),
+  createPool: (data: object) => client.post('/integrations/auto-turn-off/pools', data),
+  updatePool: (id: string, data: object) => client.patch(`/integrations/auto-turn-off/pools/${id}`, data),
+  deletePool: (id: string) => client.delete(`/integrations/auto-turn-off/pools/${id}`),
+  createRule: (poolId: string, data: object) => client.post(`/integrations/auto-turn-off/pools/${poolId}/rules`, data),
+  updateRule: (id: string, data: object) => client.patch(`/integrations/auto-turn-off/rules/${id}`, data),
+  deleteRule: (id: string) => client.delete(`/integrations/auto-turn-off/rules/${id}`),
+  runRule: (id: string) => client.post(`/integrations/auto-turn-off/rules/${id}/run`),
+  listExecutions: (poolId: string, page = 1) =>
+    client.get(`/integrations/auto-turn-off/pools/${poolId}/executions`, { params: { page } }),
+};
+
 /* ── Admin (super_admin only) ────────────────────────────────── */
 export const adminApi = {
   queueStatus: () => client.get('/admin/queue-status'),

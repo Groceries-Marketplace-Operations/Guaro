@@ -71,6 +71,7 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'nav.signOut': 'Sign out',
     'nav.internalPanel': 'Internal Panel',
     'nav.integrations': 'Integrations',
+    'nav.autoTurnOffItems': 'Auto Turn Off Items',
     'nav.autoOpenStores': 'Auto Open Stores',
 
     'pages.integrations.subtitle': 'Automate store availability via DiDi Food API',
@@ -814,6 +815,7 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'nav.signOut': 'Cerrar sesión',
     'nav.internalPanel': 'Panel interno',
     'nav.integrations': 'Integraciones',
+    'nav.autoTurnOffItems': 'Apagado automático de ítems',
     'nav.autoOpenStores': 'Auto Open Stores',
 
     'pages.integrations.subtitle': 'Automatiza la disponibilidad de tiendas vía DiDi Food API',
