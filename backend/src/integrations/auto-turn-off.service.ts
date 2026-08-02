@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { AutoOpenStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAutoTurnOffPoolDto } from './dto/create-auto-turn-off-pool.dto';
 import { UpdateAutoTurnOffPoolDto } from './dto/update-auto-turn-off-pool.dto';
@@ -9,8 +10,24 @@ import { UpdateAutoTurnOffRuleDto } from './dto/update-auto-turn-off-rule.dto';
 
 const RULE_INCLUDE = {
   brand: { select: { id: true, brandId: true, brandName: true, country: true } },
+  createdBy: { select: { id: true, name: true, email: true } },
+  updatedBy: { select: { id: true, name: true, email: true } },
   executions: {
-    select: { id: true, status: true },
+    select: {
+      id: true,
+      status: true,
+      currentStep: true,
+      progressCurrent: true,
+      progressTotal: true,
+      progressPercent: true,
+      totalShops: true,
+      shopsSucceeded: true,
+      itemsTurnedOff: true,
+      errorMessage: true,
+      cancelledAt: true,
+      startedAt: true,
+      finishedAt: true,
+    },
     orderBy: { createdAt: 'desc' as const },
     take: 1,
   },
@@ -25,7 +42,8 @@ const POOL_INCLUDE = {
 export class AutoTurnOffService {
   constructor(
     private readonly prisma: PrismaService,
-    @InjectQueue('auto-turn-off') private readonly queue: Queue,
+    @InjectQueue('auto-turn-off') private readonly coordinatorQueue: Queue,
+    @InjectQueue('auto-turn-off-shop') private readonly shopQueue: Queue,
   ) {}
 
   listPools() {
@@ -87,12 +105,15 @@ export class AutoTurnOffService {
     return this.prisma.autoTurnOffPool.delete({ where: { id } });
   }
 
-  async createRule(poolId: string, dto: CreateAutoTurnOffRuleDto) {
+  async createRule(poolId: string, dto: CreateAutoTurnOffRuleDto, userId: string) {
     await this.findPool(poolId);
     const shopIds = this.normalizeShopIds(dto.shopIds);
     const upcs = this.normalizeUpcs(dto.upcs);
     await this.validateBrand(dto.brandId);
     this.validateEndpointLimits(dto.stockEndpoint, dto.intervalMinutes, upcs.length);
+    const startsAt = new Date(dto.startsAt);
+    const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
+    this.validateLifetime(startsAt, endsAt, dto.active ?? true);
     if (dto.active ?? true) await this.validateNoActiveShopConflicts(shopIds, dto.stockEndpoint);
 
     return this.prisma.autoTurnOffRule.create({
@@ -106,8 +127,11 @@ export class AutoTurnOffService {
         shopIds,
         resolvedShopIds: {},
         stockEndpoint: dto.stockEndpoint,
-        startsAt: new Date(dto.startsAt),
-        nextRunAt: this.nextOccurrence(new Date(dto.startsAt), dto.intervalMinutes),
+        startsAt,
+        endsAt,
+        nextRunAt: this.nextOccurrence(startsAt, dto.intervalMinutes),
+        createdById: userId,
+        updatedById: userId,
       },
       include: RULE_INCLUDE,
     });
@@ -119,7 +143,7 @@ export class AutoTurnOffService {
     return rule;
   }
 
-  async updateRule(id: string, dto: UpdateAutoTurnOffRuleDto) {
+  async updateRule(id: string, dto: UpdateAutoTurnOffRuleDto, userId: string) {
     const current = await this.findRule(id);
     const brandId = dto.brandId ?? current.brandId;
     const shopIds = dto.shopIds ? this.normalizeShopIds(dto.shopIds) : current.shopIds;
@@ -135,6 +159,10 @@ export class AutoTurnOffService {
       && new Date(dto.startsAt).getTime() !== current.startsAt.getTime();
     const wasActivated = current.active === false && dto.active === true;
     const startsAt = dto.startsAt ? new Date(dto.startsAt) : current.startsAt;
+    const endsAt = dto.endsAt === undefined
+      ? current.endsAt
+      : (dto.endsAt ? new Date(dto.endsAt) : null);
+    this.validateLifetime(startsAt, endsAt, dto.active ?? current.active);
 
     return this.prisma.autoTurnOffRule.update({
       where: { id },
@@ -146,8 +174,10 @@ export class AutoTurnOffService {
         resolvedShopIds: dto.shopIds !== undefined || dto.brandId !== undefined ? {} : undefined,
         stockEndpoint: dto.stockEndpoint,
         startsAt: dto.startsAt ? startsAt : undefined,
+        endsAt: dto.endsAt === undefined ? undefined : endsAt,
         intervalMinutes: dto.intervalMinutes,
         active: dto.active,
+        updatedById: userId,
         nextRunAt: intervalChanged || startChanged || wasActivated
           ? this.nextOccurrence(startsAt, intervalMinutes)
           : undefined,
@@ -163,6 +193,12 @@ export class AutoTurnOffService {
 
   async runRuleNow(id: string) {
     const rule = await this.findRule(id);
+    const now = new Date();
+    if (rule.startsAt > now) throw new BadRequestException('This rule has not reached its start date yet');
+    if (rule.endsAt && rule.endsAt <= now) {
+      if (rule.active) await this.prisma.autoTurnOffRule.update({ where: { id }, data: { active: false } });
+      throw new BadRequestException('This rule has already reached its automatic end date');
+    }
     await this.validateNoActiveShopConflicts(rule.shopIds, rule.stockEndpoint, id);
     const activeExecution = await this.prisma.autoTurnOffExecution.findFirst({
       where: { ruleId: id, status: { in: ['pending', 'running'] } },
@@ -177,19 +213,88 @@ export class AutoTurnOffService {
     return this.enqueueExecution(rule.poolId, rule.id, 'manual');
   }
 
+  async stopRule(id: string, userId: string) {
+    const [rule, user] = await Promise.all([
+      this.findRule(id),
+      this.prisma.account.findUnique({ where: { id: userId }, select: { name: true, email: true } }),
+    ]);
+    const executions = await this.prisma.autoTurnOffExecution.findMany({
+      where: { ruleId: id, status: { in: ['pending', 'running'] } },
+      select: { id: true, shops: { select: { id: true } } },
+    });
+    const stoppedBy = user?.name || user?.email || userId;
+    const message = `Stopped by ${stoppedBy}`;
+    const now = new Date();
+
+    await this.prisma.$transaction([
+      this.prisma.autoTurnOffRule.update({
+        where: { id: rule.id },
+        data: { active: false, updatedById: userId },
+      }),
+      this.prisma.autoTurnOffExecution.updateMany({
+        where: { id: { in: executions.map(execution => execution.id) }, status: { in: ['pending', 'running'] } },
+        data: {
+          status: 'cancelled',
+          currentStep: 'cancelled',
+          errorMessage: message,
+          cancelledById: userId,
+          cancelledAt: now,
+          finishedAt: now,
+        },
+      }),
+      this.prisma.autoTurnOffShopExecution.updateMany({
+        where: {
+          executionId: { in: executions.map(execution => execution.id) },
+          status: { in: ['pending', 'running'] },
+        },
+        data: { status: 'cancelled', currentStep: 'cancelled', finishedAt: now },
+      }),
+    ]);
+
+    await Promise.allSettled([
+      ...executions.map(execution => this.removeWaitingJob(this.coordinatorQueue, execution.id)),
+      ...executions.flatMap(execution => execution.shops.map(shop => this.removeWaitingJob(this.shopQueue, shop.id))),
+    ]);
+
+    return {
+      ruleId: id,
+      stoppedExecutions: executions.length,
+      status: executions.length > 0 ? 'cancelled' : 'inactive',
+      message: executions.length > 0
+        ? 'Cancellation requested. Active workers will stop before their next external API step.'
+        : 'Rule deactivated; there was no running execution.',
+    };
+  }
+
   async enqueueExecution(poolId: string, ruleId: string, trigger: 'manual' | 'scheduled') {
     const execution = await this.prisma.autoTurnOffExecution.create({
-      data: { poolId, ruleId, trigger, status: 'pending' },
+      data: {
+        poolId,
+        ruleId,
+        trigger,
+        status: 'pending',
+        currentStep: 'queued',
+        progressCurrent: 0,
+        progressTotal: 1,
+        progressPercent: 0,
+      },
     });
     try {
       // DiDi only accepts one Stock API request per store every 10 minutes.
       // Disable BullMQ's global quick retries to avoid violating that limit.
-      await this.queue.add('turn-off-items', { executionId: execution.id }, { jobId: execution.id, attempts: 1 });
+      await this.coordinatorQueue.add('turn-off-items', { executionId: execution.id }, { jobId: execution.id, attempts: 1 });
       return execution;
     } catch (error) {
       await this.prisma.autoTurnOffExecution.update({
         where: { id: execution.id },
-        data: { status: 'failed', finishedAt: new Date(), logs: { error: (error as Error).message } },
+        data: {
+          status: 'failed',
+          currentStep: 'failed',
+          progressPercent: 100,
+          errorMessage: (error as Error).message,
+          finishedAt: new Date(),
+          logs: { error: (error as Error).message },
+        },
       });
       throw error;
     }
@@ -211,6 +316,48 @@ export class AutoTurnOffService {
       this.prisma.autoTurnOffExecution.count({ where }),
     ]);
     return { data, total, page: safePage, limit: safeLimit };
+  }
+
+  async listExecutionShops(executionId: string, page = 1, limit = 50, status?: string) {
+    const execution = await this.prisma.autoTurnOffExecution.findUnique({
+      where: { id: executionId },
+      select: { id: true, rule: { select: { upcs: true } } },
+    });
+    if (!execution) throw new NotFoundException('Auto turn off execution not found');
+
+    const allowedStatuses: string[] = Object.values(AutoOpenStatus);
+    if (status && !allowedStatuses.includes(status)) {
+      throw new BadRequestException(`Invalid shop execution status: ${status}`);
+    }
+
+    const safeLimit = Math.min(Math.max(limit, 1), 200);
+    const safePage = Math.max(page, 1);
+    const where: Prisma.AutoTurnOffShopExecutionWhereInput = {
+      executionId,
+      ...(status ? { status: status as AutoOpenStatus } : {}),
+    };
+    const [data, total] = await Promise.all([
+      this.prisma.autoTurnOffShopExecution.findMany({
+        where,
+        select: {
+          id: true,
+          shopId: true,
+          appShopId: true,
+          status: true,
+          currentStep: true,
+          itemsSucceeded: true,
+          itemsFailed: true,
+          result: true,
+          startedAt: true,
+          finishedAt: true,
+        },
+        orderBy: { createdAt: 'asc' },
+        skip: (safePage - 1) * safeLimit,
+        take: safeLimit,
+      }),
+      this.prisma.autoTurnOffShopExecution.count({ where }),
+    ]);
+    return { data, total, page: safePage, limit: safeLimit, requestedUpcs: execution.rule.upcs };
   }
 
   private nextOccurrence(startsAt: Date, intervalMinutes: number, after = new Date()) {
@@ -249,6 +396,24 @@ export class AutoTurnOffService {
     }
     if (stockEndpoint === 'setstockSync' && upcCount > 2000) {
       throw new BadRequestException('setstockSync accepts a maximum of 2000 UPCs per rule');
+    }
+  }
+
+  private validateLifetime(startsAt: Date, endsAt: Date | null, active: boolean) {
+    if (endsAt && endsAt <= startsAt) {
+      throw new BadRequestException('Automatic end date must be later than the start date');
+    }
+    if (active && endsAt && endsAt <= new Date()) {
+      throw new BadRequestException('An active rule cannot have an automatic end date in the past');
+    }
+  }
+
+  private async removeWaitingJob(queue: Queue, jobId: string) {
+    const job = await queue.getJob(jobId);
+    if (!job) return;
+    const state = await job.getState();
+    if (['waiting', 'delayed', 'paused', 'prioritized', 'waiting-children'].includes(state)) {
+      await job.remove();
     }
   }
 

@@ -15,7 +15,7 @@ export default function Topbar({ breadcrumb = [] }: Props) {
   return (
     <header className="topbar">
       <nav className="breadcrumb">
-        <span className="bc-root">Guaro</span>
+        <span className="bc-root">Tequila 1.0</span>
         {breadcrumb.map((b, i) => (
           <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span className="bc-sep">/</span>

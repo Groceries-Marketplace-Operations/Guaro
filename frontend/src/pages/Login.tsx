@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { authApi } from '../api';
 import { useT } from '../i18n';
 
 const GoogleIcon = () => (
@@ -13,9 +14,12 @@ const GoogleIcon = () => (
 );
 
 export default function Login() {
-  const { account, loading } = useAuth();
+  const { account, loading, login } = useAuth();
   const nav = useNavigate();
   const t = useT();
+  const [devEmail, setDevEmail] = useState('eduardolz9527@gmail.com');
+  const [devError, setDevError] = useState('');
+  const [devLoading, setDevLoading] = useState(false);
 
   useEffect(() => {
     if (!loading && account) nav('/', { replace: true });
@@ -25,13 +29,31 @@ export default function Login() {
     window.location.href = `${import.meta.env.VITE_API_URL ?? 'http://localhost:3000'}/auth/google`;
   };
 
+  const localLogin = async () => {
+    setDevLoading(true);
+    setDevError('');
+    try {
+      const tokenResponse = await authApi.devLogin(devEmail.trim());
+      const token = tokenResponse.data.access_token as string;
+      localStorage.setItem('token', token);
+      const accountResponse = await authApi.me();
+      login(accountResponse.data.token ?? token, accountResponse.data);
+      nav('/', { replace: true });
+    } catch {
+      localStorage.removeItem('token');
+      setDevError('No se pudo iniciar sesión con ese correo.');
+    } finally {
+      setDevLoading(false);
+    }
+  };
+
   return (
     <div className="login-page">
       <div className="login-panel">
         <div className="login-logo-row">
           <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 36, height: 36, objectFit: 'contain', borderRadius: 8 }} />
           <div className="texts">
-            <div className="t1">Guaro</div>
+            <div className="t1">Tequila 1.0</div>
             <div className="t2">{t('nav.internalPanel')}</div>
           </div>
         </div>
@@ -44,6 +66,23 @@ export default function Login() {
           {t('pages.login.continueWithGoogle')}
         </button>
 
+        {import.meta.env.DEV && (
+          <div style={{ marginTop: 24, display: 'grid', gap: 10 }}>
+            <input
+              type="email"
+              value={devEmail}
+              onChange={(event) => setDevEmail(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') void localLogin(); }}
+              aria-label="Correo para acceso local"
+              style={{ padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+            />
+            <button className="btn-google" onClick={() => void localLogin()} disabled={devLoading || !devEmail.trim()}>
+              {devLoading ? 'Ingresando…' : 'Acceso local'}
+            </button>
+            {devError && <p style={{ margin: 0, color: 'var(--danger)', fontSize: '0.8rem' }}>{devError}</p>}
+          </div>
+        )}
+
         <p style={{ marginTop: 32, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
           {t('pages.login.domainNote').replace('@didi-labs.com', '')}
           <strong>@didi-labs.com</strong>
@@ -55,8 +94,12 @@ export default function Login() {
         <div className="login-aside-grid">
           {Array.from({ length: 64 }).map((_, i) => <span key={i} />)}
         </div>
+        <div className="login-oranges" aria-hidden="true">
+          {Array.from({ length: 12 }).map((_, i) => <span className="floating-orange" key={i} />)}
+        </div>
         <div className="login-aside-logo">
           <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 80, height: 80, objectFit: 'contain', borderRadius: 16, marginBottom: 16 }} />
+          <strong>Tequila 1.0</strong>
           <p>Operations Panel<br />Task &amp; Workflow Management<br />for Delivery Brands</p>
         </div>
       </div>

@@ -49,6 +49,10 @@ export class CreateAutoTurnOffRuleDto {
   startsAt: string;
 
   @IsOptional()
+  @IsDateString()
+  endsAt?: string;
+
+  @IsOptional()
   @IsBoolean()
   active?: boolean;
 }

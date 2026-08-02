@@ -15,6 +15,32 @@ export function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
+/**
+ * Wrap fetch transport errors with a safe method/path label.
+ * The real URL may contain app_secret, auth_token or signed query parameters,
+ * so it must never be copied into logs or execution results.
+ */
+export async function fetchWithEndpointContext(
+  endpoint: string,
+  input: string | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    const requestError = error as Error & {
+      cause?: { code?: string; message?: string };
+    };
+    const cause = requestError.cause;
+    const causeDetail = [cause?.code, cause?.message].filter(Boolean).join(': ');
+    const wrapped = new Error(
+      `${endpoint} failed: ${requestError.message}${causeDetail ? ` (${causeDetail})` : ''}`,
+    ) as Error & { cause?: unknown };
+    wrapped.cause = error;
+    throw wrapped;
+  }
+}
+
 /** True if the ID is a raw DiDi shop_id (starts with "57", exactly 19 digits). */
 export function isRawShopId(id: string): boolean {
   const s = id.toString().trim();
@@ -102,10 +128,13 @@ export async function getAuthToken(
   const refreshUrl = new URL(`${DIDI_BASE}/v1/auth/authtoken/refresh`);
   Object.entries(refreshParams).forEach(([k, v]) => refreshUrl.searchParams.set(k, v));
 
-  const refreshRes = await fetch(refreshUrl.toString());
+  const refreshEndpoint = 'GET /v1/auth/authtoken/refresh';
+  const refreshRes = await fetchWithEndpointContext(refreshEndpoint, refreshUrl);
   const refreshBody = parseJsonKeepingIds(await refreshRes.text());
-  if (refreshBody.errno !== 0) {
-    throw new Error(`DiDi token refresh failed: ${refreshBody.errmsg} (errno=${refreshBody.errno})`);
+  if (!refreshRes.ok || refreshBody.errno !== 0) {
+    throw new Error(
+      `${refreshEndpoint} failed: ${refreshBody.errmsg ?? `HTTP ${refreshRes.status}`} (errno=${refreshBody.errno ?? 'unknown'})`,
+    );
   }
   const refreshToken: string = refreshBody.data.refresh_token;
 
@@ -115,10 +144,13 @@ export async function getAuthToken(
   const getUrl = new URL(`${DIDI_BASE}/v1/auth/authtoken/get`);
   Object.entries(getParams).forEach(([k, v]) => getUrl.searchParams.set(k, v));
 
-  const getRes = await fetch(getUrl.toString());
+  const getEndpoint = 'GET /v1/auth/authtoken/get';
+  const getRes = await fetchWithEndpointContext(getEndpoint, getUrl);
   const getBody = parseJsonKeepingIds(await getRes.text());
-  if (getBody.errno !== 0) {
-    throw new Error(`DiDi token get failed: ${getBody.errmsg} (errno=${getBody.errno})`);
+  if (!getRes.ok || getBody.errno !== 0) {
+    throw new Error(
+      `${getEndpoint} failed: ${getBody.errmsg ?? `HTTP ${getRes.status}`} (errno=${getBody.errno ?? 'unknown'})`,
+    );
   }
   return getBody.data.auth_token as string;
 }
@@ -145,7 +177,8 @@ export async function fetchShopIdMap(
     const params: Record<string, string | number> = { app_id: appId, page_no: pageNo, page_size: pageSize, timestamp };
     params.sign = generateSignature(params, appSecret);
 
-    const res = await fetch(`${DIDI_BASE}/v1/shop/shop/list`, {
+    const endpoint = 'POST /v1/shop/shop/list';
+    const res = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v1/shop/shop/list`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
@@ -158,7 +191,9 @@ export async function fetchShopIdMap(
       continue;
     }
     if (body.errno !== 0) {
-      throw new Error(`DiDi shop list failed (page ${pageNo}): ${body.errmsg} (errno=${body.errno})`);
+      throw new Error(
+        `${endpoint} failed on page ${pageNo}: ${body.errmsg ?? `HTTP ${res.status}`} (errno=${body.errno ?? 'unknown'})`,
+      );
     }
 
     const shops: { shop_id: string; app_shop_id: string }[] = body.data?.shop_list ?? [];

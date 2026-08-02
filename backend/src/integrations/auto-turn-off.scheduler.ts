@@ -15,8 +15,19 @@ export class AutoTurnOffScheduler {
   @Cron(CronExpression.EVERY_MINUTE)
   async triggerDueRules() {
     const now = new Date();
+    const expired = await this.prisma.autoTurnOffRule.updateMany({
+      where: { active: true, endsAt: { lte: now } },
+      data: { active: false },
+    });
+    if (expired.count > 0) this.logger.log(`Automatically stopped ${expired.count} expired auto turn off rule(s)`);
+
     const dueRules = await this.prisma.autoTurnOffRule.findMany({
-      where: { active: true, nextRunAt: { lte: now }, pool: { active: true } },
+      where: {
+        active: true,
+        nextRunAt: { lte: now },
+        OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+        pool: { active: true },
+      },
       select: { id: true, poolId: true, name: true, startsAt: true, intervalMinutes: true },
       orderBy: { nextRunAt: 'asc' },
     });
@@ -25,7 +36,13 @@ export class AutoTurnOffScheduler {
       try {
         const nextRunAt = this.nextOccurrence(rule.startsAt, rule.intervalMinutes, new Date(now.getTime() + 1));
         const claimed = await this.prisma.autoTurnOffRule.updateMany({
-          where: { id: rule.id, active: true, nextRunAt: { lte: now }, pool: { active: true } },
+          where: {
+            id: rule.id,
+            active: true,
+            nextRunAt: { lte: now },
+            OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+            pool: { active: true },
+          },
           data: { nextRunAt, lastRunAt: now },
         });
         if (claimed.count === 0) continue;

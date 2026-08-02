@@ -1,36 +1,14 @@
+import { randomUUID } from 'crypto';
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Injectable, Logger } from '@nestjs/common';
-import { Job } from 'bullmq';
+import { Job, Queue } from 'bullmq';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { decrypt } from '../common/crypto.util';
-import {
-  DIDI_BASE,
-  fetchShopIdMap,
-  getAuthToken,
-  parseJsonKeepingIds,
-} from '../queue/handlers/didi-food.util';
-
-type StockEndpoint = 'setStock' | 'setstockSync';
-
-interface FailedItem {
-  appItemId: string;
-  reason: string;
-}
-
-interface ShopResult {
-  shopId: string;
-  appShopId: string;
-  success: boolean;
-  endpoint: StockEndpoint;
-  itemsSucceeded: number;
-  itemsFailed: number;
-  taskId?: string;
-  failedItems?: FailedItem[];
-  error?: string;
-}
+import { fetchShopIdMap } from '../queue/handlers/didi-food.util';
+import { AutoTurnOffCancelledError, ShopResult, StockEndpoint } from './auto-turn-off-api.util';
 
 @Injectable()
 @Processor('auto-turn-off', { concurrency: 1 })
@@ -40,17 +18,27 @@ export class AutoTurnOffProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    private readonly webhooks: WebhookSenderService,
+    @InjectQueue('auto-turn-off-shop') private readonly shopQueue: Queue,
   ) {
     super();
   }
 
   async process(job: Job<{ executionId: string }>): Promise<void> {
     const { executionId } = job.data;
-    await this.prisma.autoTurnOffExecution.update({
-      where: { id: executionId },
-      data: { status: 'running', startedAt: new Date(), finishedAt: null },
+    const claimed = await this.prisma.autoTurnOffExecution.updateMany({
+      where: { id: executionId, status: 'pending' },
+      data: {
+        status: 'running',
+        startedAt: new Date(),
+        finishedAt: null,
+        currentStep: 'preparing',
+        progressCurrent: 0,
+        progressTotal: 1,
+        progressPercent: 0,
+        errorMessage: null,
+      },
     });
+    if (claimed.count === 0) return;
 
     const execution = await this.prisma.autoTurnOffExecution.findUnique({
       where: { id: executionId },
@@ -63,22 +51,23 @@ export class AutoTurnOffProcessor extends WorkerHost {
         },
       },
     });
+    if (!execution) return;
 
-    if (!execution) {
-      this.logger.error(`Auto turn off execution ${executionId} not found`);
+    const { rule } = execution;
+    const now = new Date();
+    if (rule.endsAt && rule.endsAt <= now) {
+      await this.prisma.autoTurnOffRule.update({ where: { id: rule.id }, data: { active: false } });
+      await this.failExecution(executionId, 'Rule reached its automatic end date before execution started');
       return;
     }
 
-    const { rule, pool } = execution;
-    const results: ShopResult[] = [];
-    const executionStartedAt = new Date();
     const nextAfterCooldown = rule.stockEndpoint === 'setStock'
-      ? this.nextOccurrence(rule.startsAt, rule.intervalMinutes, new Date(executionStartedAt.getTime() + 10 * 60_000))
+      ? this.nextOccurrence(rule.startsAt, rule.intervalMinutes, new Date(now.getTime() + 10 * 60_000))
       : rule.nextRunAt;
     await this.prisma.autoTurnOffRule.update({
       where: { id: rule.id },
       data: {
-        lastRunAt: executionStartedAt,
+        lastRunAt: now,
         nextRunAt: execution.trigger === 'manual'
           && rule.stockEndpoint === 'setStock'
           && rule.nextRunAt < nextAfterCooldown
@@ -88,12 +77,12 @@ export class AutoTurnOffProcessor extends WorkerHost {
     });
 
     if (!rule.brand.application) {
-      await this.finish(executionId, 'failed', rule.shopIds.length, 0, 0, [{
-        shopId: '-', appShopId: '-', endpoint: rule.stockEndpoint as StockEndpoint,
-        success: false, itemsSucceeded: 0, itemsFailed: rule.upcs.length,
-        error: 'Brand has no application linked',
-      }]);
-      await this.notify(pool.webhookId, pool.name, rule.name, rule.brand.brandName, rule.shopIds.length, 0, 0, false);
+      await this.failExecutionWithShopResults(
+        executionId,
+        rule,
+        new Map(),
+        'Brand has no application linked',
+      );
       return;
     }
 
@@ -105,32 +94,43 @@ export class AutoTurnOffProcessor extends WorkerHost {
         ? decrypt(rule.brand.application.appSecret, encryptionKey)
         : rule.brand.application.appSecret;
     } catch {
-      const message = 'Application credential could not be decrypted with APP_SECRET_ENCRYPTION_KEY';
-      const failedResults = rule.shopIds.map(shopId => ({
-        shopId,
-        appShopId: '-',
-        endpoint: rule.stockEndpoint as StockEndpoint,
-        success: false,
-        itemsSucceeded: 0,
-        itemsFailed: rule.upcs.length,
-        error: message,
-      }));
-      this.logger.error(`${message} for brand ${rule.brand.brandName}`);
-      await this.finish(executionId, 'failed', rule.shopIds.length, 0, 0, failedResults);
-      await this.notify(pool.webhookId, pool.name, rule.name, rule.brand.brandName, rule.shopIds.length, 0, 0, false);
+      await this.failExecutionWithShopResults(
+        executionId,
+        rule,
+        new Map(),
+        'Application credential could not be decrypted with APP_SECRET_ENCRYPTION_KEY',
+      );
       return;
     }
-    const stockList = rule.upcs.map(appItemId => ({ app_item_id: appItemId, stock: 0 }));
-    const endpoint = rule.stockEndpoint as StockEndpoint;
+
+    await this.ensureRunning(executionId);
+    const localShops = await this.prisma.shop.findMany({
+      where: {
+        brandId: rule.brandId,
+        shopId: { in: rule.shopIds },
+        deletedAt: null,
+      },
+      select: { shopId: true, appShopId: true },
+    });
+    const shopIdMap = new Map<string, string>(
+      localShops.map(shop => [shop.shopId, shop.appShopId]),
+    );
+
     const cachedMappings = rule.resolvedShopIds
       && typeof rule.resolvedShopIds === 'object'
       && !Array.isArray(rule.resolvedShopIds)
       ? Object.entries(rule.resolvedShopIds).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
       : [];
-    const shopIdMap = new Map<string, string>(cachedMappings);
+    for (const [shopId, appShopId] of cachedMappings) {
+      if (!shopIdMap.has(shopId)) shopIdMap.set(shopId, appShopId);
+    }
     const unresolvedShopIds = rule.shopIds.filter(shopId => !shopIdMap.has(shopId));
 
     if (unresolvedShopIds.length > 0) {
+      await this.prisma.autoTurnOffExecution.update({
+        where: { id: executionId },
+        data: { currentStep: 'resolving_shops' },
+      });
       try {
         const resolved = await fetchShopIdMap(appId, appSecret, unresolvedShopIds);
         for (const [shopId, appShopId] of resolved) {
@@ -141,201 +141,209 @@ export class AutoTurnOffProcessor extends WorkerHost {
           data: { resolvedShopIds: Object.fromEntries(shopIdMap) as Prisma.InputJsonValue },
         });
       } catch (error) {
-        const fetchError = error as Error & { cause?: { code?: string; message?: string } };
-        const detail = fetchError.cause?.code ?? fetchError.cause?.message ?? fetchError.message;
-        const message = `Could not resolve shop_id values from DiDi: ${detail}`;
-        const failedResults = rule.shopIds.map(shopId => ({
-          shopId,
-          appShopId: '-',
-          endpoint,
-          success: false,
-          itemsSucceeded: 0,
-          itemsFailed: rule.upcs.length,
-          error: message,
-        }));
-        await this.finish(executionId, 'failed', rule.shopIds.length, 0, 0, failedResults);
-        await this.notify(pool.webhookId, pool.name, rule.name, rule.brand.brandName, rule.shopIds.length, 0, 0, false);
+        await this.failExecutionWithShopResults(
+          executionId,
+          rule,
+          shopIdMap,
+          `Could not resolve shop_id values from DiDi: ${(error as Error).message}`,
+        );
         return;
       }
     }
 
-    for (const shopId of rule.shopIds) {
+    await this.ensureRunning(executionId);
+    const endpoint = rule.stockEndpoint as StockEndpoint;
+    const shopJobs = rule.shopIds.map(shopId => {
+      const id = randomUUID();
       const appShopId = shopIdMap.get(shopId);
-      if (!appShopId) {
-        results.push({
-          shopId,
-          appShopId: '-',
-          endpoint,
-          success: false,
-          itemsSucceeded: 0,
-          itemsFailed: rule.upcs.length,
-          error: 'shop_id was not found in the DiDi shop list for this application',
-        });
-        continue;
-      }
+      const result: ShopResult | undefined = appShopId ? undefined : {
+        shopId,
+        appShopId: '-',
+        endpoint,
+        success: false,
+        itemsSucceeded: 0,
+        itemsFailed: rule.upcs.length,
+        error: 'shop_id was not found in the DiDi shop list for this application',
+      };
+      return { id, shopId, appShopId, result };
+    });
+    const missingCount = shopJobs.filter(item => !item.appShopId).length;
+    const progressTotal = Math.max(2 + rule.shopIds.length * 3, 1);
+    const progressCurrent = 1 + missingCount * 3;
 
-      try {
-        const authToken = await getAuthToken(appId, appSecret, appShopId);
-        const result = await this.callStockApi(endpoint, authToken, stockList);
-        results.push({ shopId, appShopId, endpoint, ...result });
-        this.logger.log(
-          `${endpoint}: turned off ${result.itemsSucceeded}/${rule.upcs.length} items in shop ${shopId} (${rule.name})`,
-        );
-      } catch (error) {
-        results.push({
-          shopId,
-          appShopId,
-          endpoint,
-          success: false,
-          itemsSucceeded: 0,
-          itemsFailed: rule.upcs.length,
-          error: (error as Error).message,
-        });
-        this.logger.error(`Auto turn off failed for shop ${shopId}: ${(error as Error).message}`);
-      }
+    await this.prisma.$transaction(async tx => {
+      const current = await tx.autoTurnOffExecution.findUnique({
+        where: { id: executionId },
+        select: { status: true },
+      });
+      if (current?.status !== 'running') throw new AutoTurnOffCancelledError();
+      await tx.autoTurnOffShopExecution.createMany({
+        data: shopJobs.map(item => ({
+          id: item.id,
+          executionId,
+          shopId: item.shopId,
+          appShopId: item.appShopId,
+          status: item.appShopId ? 'pending' : 'failed',
+          currentStep: item.appShopId ? 'queued' : 'shop_not_found',
+          itemsFailed: item.appShopId ? 0 : rule.upcs.length,
+          result: item.result as unknown as Prisma.InputJsonValue,
+          finishedAt: item.appShopId ? null : now,
+        })),
+      });
+      await tx.autoTurnOffExecution.update({
+        where: { id: executionId },
+        data: {
+          totalShops: rule.shopIds.length,
+          currentStep: 'processing_shops',
+          progressCurrent,
+          progressTotal,
+          progressPercent: Math.min(99, Math.floor((progressCurrent / progressTotal) * 100)),
+        },
+      });
+    });
+
+    const runnable = shopJobs.filter((item): item is typeof item & { appShopId: string } => Boolean(item.appShopId));
+    if (runnable.length === 0) {
+      await this.finalizeWithoutWorkers(executionId);
+      return;
     }
 
-    const shopsSucceeded = results.filter(result => result.success).length;
-    const itemsTurnedOff = results.reduce((total, result) => total + result.itemsSucceeded, 0);
-    const succeeded = shopsSucceeded === rule.shopIds.length
-      && itemsTurnedOff === rule.shopIds.length * rule.upcs.length;
-    const status = itemsTurnedOff > 0 ? 'done' : 'failed';
-    await this.finish(executionId, status, rule.shopIds.length, shopsSucceeded, itemsTurnedOff, results);
-    await this.notify(
-      pool.webhookId,
-      pool.name,
-      rule.name,
-      rule.brand.brandName,
-      rule.shopIds.length,
-      shopsSucceeded,
-      itemsTurnedOff,
-      succeeded,
-    );
+    try {
+      for (let index = 0; index < runnable.length; index += 500) {
+        await this.ensureRunning(executionId);
+        const batch = runnable.slice(index, index + 500);
+        await this.shopQueue.addBulk(batch.map(item => ({
+          name: 'turn-off-shop-items',
+          data: { shopExecutionId: item.id },
+          opts: { jobId: item.id, attempts: 1, removeOnComplete: 1000, removeOnFail: 1000 },
+        })));
+      }
+      this.logger.log(`Queued ${runnable.length} shop worker job(s) for rule "${rule.name}"`);
+    } catch (error) {
+      const current = await this.prisma.autoTurnOffExecution.findUnique({
+        where: { id: executionId },
+        select: { status: true },
+      });
+      if (current?.status === 'cancelled') {
+        await this.prisma.autoTurnOffShopExecution.updateMany({
+          where: { executionId, status: { in: ['pending', 'running'] } },
+          data: { status: 'cancelled', currentStep: 'cancelled', finishedAt: new Date() },
+        });
+        return;
+      }
+      const message = `Could not enqueue shop workers: ${(error as Error).message}`;
+      await this.prisma.$transaction([
+        this.prisma.autoTurnOffExecution.updateMany({
+          where: { id: executionId, status: 'running' },
+          data: { status: 'failed', currentStep: 'failed', errorMessage: message, finishedAt: new Date(), progressPercent: 100 },
+        }),
+        this.prisma.autoTurnOffShopExecution.updateMany({
+          where: { executionId, status: { in: ['pending', 'running'] } },
+          data: { status: 'failed', currentStep: 'queue_failed', finishedAt: new Date() },
+        }),
+      ]);
+    }
   }
 
   @OnWorkerEvent('failed')
   async onFailed(job: Job<{ executionId: string }> | undefined, error: Error) {
-    const executionId = job?.data?.executionId;
-    if (!executionId) return;
-    this.logger.error(`Auto turn off execution ${executionId} failed unexpectedly: ${error.message}`);
+    if (!job?.data.executionId) return;
+    await this.failExecution(job.data.executionId, error.message);
+  }
+
+  private async ensureRunning(executionId: string) {
+    const execution = await this.prisma.autoTurnOffExecution.findUnique({
+      where: { id: executionId },
+      select: { status: true },
+    });
+    if (execution?.status !== 'running') throw new Error('Execution is no longer running');
+  }
+
+  private async failExecution(executionId: string, message: string) {
     await this.prisma.autoTurnOffExecution.updateMany({
       where: { id: executionId, status: { in: ['pending', 'running'] } },
       data: {
         status: 'failed',
+        currentStep: 'failed',
+        errorMessage: message,
         finishedAt: new Date(),
-        logs: { error: error.message } as Prisma.InputJsonValue,
+        progressPercent: 100,
+        logs: { error: message } as Prisma.InputJsonValue,
       },
     });
   }
 
-  private async finish(
+  private async failExecutionWithShopResults(
     executionId: string,
-    status: 'done' | 'failed',
-    totalShops: number,
-    shopsSucceeded: number,
-    itemsTurnedOff: number,
-    results: ShopResult[],
+    rule: { shopIds: string[]; upcs: string[]; stockEndpoint: string },
+    shopIdMap: Map<string, string>,
+    message: string,
   ) {
-    await this.prisma.autoTurnOffExecution.update({
-      where: { id: executionId },
+    const now = new Date();
+    const progressTotal = Math.max(2 + rule.shopIds.length * 3, 1);
+    await this.prisma.$transaction(async tx => {
+      const current = await tx.autoTurnOffExecution.findUnique({
+        where: { id: executionId },
+        select: { status: true },
+      });
+      if (!current || !['pending', 'running'].includes(current.status)) return;
+
+      await tx.autoTurnOffShopExecution.createMany({
+        data: rule.shopIds.map(shopId => ({
+          executionId,
+          shopId,
+          appShopId: shopIdMap.get(shopId),
+          status: 'failed',
+          currentStep: 'failed',
+          itemsFailed: rule.upcs.length,
+          result: {
+            shopId,
+            appShopId: shopIdMap.get(shopId) ?? '-',
+            endpoint: rule.stockEndpoint,
+            success: false,
+            itemsSucceeded: 0,
+            itemsFailed: rule.upcs.length,
+            requestedUpcs: rule.upcs.length,
+            error: message,
+          },
+          finishedAt: now,
+        })),
+        skipDuplicates: true,
+      });
+
+      await tx.autoTurnOffExecution.update({
+        where: { id: executionId },
+        data: {
+          status: 'failed',
+          currentStep: 'failed',
+          totalShops: rule.shopIds.length,
+          errorMessage: message,
+          finishedAt: now,
+          progressCurrent: progressTotal,
+          progressTotal,
+          progressPercent: 100,
+          logs: { error: message } as Prisma.InputJsonValue,
+        },
+      });
+    });
+  }
+
+  private async finalizeWithoutWorkers(executionId: string) {
+    const shops = await this.prisma.autoTurnOffShopExecution.findMany({ where: { executionId } });
+    const results = shops.map(shop => shop.result).filter(Boolean) as Prisma.JsonValue[];
+    const message = shops.find(shop => shop.status === 'failed')?.result as Record<string, unknown> | null;
+    await this.prisma.autoTurnOffExecution.updateMany({
+      where: { id: executionId, status: 'running' },
       data: {
-        status,
+        status: 'failed',
+        currentStep: 'failed',
         finishedAt: new Date(),
-        totalShops,
-        shopsSucceeded,
-        itemsTurnedOff,
+        progressCurrent: Math.max(shops.length * 3 + 2, 1),
+        progressPercent: 100,
+        errorMessage: String(message?.error ?? 'No target shops could be processed'),
         logs: { shops: results } as unknown as Prisma.InputJsonValue,
       },
     });
-  }
-
-  private async notify(
-    webhookId: string | null,
-    poolName: string,
-    ruleName: string,
-    brandName: string,
-    totalShops: number,
-    shopsSucceeded: number,
-    itemsTurnedOff: number,
-    complete: boolean,
-  ) {
-    if (!webhookId) return;
-    await this.webhooks.sendToWebhook(webhookId, {
-      text: `**Auto Turn Off Items — ${poolName}**`,
-      attachments: [{
-        title: ruleName,
-        text: [
-          `**Brand:** ${brandName}`,
-          `**Shops:** ${shopsSucceeded}/${totalShops}`,
-          `**UPCs set to stock 0:** ${itemsTurnedOff}`,
-        ].join('\n'),
-        color: complete ? '#00C853' : (shopsSucceeded > 0 ? '#FFB300' : '#D50000'),
-      }],
-    });
-  }
-
-  private async callStockApi(
-    endpoint: StockEndpoint,
-    authToken: string,
-    stockList: Array<{ app_item_id: string; stock: number }>,
-  ): Promise<Omit<ShopResult, 'shopId' | 'appShopId' | 'endpoint'>> {
-    const response = await fetch(`${DIDI_BASE}/v1/item/item/${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auth_token: authToken, stock_list: stockList }),
-    });
-    const body = parseJsonKeepingIds(await response.text());
-    if (!response.ok || body.errno !== 0) {
-      throw new Error(
-        `DiDi error${body.errno !== undefined ? ` (errno=${body.errno})` : ''}: `
-        + (body.errmsg || body.message || `HTTP ${response.status}`),
-      );
-    }
-
-    if (endpoint === 'setStock') {
-      const taskId = body.data?.taskID ?? body.data?.taskId ?? body.taskID;
-      return {
-        success: true,
-        itemsSucceeded: stockList.length,
-        itemsFailed: 0,
-        taskId: taskId ? String(taskId) : undefined,
-      };
-    }
-
-    const successfulItems = Array.isArray(body.data?.success)
-      ? body.data.success.map((item: unknown) => String(item))
-      : [];
-    const failedItems: FailedItem[] = Array.isArray(body.data?.failed)
-      ? body.data.failed.flatMap((item: unknown) => {
-        if (!item || typeof item !== 'object') return [];
-        const failure = item as Record<string, unknown>;
-        const explicitItemId = failure.ext_id ?? failure.app_item_id;
-        if (explicitItemId !== undefined) {
-          return [{
-            appItemId: String(explicitItemId),
-            reason: String(failure.msg ?? failure.reason ?? 'Failed'),
-          }];
-        }
-        return Object.entries(failure).map(([appItemId, reason]) => ({
-          appItemId,
-          reason: String(reason),
-        }));
-      })
-      : [];
-
-    if (successfulItems.length === 0 && failedItems.length === 0 && stockList.length > 0) {
-      throw new Error('setstockSync returned no success or failed item details');
-    }
-
-    return {
-      success: failedItems.length === 0 && successfulItems.length === stockList.length,
-      itemsSucceeded: successfulItems.length,
-      itemsFailed: failedItems.length,
-      failedItems: failedItems.length > 0 ? failedItems : undefined,
-      error: failedItems.length > 0
-        ? `${failedItems.length} item(s) failed: ${failedItems.slice(0, 5).map(item => `${item.appItemId}: ${item.reason}`).join('; ')}`
-        : undefined,
-    };
   }
 
   private nextOccurrence(startsAt: Date, intervalMinutes: number, after: Date) {

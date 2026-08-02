@@ -45,6 +45,16 @@ function formValueDisplay(fv: FormValue): string {
   return fv.valor ?? '—';
 }
 
+function safeExternalUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function pipeClass(status: StepStatus, isCurrent: boolean): string {
   if (status === 'done') return 'ps-done';
   if (status === 'failed') return 'ps-failed';
@@ -341,6 +351,9 @@ export default function TaskDetail() {
                   const tipo = fv.formField?.tipo;
                   const isTextBox = tipo === 'text_box';
                   const isMultiBrand = tipo === 'multiple_brands';
+                  const linkUrl = tipo === 'link' || tipo === 'link_spreadsheet'
+                    ? safeExternalUrl(fv.valor)
+                    : null;
                   return (
                     <div key={key} style={(isTextBox || isMultiBrand) ? { gridColumn: '1 / -1' } : undefined}>
                       <div className="text-sm text-muted">{fv.formField?.label ?? fv.formFieldId}</div>
@@ -356,6 +369,11 @@ export default function TaskDetail() {
                             </span>
                           ))}
                         </div>
+                      ) : linkUrl ? (
+                        <a href={linkUrl} target="_blank" rel="noopener noreferrer"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 500, marginTop: 2, color: 'var(--orange)', wordBreak: 'break-all' }}>
+                          {fv.valor} <span aria-hidden="true">↗</span>
+                        </a>
                       ) : (
                         <div style={{ fontWeight: 500, marginTop: 2 }}>{formValueDisplay(fv)}</div>
                       )}

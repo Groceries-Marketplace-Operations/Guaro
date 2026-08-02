@@ -10,12 +10,14 @@ import { AutoOpenScheduler } from './auto-open.scheduler';
 import { AutoTurnOffController } from './auto-turn-off.controller';
 import { AutoTurnOffService } from './auto-turn-off.service';
 import { AutoTurnOffProcessor } from './auto-turn-off.processor';
+import { AutoTurnOffShopProcessor } from './auto-turn-off-shop.processor';
 import { AutoTurnOffScheduler } from './auto-turn-off.scheduler';
 
 @Module({
   imports: [
     BullModule.registerQueue({ name: 'auto-open' }),
     BullModule.registerQueue({ name: 'auto-turn-off' }),
+    BullModule.registerQueue({ name: 'auto-turn-off-shop' }),
     PrismaModule,
     WebhooksModule,
     ConfigModule,
@@ -27,6 +29,7 @@ import { AutoTurnOffScheduler } from './auto-turn-off.scheduler';
     AutoOpenScheduler,
     AutoTurnOffService,
     AutoTurnOffProcessor,
+    AutoTurnOffShopProcessor,
     AutoTurnOffScheduler,
   ],
 })

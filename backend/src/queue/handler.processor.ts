@@ -29,6 +29,14 @@ export interface FormValueCtx {
   shop?: { id: string; shopId: string; appShopId: string };
 }
 
+export interface BrandShopSyncInput {
+  shopId: string;
+  appShopId: string;
+  city?: string;
+  latitude?: string | number;
+  longitude?: string | number;
+}
+
 export interface HandlerContext {
   stepInstanceId: string;
   taskId: string;
@@ -55,6 +63,8 @@ export interface HandlerContext {
   addNote(text: string): void;
   /** Send a message to all alert webhooks */
   sendAlert(payload: WebhookPayload): Promise<void>;
+  /** Persist stores returned by a brand integration without exposing Prisma to handlers. */
+  syncBrandShops(shops: BrandShopSyncInput[]): Promise<{ total: number; created: number; updated: number }>;
   /** True when this is the final BullMQ attempt — safe to clean up temp resources */
   isLastAttempt: boolean;
 }
@@ -177,6 +187,50 @@ export class HandlerProcessor extends WorkerHost {
       field: (label) => formValues.find((f) => f.label === label)?.valor ?? null,
       addNote: (text: string) => { noteLines.push(text); },
       sendAlert: (payload: WebhookPayload) => this.webhooks.sendAlert(payload),
+      syncBrandShops: async (shops) => {
+        if (!brand) throw new Error('Task has no brand linked');
+
+        const unique = [...new Map(
+          shops
+            .filter(shop => shop.shopId?.trim() && shop.appShopId?.trim())
+            .map(shop => [shop.shopId.trim(), { ...shop, shopId: shop.shopId.trim(), appShopId: shop.appShopId.trim() }]),
+        ).values()];
+        if (unique.length === 0) return { total: 0, created: 0, updated: 0 };
+
+        const existing = await this.prisma.shop.findMany({
+          where: { shopId: { in: unique.map(shop => shop.shopId) } },
+          select: { shopId: true },
+        });
+        const existingIds = new Set(existing.map(shop => shop.shopId));
+
+        for (let offset = 0; offset < unique.length; offset += 100) {
+          const chunk = unique.slice(offset, offset + 100);
+          await this.prisma.$transaction(chunk.map(shop => this.prisma.shop.upsert({
+            where: { shopId: shop.shopId },
+            create: {
+              shopId: shop.shopId,
+              appShopId: shop.appShopId,
+              brandId: brand.id,
+              city: shop.city || null,
+              latitude: shop.latitude === undefined || shop.latitude === '' ? null : String(shop.latitude),
+              longitude: shop.longitude === undefined || shop.longitude === '' ? null : String(shop.longitude),
+              status: 'integrated',
+              createdById: task?.createdById ?? undefined,
+            },
+            update: {
+              appShopId: shop.appShopId,
+              brandId: brand.id,
+              deletedAt: null,
+              ...(shop.city !== undefined && { city: shop.city || null }),
+              ...(shop.latitude !== undefined && shop.latitude !== '' && { latitude: String(shop.latitude) }),
+              ...(shop.longitude !== undefined && shop.longitude !== '' && { longitude: String(shop.longitude) }),
+            },
+          })));
+        }
+
+        const updated = unique.filter(shop => existingIds.has(shop.shopId)).length;
+        return { total: unique.length, created: unique.length - updated, updated };
+      },
       isLastAttempt,
     };
   }

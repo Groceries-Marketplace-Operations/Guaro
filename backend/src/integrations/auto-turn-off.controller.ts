@@ -67,13 +67,13 @@ export class AutoTurnOffController {
     @CurrentUser() user: JwtUser,
   ) {
     assertAccess(user);
-    return this.service.createRule(poolId, dto);
+    return this.service.createRule(poolId, dto, user.id);
   }
 
   @Patch('rules/:id')
   updateRule(@Param('id') id: string, @Body() dto: UpdateAutoTurnOffRuleDto, @CurrentUser() user: JwtUser) {
     assertAccess(user);
-    return this.service.updateRule(id, dto);
+    return this.service.updateRule(id, dto, user.id);
   }
 
   @Delete('rules/:id')
@@ -88,6 +88,12 @@ export class AutoTurnOffController {
     return this.service.runRuleNow(id);
   }
 
+  @Post('rules/:id/stop')
+  stopRule(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    assertAccess(user);
+    return this.service.stopRule(id, user.id);
+  }
+
   @Get('pools/:id/executions')
   executions(
     @Param('id') id: string,
@@ -97,5 +103,17 @@ export class AutoTurnOffController {
   ) {
     assertAccess(user);
     return this.service.listExecutions(id, page, limit);
+  }
+
+  @Get('executions/:id/shops')
+  executionShops(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtUser,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('status') status?: string,
+  ) {
+    assertAccess(user);
+    return this.service.listExecutionShops(id, page, limit, status);
   }
 }

@@ -170,7 +170,9 @@ enum AutoOpenStatus {
   pending
   running
   done
+  partial_success
   failed
+  cancelled
 
   @@map("AutoOpenEstado")
 }
@@ -202,6 +204,9 @@ model Account {
   ruleCandidate      BrandAssignmentRuleAccount[]
   createdInvitations Invitation[]                 @relation("InvitacionCreador")
   usedInvitation     Invitation?                  @relation("InvitacionCuenta")
+  createdAutoTurnOffRules AutoTurnOffRule[]        @relation("AutoTurnOffRuleCreator")
+  updatedAutoTurnOffRules AutoTurnOffRule[]        @relation("AutoTurnOffRuleUpdater")
+  cancelledAutoTurnOffExecutions AutoTurnOffExecution[] @relation("AutoTurnOffExecutionCanceller")
 
   @@index([sectionId])
   @@map("account")
@@ -687,13 +692,18 @@ model AutoTurnOffRule {
   resolvedShopIds Json?     @map("resolved_shop_ids")
   stockEndpoint   String    @default("setStock") @map("stock_endpoint")
   startsAt        DateTime  @map("starts_at") @db.Timestamptz
+  endsAt          DateTime? @map("ends_at") @db.Timestamptz
   nextRunAt       DateTime  @map("next_run_at") @db.Timestamptz
   lastRunAt       DateTime? @map("last_run_at") @db.Timestamptz
+  createdById     String    @map("created_by_id") @db.Uuid
+  updatedById     String    @map("updated_by_id") @db.Uuid
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   pool       AutoTurnOffPool        @relation(fields: [poolId], references: [id], onDelete: Cascade)
   brand      Brand                  @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  createdBy  Account                @relation("AutoTurnOffRuleCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy  Account                @relation("AutoTurnOffRuleUpdater", fields: [updatedById], references: [id], onDelete: Restrict)
   executions AutoTurnOffExecution[]
 
   @@index([poolId])
@@ -713,16 +723,47 @@ model AutoTurnOffExecution {
   totalShops     Int            @default(0) @map("total_shops")
   shopsSucceeded Int            @default(0) @map("shops_succeeded")
   itemsTurnedOff Int            @default(0) @map("items_turned_off")
+  currentStep    String?        @map("current_step")
+  progressCurrent Int           @default(0) @map("progress_current")
+  progressTotal  Int            @default(0) @map("progress_total")
+  progressPercent Int           @default(0) @map("progress_percent")
+  errorMessage   String?        @map("error_message") @db.Text
+  cancelledById  String?        @map("cancelled_by_id") @db.Uuid
+  cancelledAt    DateTime?      @map("cancelled_at") @db.Timestamptz
   logs           Json?
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
   pool AutoTurnOffPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
   rule AutoTurnOffRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  cancelledBy Account? @relation("AutoTurnOffExecutionCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
+  shops AutoTurnOffShopExecution[]
 
   @@index([poolId])
   @@index([ruleId])
   @@index([createdAt])
   @@map("auto_turn_off_execution")
+}
+
+model AutoTurnOffShopExecution {
+  id             String         @id @default(uuid()) @db.Uuid
+  executionId    String         @map("execution_id") @db.Uuid
+  shopId         String         @map("shop_id")
+  appShopId      String?        @map("app_shop_id")
+  status         AutoOpenStatus @default(pending)
+  currentStep    String?        @map("current_step")
+  itemsSucceeded Int            @default(0) @map("items_succeeded")
+  itemsFailed    Int            @default(0) @map("items_failed")
+  result         Json?
+  startedAt      DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt     DateTime?      @map("finished_at") @db.Timestamptz
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  execution AutoTurnOffExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, shopId])
+  @@index([executionId, status])
+  @@map("auto_turn_off_shop_execution")
 }
 
 // -------------------------- Auth / invitations -----------------------------

@@ -213,7 +213,7 @@ export interface Invitation {
   createdAt: string;
 }
 
-export type AutoOpenStatus = 'pending' | 'running' | 'done' | 'failed';
+export type AutoOpenStatus = 'pending' | 'running' | 'done' | 'partial_success' | 'failed' | 'cancelled';
 
 export interface AutoOpenPool {
   id: string;
@@ -252,9 +252,26 @@ export interface AutoTurnOffRule {
   shopIds: string[];
   stockEndpoint: 'setStock' | 'setstockSync';
   startsAt: string;
+  endsAt?: string;
   nextRunAt: string;
   lastRunAt?: string;
-  executions?: Array<{ id: string; status: AutoOpenStatus }>;
+  createdBy: { id: string; name: string; email: string };
+  updatedBy: { id: string; name: string; email: string };
+  executions?: Array<{
+    id: string;
+    status: AutoOpenStatus;
+    currentStep?: string;
+    progressCurrent: number;
+    progressTotal: number;
+    progressPercent: number;
+    totalShops: number;
+    shopsSucceeded: number;
+    itemsTurnedOff: number;
+    errorMessage?: string;
+    cancelledAt?: string;
+    startedAt?: string;
+    finishedAt?: string;
+  }>;
   brand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'>;
   createdAt: string;
   updatedAt: string;
@@ -282,19 +299,42 @@ export interface AutoTurnOffExecution {
   totalShops: number;
   shopsSucceeded: number;
   itemsTurnedOff: number;
+  currentStep?: string;
+  progressCurrent: number;
+  progressTotal: number;
+  progressPercent: number;
+  errorMessage?: string;
+  cancelledAt?: string;
   rule: { id: string; name: string; brand: { brandName: string } };
-  logs?: {
-    shops: Array<{
-      shopId: string;
-      appShopId: string;
-      endpoint: 'setStock' | 'setstockSync';
-      success: boolean;
-      itemsSucceeded: number;
-      itemsFailed: number;
-      taskId?: string;
-      failedItems?: Array<{ appItemId: string; reason: string }>;
-      error?: string;
-    }>;
-  };
+  logs?: { shops: AutoTurnOffShopResult[] };
   createdAt: string;
+}
+
+export interface AutoTurnOffShopResult {
+  shopId: string;
+  appShopId: string;
+  endpoint: 'setStock' | 'setstockSync';
+  success: boolean;
+  itemsSucceeded: number;
+  itemsFailed: number;
+  taskId?: string;
+  menuTaskId?: string;
+  requestedUpcs?: number;
+  matchedUpcs?: number;
+  missingUpcs?: string[];
+  failedItems?: Array<{ appItemId?: string; upc?: string; reason: string }>;
+  error?: string;
+}
+
+export interface AutoTurnOffShopExecution {
+  id: string;
+  shopId: string;
+  appShopId?: string;
+  status: AutoOpenStatus;
+  currentStep?: string;
+  itemsSucceeded: number;
+  itemsFailed: number;
+  result?: AutoTurnOffShopResult;
+  startedAt?: string;
+  finishedAt?: string;
 }

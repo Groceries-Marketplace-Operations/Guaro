@@ -194,8 +194,11 @@ export const autoTurnOffApi = {
   updateRule: (id: string, data: object) => client.patch(`/integrations/auto-turn-off/rules/${id}`, data),
   deleteRule: (id: string) => client.delete(`/integrations/auto-turn-off/rules/${id}`),
   runRule: (id: string) => client.post(`/integrations/auto-turn-off/rules/${id}/run`),
+  stopRule: (id: string) => client.post(`/integrations/auto-turn-off/rules/${id}/stop`),
   listExecutions: (poolId: string, page = 1) =>
     client.get(`/integrations/auto-turn-off/pools/${poolId}/executions`, { params: { page } }),
+  listExecutionShops: (executionId: string, page = 1, limit = 50) =>
+    client.get(`/integrations/auto-turn-off/executions/${executionId}/shops`, { params: { page, limit } }),
 };
 
 /* ── Admin (super_admin only) ────────────────────────────────── */

@@ -9,6 +9,7 @@ import {
   BATCH_SIZE,
   COOLDOWN_BATCH_MS,
   COOLDOWN_SHOPLIST_MS,
+  fetchWithEndpointContext,
   generateSignature,
   parseJsonKeepingIds,
   getAuthToken,
@@ -60,7 +61,8 @@ async function fetchAllShopsBasic(appId: string, appSecret: string, onPage: (n: 
     const params: Record<string, string | number> = { app_id: appId, page_no: pageNo, page_size: pageSize, timestamp };
     params.sign = generateSignature(params, appSecret);
 
-    const res = await fetch(`${DIDI_BASE}/v1/shop/shop/list`, {
+    const endpoint = 'POST /v1/shop/shop/list';
+    const res = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v1/shop/shop/list`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
@@ -110,11 +112,23 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
   const shops = await fetchAllShopsBasic(appId, appSecret, (page, total) => {
     logger.log(`Shop list page ${page}/${total}`);
   });
+  const initialSync = await ctx.syncBrandShops(shops);
+  ctx.addNote(
+    `${initialSync.total} tiendas sincronizadas en la marca `
+    + `(${initialSync.created} nuevas, ${initialSync.updated} actualizadas).`,
+  );
   ctx.addNote(`${shops.length} shops found. Fetching details…`);
   logger.log(`${brand.brandName}: ${shops.length} shops`);
 
   // ── 2. Fetch details in batches ───────────────────────────────────────────
   const rows: (string | number)[][] = [];
+  const detailedShops: Array<{
+    shopId: string;
+    appShopId: string;
+    city?: string;
+    latitude?: string | number;
+    longitude?: string | number;
+  }> = [];
   const totalBatches = Math.ceil(shops.length / BATCH_SIZE);
 
   for (let bi = 0; bi < totalBatches; bi++) {
@@ -129,7 +143,11 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
     const detailResults = await Promise.allSettled(
       tokenResults.map(async (tr, i) => {
         if (tr.status === 'rejected') throw tr.reason;
-        const res = await fetch(`${DIDI_BASE}/v1/shop/shop/detail?auth_token=${encodeURIComponent(tr.value)}`);
+        const endpoint = 'GET /v1/shop/shop/detail';
+        const res = await fetchWithEndpointContext(
+          endpoint,
+          `${DIDI_BASE}/v1/shop/shop/detail?auth_token=${encodeURIComponent(tr.value)}`,
+        );
         if (!res.ok) throw new Error(`DiDi shop detail HTTP error: ${res.status}`);
         return parseJsonKeepingIds(await res.text());
       }),
@@ -146,10 +164,17 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
       }
       const d = dr.value.data;
       const sched = formatSchedule(d.biz_day_time ?? []);
+      detailedShops.push({
+        shopId: shop.shopId,
+        appShopId: shop.appShopId,
+        city: d.city_name ?? d.city ?? '',
+        latitude: d.lat ?? undefined,
+        longitude: d.lng ?? undefined,
+      });
       rows.push([
         shop.shopId, shop.appShopId,
         d.name ?? '', d.addr ?? '', d.poi_name ?? '',
-        '', // city — no mapping available in this context
+        d.city_name ?? d.city ?? '',
         d.lat ?? '', d.lng ?? '',
         kaType, category,
         sched.monday, sched.tuesday, sched.wednesday, sched.thursday,
@@ -162,6 +187,10 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
   }
 
   ctx.addNote(`Details fetched: ${rows.length}/${shops.length} shops. Building file…`);
+
+  if (detailedShops.length > 0) {
+    await ctx.syncBrandShops(detailedShops);
+  }
 
   if (shops.length > 0 && rows.length === 0) {
     throw new Error('Could not fetch details for any shop; export file was not generated');
@@ -201,7 +230,14 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
   logger.log(`Saved: ${filename} (${rows.length} rows)`);
   ctx.addNote(`✅ ${rows.length} tiendas exportadas`);
 
-  return { fileKey: filename, totalShops: rows.length, brand: brand.brandName };
+  return {
+    fileKey: filename,
+    totalShops: rows.length,
+    storedShops: initialSync.total,
+    createdShops: initialSync.created,
+    updatedShops: initialSync.updated,
+    brand: brand.brandName,
+  };
 }
 
 registerHandler('export_shop_list', exportShopList);

@@ -457,6 +457,12 @@ export default function NewTaskPage() {
           style={urlErrors[f.id] ? { borderColor: 'var(--red)' } : {}}
         />
         {urlErrors[f.id] && <p style={{ fontSize: '0.75rem', color: 'var(--red)', marginTop: 4 }}>{urlErrors[f.id]}</p>}
+        {!urlErrors[f.id] && /^https?:\/\//i.test(strVal) && (
+          <a href={strVal} target="_blank" rel="noopener noreferrer"
+            style={{ display: 'inline-flex', marginTop: 6, color: 'var(--orange)', fontSize: '0.78rem', fontWeight: 600 }}>
+            {strVal} ↗
+          </a>
+        )}
       </div>
     );
 

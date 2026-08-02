@@ -36,6 +36,7 @@ export default function BrandDetail() {
   const [openTask, setOpenTask] = useState(false);
   const [taskTypeId, setTaskTypeId] = useState('');
   const [savingTask, setSavingTask] = useState(false);
+  const [taskErr, setTaskErr] = useState('');
   const [openEdit, setOpenEdit] = useState(false);
   const [editForm, setEditForm] = useState({
     brandId: '', brandName: '', category: '',
@@ -67,8 +68,8 @@ export default function BrandDetail() {
   });
 
   const { data: shopsResult } = useQuery<Paginated<Shop>>({
-    queryKey: ['shops', { brandId: id, limit: 500 }],
-    queryFn: () => shopsApi.list({ brandId: id, limit: 500 }).then(r => r.data as Paginated<Shop>),
+    queryKey: ['shops', { brandId: id, limit: 10000 }],
+    queryFn: () => shopsApi.list({ brandId: id, limit: 10000 }).then(r => r.data as Paginated<Shop>),
   });
 
   const { data: tasksResult } = useQuery<Paginated<Task>>({
@@ -79,10 +80,11 @@ export default function BrandDetail() {
   const shops = shopsResult?.data ?? [];
   const tasks = tasksResult?.data ?? [];
 
-  const { data: types = [] } = useQuery<TaskType[]>({
+  const { data: typesResult } = useQuery<Paginated<TaskType>>({
     queryKey: ['task-types'],
-    queryFn: () => taskTypesApi.list().then(r => r.data),
+    queryFn: () => taskTypesApi.list({ page: 1, limit: 200 }).then(r => r.data as Paginated<TaskType>),
   });
+  const types = (typesResult?.data ?? []).filter(type => type.active);
 
   const { data: bposResult } = useQuery<{ data: { id: string; name: string; email: string }[] }>({
     queryKey: ['accounts', { role: 'bpo' }],
@@ -110,12 +112,16 @@ export default function BrandDetail() {
 
   const createTask = async () => {
     if (!taskTypeId) return;
-    setSavingTask(true);
+    setSavingTask(true); setTaskErr('');
     try {
       const res = await tasksApi.create({ taskTypeId, brandId: id });
-      qc.invalidateQueries({ queryKey: ['tasks', id] });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
       setOpenTask(false);
       nav(`/tasks/${res.data.id}`);
+    } catch (ex: unknown) {
+      const e = ex as { response?: { data?: { message?: string | string[] } } };
+      const msg = e.response?.data?.message;
+      setTaskErr(Array.isArray(msg) ? msg.join(', ') : (msg ?? 'Could not create task'));
     } finally { setSavingTask(false); }
   };
 
@@ -188,7 +194,7 @@ export default function BrandDetail() {
     setSavingBatch(true);
     try {
       await shopsApi.batchStatus([...selectedShopIds], batchStatus);
-      qc.invalidateQueries({ queryKey: ['shops', { brandId: id, limit: 500 }] });
+      qc.invalidateQueries({ queryKey: ['shops', { brandId: id, limit: 10000 }] });
       setSelectedShopIds(new Set());
       setBatchStatus('');
     } finally { setSavingBatch(false); }
@@ -198,7 +204,7 @@ export default function BrandDetail() {
     setSavingShop(true); setShopErr('');
     try {
       await shopsApi.create({ ...shopForm, brandId: id, status: shopForm.status || 'lead' });
-      qc.invalidateQueries({ queryKey: ['shops', { brandId: id, limit: 500 }] });
+      qc.invalidateQueries({ queryKey: ['shops', { brandId: id, limit: 10000 }] });
       setOpenAddShop(false);
       setShopForm({ shopId: '', appShopId: '', city: '', status: 'lead' });
     } catch (ex: unknown) {
@@ -241,7 +247,7 @@ export default function BrandDetail() {
     setSavingShop(true); setShopErr('');
     try {
       await shopsApi.createBatch(batchRows.map(r => ({ ...r, brandId: id })));
-      qc.invalidateQueries({ queryKey: ['shops', { brandId: id, limit: 500 }] });
+      qc.invalidateQueries({ queryKey: ['shops', { brandId: id, limit: 10000 }] });
       setBatchDone(true);
     } catch (ex: unknown) {
       const e = ex as { response?: { data?: { message?: string | string[] } } };
@@ -275,7 +281,7 @@ export default function BrandDetail() {
             {canEdit && (
               <button className="btn btn-ghost" onClick={openEditModal}>{t('pages.brandDetail.editBrand')}</button>
             )}
-            <button className="btn btn-primary" onClick={() => setOpenTask(true)}>{t('pages.brandDetail.startTask')}</button>
+            <button className="btn btn-primary" onClick={() => { setTaskTypeId(''); setTaskErr(''); setOpenTask(true); }}>{t('pages.brandDetail.startTask')}</button>
           </div>
         </div>
 
@@ -697,6 +703,7 @@ export default function BrandDetail() {
             </button>
           </>}
         >
+          {taskErr && <div className="error-banner" style={{ marginBottom: 12 }}>{taskErr}</div>}
           <div className="form-group">
             <label className="form-label">{t('pages.brandDetail.taskTypeLabel')}</label>
             <select className="form-select" value={taskTypeId} onChange={e => setTaskTypeId(e.target.value)}>
