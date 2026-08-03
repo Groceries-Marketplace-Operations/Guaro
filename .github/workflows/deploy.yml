@@ -6,6 +6,10 @@ on:
     branches: [main]
     types: [completed]
 
+concurrency:
+  group: guaro-production-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     name: Deploy to production
@@ -22,6 +26,8 @@ jobs:
           command_timeout: 30m
           script: |
             set -e
+            exec 9>/tmp/guaro-production-deploy.lock
+            flock -w 1800 9
             app_dir=""
             for candidate in /opt/guaro /root/Guaro /root/guaro /root/Guaro-1 /home/ubuntu/Guaro /home/ubuntu/guaro; do
               if [ -d "$candidate/.git" ] && [ -f "$candidate/docker-compose.prod.yml" ]; then
