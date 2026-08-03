@@ -1,12 +1,13 @@
-import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue, OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Injectable, Logger } from '@nestjs/common';
-import { Job } from 'bullmq';
+import { Job, Queue } from 'bullmq';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { decrypt } from '../common/crypto.util';
 import { getAuthToken } from '../queue/handlers/didi-food.util';
+import { CatalogSyncService } from '../catalog/catalog-sync.service';
 import {
   AutoTurnOffCancelledError,
   callStockApi,
@@ -17,7 +18,7 @@ import {
 } from './auto-turn-off-api.util';
 
 @Injectable()
-@Processor('auto-turn-off-shop', { concurrency: 5 })
+@Processor('auto-turn-off-shop', { concurrency: 24 })
 export class AutoTurnOffShopProcessor extends WorkerHost {
   private readonly logger = new Logger(AutoTurnOffShopProcessor.name);
   private readonly activeByApplication = new Map<string, number>();
@@ -28,6 +29,8 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly webhooks: WebhookSenderService,
+    private readonly catalog: CatalogSyncService,
+    @InjectQueue('auto-turn-off-shop') private readonly shopQueue: Queue,
   ) {
     super();
   }
@@ -80,11 +83,41 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
         const appSecret = encryptionKey ? decrypt(application.appSecret, encryptionKey) : application.appSecret;
         const authToken = await getAuthToken(application.appId, appSecret, target.appShopId!);
 
-        await this.setCurrentStep(target.id, execution.id, `downloading_menu:${target.shopId}`);
-        const menu = await downloadMenu(authToken, () => this.ensureActive(target.id, execution.id));
+        const catalogItems = await this.prisma.brandItem.findMany({
+          where: {
+            brandId: rule.brandId,
+            upc: { in: rule.upcs },
+            shop: { shopId: target.shopId },
+          },
+          select: { upc: true, appItemId: true },
+        });
+        const cached = resolveAppItemIds(
+          catalogItems.map(item => ({ upc: item.upc, app_item_id: item.appItemId })),
+          rule.upcs,
+        );
+        let appItemIds = cached.appItemIds;
+        let matchedUpcs = cached.matchedUpcs;
+        let missingUpcs = cached.missingUpcs;
+        let menuTaskId: string | undefined;
+        let menuSource: 'catalog' | 'download' = 'catalog';
+
+        if (missingUpcs.length > 0) {
+          menuSource = 'download';
+          await this.setCurrentStep(target.id, execution.id, `downloading_menu:${target.shopId}`);
+          const menu = await downloadMenu(authToken, () => this.ensureActive(target.id, execution.id));
+          menuTaskId = menu.taskId;
+          const localShop = await this.prisma.shop.findFirst({
+            where: { brandId: rule.brandId, shopId: target.shopId, deletedAt: null },
+            select: { id: true },
+          });
+          if (localShop) await this.catalog.replaceShopMenu(localShop.id, menu.items);
+          const resolved = resolveAppItemIds(menu.items, rule.upcs);
+          appItemIds = resolved.appItemIds;
+          matchedUpcs = resolved.matchedUpcs;
+          missingUpcs = resolved.missingUpcs;
+        }
 
         await this.advanceStep(target.id, execution.id, `matching_upcs:${target.shopId}`);
-        const { appItemIds, matchedUpcs, missingUpcs } = resolveAppItemIds(menu.items, rule.upcs);
 
         await this.advanceStep(target.id, execution.id, `updating_stock:${target.shopId}`);
         if (appItemIds.length === 0) {
@@ -95,7 +128,8 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
             success: false,
             itemsSucceeded: 0,
             itemsFailed: rule.upcs.length,
-            menuTaskId: menu.taskId,
+            menuTaskId,
+            menuSource,
             requestedUpcs: rule.upcs.length,
             matchedUpcs: 0,
             missingUpcs,
@@ -123,7 +157,8 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
           ...apiResult,
           success: apiResult.success && missingUpcs.length === 0,
           itemsFailed: apiResult.itemsFailed + missingUpcs.length,
-          menuTaskId: menu.taskId,
+          menuTaskId,
+          menuSource,
           requestedUpcs: rule.upcs.length,
           matchedUpcs,
           missingUpcs: missingUpcs.length ? missingUpcs : undefined,
@@ -244,7 +279,30 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
       status === 'done' ? 'processing_shops' : status === 'partial_success' ? 'shop_partial_success' : 'shop_failed',
       3 - completedSteps,
     );
-    await this.finalizeIfComplete(current.executionId);
+    await this.enqueueNextOrFinalize(current.executionId);
+  }
+
+  private async enqueueNextOrFinalize(executionId: string) {
+    const execution = await this.prisma.autoTurnOffExecution.findUnique({
+      where: { id: executionId },
+      select: { status: true },
+    });
+    if (execution?.status !== 'running') return;
+    const next = await this.prisma.autoTurnOffShopExecution.findFirst({
+      where: { executionId, status: 'pending' },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (next) {
+      await this.shopQueue.add('turn-off-shop-items', { shopExecutionId: next.id }, {
+        jobId: next.id,
+        attempts: 1,
+        removeOnComplete: 1000,
+        removeOnFail: 1000,
+      });
+      return;
+    }
+    await this.finalizeIfComplete(executionId);
   }
 
   private async finalizeIfComplete(executionId: string) {

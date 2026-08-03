@@ -154,6 +154,12 @@ export default function Sidebar() {
           <NavLink to="/integrations/auto-open" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> {t('nav.autoOpenStores')}
           </NavLink>
+          <NavLink to="/integrations/auto-stores-fetch" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconBriefcase /> Auto Stores Fetch
+          </NavLink>
+          <NavLink to="/integrations/auto-menu-fetch" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconLayers /> Auto Menu Fetch
+          </NavLink>
           <NavLink to="/integrations/auto-turn-off" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> {t('nav.autoTurnOffItems')}
           </NavLink>

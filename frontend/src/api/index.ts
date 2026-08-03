@@ -79,6 +79,7 @@ export const brandsApi = {
   delete: (id: string) => client.delete(`/brands/${id}`),
   listRules: () => client.get('/brands/assignment-rules'),
   updateRule: (id: string, data: object) => client.patch(`/brands/assignment-rules/${id}`, data),
+  menu: (id: string, params?: object) => client.get(`/brands/${id}/menu`, { params }),
 };
 
 /* ── Shops ──────────────────────────────────────────────────── */
@@ -142,6 +143,8 @@ export const bpoApi = {
   teamHistory: (page = 1, limit = 25, filters?: { taskTypeId?: string; year?: number; month?: number; week?: number }) =>
     client.get('/bpo-management/team/history', { params: { page, limit, ...filters } }),
   bpoPerf: (id: string) => client.get(`/bpo-management/team/${id}`),
+  bpoTasks: (id: string, page = 1, limit = 25, status?: string) =>
+    client.get(`/bpo-management/team/${id}/tasks`, { params: { page, limit, status: status || undefined } }),
 };
 
 /* ── Invitations ─────────────────────────────────────────────── */
@@ -199,6 +202,13 @@ export const autoTurnOffApi = {
     client.get(`/integrations/auto-turn-off/pools/${poolId}/executions`, { params: { page } }),
   listExecutionShops: (executionId: string, page = 1, limit = 50) =>
     client.get(`/integrations/auto-turn-off/executions/${executionId}/shops`, { params: { page, limit } }),
+};
+
+export const autoFetchApi = {
+  listPools: (kind: 'stores' | 'menu') => client.get(`/integrations/auto-fetch/${kind}/pools`),
+  updatePool: (id: string, data: object) => client.patch(`/integrations/auto-fetch/pools/${id}`, data),
+  runPool: (id: string) => client.post(`/integrations/auto-fetch/pools/${id}/run`),
+  listExecutions: (id: string, page = 1) => client.get(`/integrations/auto-fetch/pools/${id}/executions`, { params: { page } }),
 };
 
 /* ── Admin (super_admin only) ────────────────────────────────── */

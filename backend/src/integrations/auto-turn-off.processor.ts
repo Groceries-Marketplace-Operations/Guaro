@@ -1,9 +1,8 @@
 import { randomUUID } from 'crypto';
-import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { InjectQueue } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Injectable, Logger } from '@nestjs/common';
-import { Job, Queue } from 'bullmq';
+import { Queue } from 'bullmq';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { decrypt } from '../common/crypto.util';
@@ -11,20 +10,16 @@ import { fetchShopIdMap } from '../queue/handlers/didi-food.util';
 import { AutoTurnOffCancelledError, ShopResult, StockEndpoint } from './auto-turn-off-api.util';
 
 @Injectable()
-@Processor('auto-turn-off', { concurrency: 1 })
-export class AutoTurnOffProcessor extends WorkerHost {
-  private readonly logger = new Logger(AutoTurnOffProcessor.name);
+export class AutoTurnOffCoordinator {
+  private readonly logger = new Logger(AutoTurnOffCoordinator.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     @InjectQueue('auto-turn-off-shop') private readonly shopQueue: Queue,
-  ) {
-    super();
-  }
+  ) {}
 
-  async process(job: Job<{ executionId: string }>): Promise<void> {
-    const { executionId } = job.data;
+  async process(executionId: string): Promise<void> {
     const claimed = await this.prisma.autoTurnOffExecution.updateMany({
       where: { id: executionId, status: 'pending' },
       data: {
@@ -151,6 +146,8 @@ export class AutoTurnOffProcessor extends WorkerHost {
       }
     }
 
+    await this.persistResolvedShops(rule.brandId, rule.shopIds, shopIdMap);
+
     await this.ensureRunning(executionId);
     const endpoint = rule.stockEndpoint as StockEndpoint;
     const shopJobs = rule.shopIds.map(shopId => {
@@ -209,16 +206,15 @@ export class AutoTurnOffProcessor extends WorkerHost {
     }
 
     try {
-      for (let index = 0; index < runnable.length; index += 500) {
-        await this.ensureRunning(executionId);
-        const batch = runnable.slice(index, index + 500);
-        await this.shopQueue.addBulk(batch.map(item => ({
-          name: 'turn-off-shop-items',
-          data: { shopExecutionId: item.id },
-          opts: { jobId: item.id, attempts: 1, removeOnComplete: 1000, removeOnFail: 1000 },
-        })));
-      }
-      this.logger.log(`Queued ${runnable.length} shop worker job(s) for rule "${rule.name}"`);
+      await this.ensureRunning(executionId);
+      const first = runnable[0];
+      await this.shopQueue.add('turn-off-shop-items', { shopExecutionId: first.id }, {
+        jobId: first.id,
+        attempts: 1,
+        removeOnComplete: 1000,
+        removeOnFail: 1000,
+      });
+      this.logger.log(`Started the dedicated sequential worker for rule "${rule.name}" (${runnable.length} shop(s))`);
     } catch (error) {
       const current = await this.prisma.autoTurnOffExecution.findUnique({
         where: { id: executionId },
@@ -245,12 +241,6 @@ export class AutoTurnOffProcessor extends WorkerHost {
     }
   }
 
-  @OnWorkerEvent('failed')
-  async onFailed(job: Job<{ executionId: string }> | undefined, error: Error) {
-    if (!job?.data.executionId) return;
-    await this.failExecution(job.data.executionId, error.message);
-  }
-
   private async ensureRunning(executionId: string) {
     const execution = await this.prisma.autoTurnOffExecution.findUnique({
       where: { id: executionId },
@@ -259,7 +249,7 @@ export class AutoTurnOffProcessor extends WorkerHost {
     if (execution?.status !== 'running') throw new Error('Execution is no longer running');
   }
 
-  private async failExecution(executionId: string, message: string) {
+  async failExecution(executionId: string, message: string) {
     await this.prisma.autoTurnOffExecution.updateMany({
       where: { id: executionId, status: { in: ['pending', 'running'] } },
       data: {
@@ -351,5 +341,28 @@ export class AutoTurnOffProcessor extends WorkerHost {
     const intervalMs = intervalMinutes * 60_000;
     const elapsed = after.getTime() - startsAt.getTime();
     return new Date(startsAt.getTime() + Math.ceil(elapsed / intervalMs) * intervalMs);
+  }
+
+  private async persistResolvedShops(brandId: string, shopIds: string[], mappings: Map<string, string>) {
+    const resolved = shopIds
+      .map(shopId => ({ shopId, appShopId: mappings.get(shopId) }))
+      .filter((shop): shop is { shopId: string; appShopId: string } => Boolean(shop.appShopId));
+    for (let offset = 0; offset < resolved.length; offset += 100) {
+      const chunk = resolved.slice(offset, offset + 100);
+      await this.prisma.$transaction(chunk.map(shop => this.prisma.shop.upsert({
+        where: { shopId: shop.shopId },
+        create: {
+          shopId: shop.shopId,
+          appShopId: shop.appShopId,
+          brandId,
+          status: 'integrated',
+        },
+        update: {
+          appShopId: shop.appShopId,
+          brandId,
+          deletedAt: null,
+        },
+      })));
+    }
   }
 }

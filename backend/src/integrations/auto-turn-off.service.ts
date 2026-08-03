@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { AutoOpenStatus, Prisma } from '@prisma/client';
+import { AutoOpenStatus, Country, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAutoTurnOffPoolDto } from './dto/create-auto-turn-off-pool.dto';
 import { UpdateAutoTurnOffPoolDto } from './dto/update-auto-turn-off-pool.dto';
@@ -42,7 +42,9 @@ const POOL_INCLUDE = {
 export class AutoTurnOffService {
   constructor(
     private readonly prisma: PrismaService,
-    @InjectQueue('auto-turn-off') private readonly coordinatorQueue: Queue,
+    @InjectQueue('auto-turn-off-MX') private readonly mexicoQueue: Queue,
+    @InjectQueue('auto-turn-off-CO') private readonly colombiaQueue: Queue,
+    @InjectQueue('auto-turn-off-CR') private readonly costaRicaQueue: Queue,
     @InjectQueue('auto-turn-off-shop') private readonly shopQueue: Queue,
   ) {}
 
@@ -72,6 +74,9 @@ export class AutoTurnOffService {
 
   async updatePool(id: string, dto: UpdateAutoTurnOffPoolDto) {
     const current = await this.findPool(id);
+    if (dto.country && dto.country !== current.country && current.rules.length > 0) {
+      throw new BadRequestException('Pool country cannot be changed while it contains rules');
+    }
     const { webhookId, ...data } = dto;
     const wasActivated = current.active === false && dto.active === true;
 
@@ -106,10 +111,10 @@ export class AutoTurnOffService {
   }
 
   async createRule(poolId: string, dto: CreateAutoTurnOffRuleDto, userId: string) {
-    await this.findPool(poolId);
+    const pool = await this.findPool(poolId);
     const shopIds = this.normalizeShopIds(dto.shopIds);
     const upcs = this.normalizeUpcs(dto.upcs);
-    await this.validateBrand(dto.brandId);
+    await this.validateBrand(dto.brandId, pool.country);
     this.validateEndpointLimits(dto.stockEndpoint, dto.intervalMinutes, upcs.length);
     const startsAt = new Date(dto.startsAt);
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
@@ -145,12 +150,13 @@ export class AutoTurnOffService {
 
   async updateRule(id: string, dto: UpdateAutoTurnOffRuleDto, userId: string) {
     const current = await this.findRule(id);
+    const pool = await this.findPool(current.poolId);
     const brandId = dto.brandId ?? current.brandId;
     const shopIds = dto.shopIds ? this.normalizeShopIds(dto.shopIds) : current.shopIds;
     const upcs = dto.upcs ? this.normalizeUpcs(dto.upcs) : current.upcs;
     const stockEndpoint = dto.stockEndpoint ?? current.stockEndpoint;
     const intervalMinutes = dto.intervalMinutes ?? current.intervalMinutes;
-    await this.validateBrand(brandId);
+    await this.validateBrand(brandId, pool.country);
     this.validateEndpointLimits(stockEndpoint, intervalMinutes, upcs.length);
     if (dto.active ?? current.active) await this.validateNoActiveShopConflicts(shopIds, stockEndpoint, id);
 
@@ -252,7 +258,7 @@ export class AutoTurnOffService {
     ]);
 
     await Promise.allSettled([
-      ...executions.map(execution => this.removeWaitingJob(this.coordinatorQueue, execution.id)),
+      ...executions.flatMap(execution => this.coordinatorQueues().map(queue => this.removeWaitingJob(queue, execution.id))),
       ...executions.flatMap(execution => execution.shops.map(shop => this.removeWaitingJob(this.shopQueue, shop.id))),
     ]);
 
@@ -267,6 +273,8 @@ export class AutoTurnOffService {
   }
 
   async enqueueExecution(poolId: string, ruleId: string, trigger: 'manual' | 'scheduled') {
+    const pool = await this.prisma.autoTurnOffPool.findUnique({ where: { id: poolId }, select: { country: true } });
+    if (!pool) throw new NotFoundException('Auto turn off pool not found');
     const execution = await this.prisma.autoTurnOffExecution.create({
       data: {
         poolId,
@@ -282,7 +290,7 @@ export class AutoTurnOffService {
     try {
       // DiDi only accepts one Stock API request per store every 10 minutes.
       // Disable BullMQ's global quick retries to avoid violating that limit.
-      await this.coordinatorQueue.add('turn-off-items', { executionId: execution.id }, { jobId: execution.id, attempts: 1 });
+      await this.coordinatorQueue(pool.country).add('turn-off-items', { executionId: execution.id }, { jobId: execution.id, attempts: 1 });
       return execution;
     } catch (error) {
       await this.prisma.autoTurnOffExecution.update({
@@ -417,9 +425,20 @@ export class AutoTurnOffService {
     }
   }
 
-  private async validateBrand(brandId: string) {
-    const brand = await this.prisma.brand.findFirst({ where: { id: brandId, deletedAt: null }, select: { id: true } });
+  private coordinatorQueue(country: Country) {
+    if (country === Country.CO) return this.colombiaQueue;
+    if (country === Country.CR) return this.costaRicaQueue;
+    return this.mexicoQueue;
+  }
+
+  private coordinatorQueues() {
+    return [this.mexicoQueue, this.colombiaQueue, this.costaRicaQueue];
+  }
+
+  private async validateBrand(brandId: string, country?: Country) {
+    const brand = await this.prisma.brand.findFirst({ where: { id: brandId, deletedAt: null }, select: { id: true, country: true } });
     if (!brand) throw new BadRequestException('Brand not found');
+    if (country && brand.country !== country) throw new BadRequestException('Brand country must match the pool country');
   }
 
   private async validateNoActiveShopConflicts(

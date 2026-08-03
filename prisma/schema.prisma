@@ -48,9 +48,9 @@ enum ExecutionType {
 enum AssignmentStrategy {
   fixed
   round_robin
-  by_weight      // on hold — not used in code; kept for DB compatibility
+  by_weight // on hold — not used in code; kept for DB compatibility
   brand_assignment // assign via BrandAssignmentRule (ka_type × country)
-  manual        // admin selects BPO at runtime
+  manual // admin selects BPO at runtime
   same_previous_step // assign the same BPO who worked the previous step
 
   @@map("EstrategiaAsignacion")
@@ -67,16 +67,16 @@ enum FormFieldTipo {
   link
   link_spreadsheet
   texto
-  text_box            // multi-line free text area
+  text_box // multi-line free text area
   numero
   select
   select_brand
-  multiple_brands     // multi-select: one FormValue row per brand
+  multiple_brands // multi-select: one FormValue row per brand
   select_store
-  select_ka_type      // dropdown populated from AppConfig category=ka_type
-  select_country      // dropdown populated from AppConfig category=country
+  select_ka_type // dropdown populated from AppConfig category=ka_type
+  select_country // dropdown populated from AppConfig category=country
   select_biz_category // dropdown populated from AppConfig category=biz_category
-  file                // Excel upload (.xlsx/.xls); stored as temp filename, deleted after handler runs
+  file // Excel upload (.xlsx/.xls); stored as temp filename, deleted after handler runs
 }
 
 enum WebhookEvent {
@@ -177,36 +177,41 @@ enum AutoOpenStatus {
   @@map("AutoOpenEstado")
 }
 
+enum AutoFetchKind {
+  stores
+  menu
+}
+
 // ---------------------------- Actors ---------------------------------------
 model Account {
-  id         String       @id @default(uuid()) @db.Uuid
-  name       String       @map("nombre")
-  email      String       @unique
-  googleSub  String?      @unique @map("google_sub")
-  roles        AccountRole[]
-  adminModules   String[]    @default([]) @map("admin_modules")
-  bpoPermissions String[]    @default([]) @map("bpo_permissions")
-  sectionId    String?     @map("section_id") @db.Uuid
-  workload     Int         @default(0) @map("carga")
-  rrCounter    Int         @default(0) @map("contador_rr")
-  createdAt  DateTime     @default(now()) @map("created_at")
-  updatedAt  DateTime     @updatedAt @map("updated_at")
-  deletedAt  DateTime?    @map("deleted_at")
+  id             String        @id @default(uuid()) @db.Uuid
+  name           String        @map("nombre")
+  email          String        @unique
+  googleSub      String?       @unique @map("google_sub")
+  roles          AccountRole[]
+  adminModules   String[]      @default([]) @map("admin_modules")
+  bpoPermissions String[]      @default([]) @map("bpo_permissions")
+  sectionId      String?       @map("section_id") @db.Uuid
+  workload       Int           @default(0) @map("carga")
+  rrCounter      Int           @default(0) @map("contador_rr")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  deletedAt      DateTime?     @map("deleted_at")
 
-  section            Section?                     @relation(fields: [sectionId], references: [id])
-  createdTasks       Task[]                       @relation("TaskCreador")
-  ownedBrands        Brand[]                      @relation("BrandResponsable")
-  createdBrands      Brand[]                      @relation("BrandCreador")
-  createdShops       Shop[]                       @relation("ShopCreador")
-  createdApps        Application[]                @relation("AppCreador")
-  assignedSteps      StepInstance[]
-  stepCandidate      StepDefinitionAccount[]
-  ruleCandidate      BrandAssignmentRuleAccount[]
-  createdInvitations Invitation[]                 @relation("InvitacionCreador")
-  usedInvitation     Invitation?                  @relation("InvitacionCuenta")
-  createdAutoTurnOffRules AutoTurnOffRule[]        @relation("AutoTurnOffRuleCreator")
-  updatedAutoTurnOffRules AutoTurnOffRule[]        @relation("AutoTurnOffRuleUpdater")
-  cancelledAutoTurnOffExecutions AutoTurnOffExecution[] @relation("AutoTurnOffExecutionCanceller")
+  section                        Section?                     @relation(fields: [sectionId], references: [id])
+  createdTasks                   Task[]                       @relation("TaskCreador")
+  ownedBrands                    Brand[]                      @relation("BrandResponsable")
+  createdBrands                  Brand[]                      @relation("BrandCreador")
+  createdShops                   Shop[]                       @relation("ShopCreador")
+  createdApps                    Application[]                @relation("AppCreador")
+  assignedSteps                  StepInstance[]
+  stepCandidate                  StepDefinitionAccount[]
+  ruleCandidate                  BrandAssignmentRuleAccount[]
+  createdInvitations             Invitation[]                 @relation("InvitacionCreador")
+  usedInvitation                 Invitation?                  @relation("InvitacionCuenta")
+  createdAutoTurnOffRules        AutoTurnOffRule[]            @relation("AutoTurnOffRuleCreator")
+  updatedAutoTurnOffRules        AutoTurnOffRule[]            @relation("AutoTurnOffRuleUpdater")
+  cancelledAutoTurnOffExecutions AutoTurnOffExecution[]       @relation("AutoTurnOffExecutionCanceller")
 
   @@index([sectionId])
   @@map("account")
@@ -309,17 +314,17 @@ model StepDefinitionAccount {
 }
 
 model FormField {
-  id          String        @id @default(uuid()) @db.Uuid
-  taskTypeId  String        @map("task_type_id") @db.Uuid
-  label       String        @map("etiqueta")
-  tipo        FormFieldTipo
-  required    Boolean       @default(false) @map("requerido")
-  multiple    Boolean       @default(false)
-  options     Json?         @map("opciones")
-  order       Int           @map("orden")
-  filteredById String?      @map("filtra_por_field") @db.Uuid
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  id           String        @id @default(uuid()) @db.Uuid
+  taskTypeId   String        @map("task_type_id") @db.Uuid
+  label        String        @map("etiqueta")
+  tipo         FormFieldTipo
+  required     Boolean       @default(false) @map("requerido")
+  multiple     Boolean       @default(false)
+  options      Json?         @map("opciones")
+  order        Int           @map("orden")
+  filteredById String?       @map("filtra_por_field") @db.Uuid
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
 
   taskType   TaskType    @relation(fields: [taskTypeId], references: [id], onDelete: Cascade)
   filteredBy FormField?  @relation("FormFieldFiltro", fields: [filteredById], references: [id])
@@ -340,9 +345,9 @@ model Webhook {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  stepWebhooks   StepWebhook[]
-  brandWebhooks  BrandWebhook[]
-  autoOpenPools  AutoOpenPool[]
+  stepWebhooks     StepWebhook[]
+  brandWebhooks    BrandWebhook[]
+  autoOpenPools    AutoOpenPool[]
   autoTurnOffPools AutoTurnOffPool[]
 
   @@map("webhook")
@@ -370,7 +375,7 @@ model Application {
   appId       String    @unique @map("app_id")
   appName     String    @map("app_name")
   country     Country
-  appSecret   String    @map("app_secret")   // ENCRYPTED at rest; never expose
+  appSecret   String    @map("app_secret") // ENCRYPTED at rest; never expose
   createdById String?   @map("created_by") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -379,7 +384,7 @@ model Application {
   createdBy Account? @relation("AppCreador", fields: [createdById], references: [id])
   brands    Brand[]
 
-  @@unique([id, country])   // target of composite FK (see constraints.sql)
+  @@unique([id, country]) // target of composite FK (see constraints.sql)
   @@map("application")
 }
 
@@ -400,15 +405,16 @@ model Brand {
   updatedAt       DateTime         @updatedAt @map("updated_at")
   deletedAt       DateTime?        @map("deleted_at")
 
-  owner       Account?     @relation("BrandResponsable", fields: [ownerId], references: [id])
-  createdBy   Account?     @relation("BrandCreador", fields: [createdById], references: [id])
-  application Application? @relation(fields: [applicationId], references: [id])
-  webhooks    BrandWebhook[]
-  shops       Shop[]
-  tasks       Task[]
-  formValues  FormValue[]
+  owner              Account?            @relation("BrandResponsable", fields: [ownerId], references: [id])
+  createdBy          Account?            @relation("BrandCreador", fields: [createdById], references: [id])
+  application        Application?        @relation(fields: [applicationId], references: [id])
+  webhooks           BrandWebhook[]
+  shops              Shop[]
+  tasks              Task[]
+  formValues         FormValue[]
   autoOpenPoolBrands AutoOpenPoolBrand[]
   autoTurnOffRules   AutoTurnOffRule[]
+  items              BrandItem[]
 
   @@index([ownerId])
   @@index([applicationId])
@@ -429,28 +435,56 @@ model BrandWebhook {
 }
 
 model Shop {
-  id          String     @id @default(uuid()) @db.Uuid
-  shopId      String     @unique @map("shop_id")
-  appShopId   String     @map("app_shop_id")
-  brandId     String     @map("brand_id") @db.Uuid
-  latitude    Decimal?   @db.Decimal(9, 6)
-  longitude   Decimal?   @db.Decimal(9, 6)
-  city        String?
-  status      ShopStatus @default(lead)
-  createdById String?    @map("created_by") @db.Uuid
-  createdAt   DateTime   @default(now()) @map("created_at")
-  updatedAt   DateTime   @updatedAt @map("updated_at")
-  deletedAt   DateTime?  @map("deleted_at")
+  id             String     @id @default(uuid()) @db.Uuid
+  shopId         String     @unique @map("shop_id")
+  appShopId      String     @map("app_shop_id")
+  name           String?
+  brandId        String     @map("brand_id") @db.Uuid
+  latitude       Decimal?   @db.Decimal(9, 6)
+  longitude      Decimal?   @db.Decimal(9, 6)
+  city           String?
+  status         ShopStatus @default(lead)
+  createdById    String?    @map("created_by") @db.Uuid
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+  deletedAt      DateTime?  @map("deleted_at")
+  menuSyncStatus String     @default("never") @map("menu_sync_status")
+  menuSyncedAt   DateTime?  @map("menu_synced_at") @db.Timestamptz
+  menuSyncError  String?    @map("menu_sync_error") @db.Text
+  menuItemCount  Int        @default(0) @map("menu_item_count")
 
-  brand      Brand      @relation(fields: [brandId], references: [id])
-  createdBy  Account?   @relation("ShopCreador", fields: [createdById], references: [id])
+  brand      Brand       @relation(fields: [brandId], references: [id])
+  createdBy  Account?    @relation("ShopCreador", fields: [createdById], references: [id])
   schedules  Schedule[]
   taskShops  TaskShop[]
   formValues FormValue[]
+  items      BrandItem[]
 
   @@unique([brandId, appShopId])
   @@index([brandId])
   @@map("shop")
+}
+
+model BrandItem {
+  id         String   @id @default(uuid()) @db.Uuid
+  brandId    String   @map("brand_id") @db.Uuid
+  shopId     String   @map("shop_id") @db.Uuid
+  name       String
+  upc        String?
+  appItemId  String   @map("app_item_id")
+  appShopId  String   @map("app_shop_id")
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  shop  Shop  @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, appItemId])
+  @@index([brandId, upc])
+  @@index([brandId, name])
+  @@index([appShopId])
+  @@map("brand_item")
 }
 
 model Schedule {
@@ -533,19 +567,19 @@ model TaskShop {
 }
 
 model StepInstance {
-  id               String            @id @default(uuid()) @db.Uuid
-  taskId           String            @map("task_id") @db.Uuid
-  stepDefinitionId String            @map("step_definition_id") @db.Uuid
-  status           StepStatus        @default(pending) @map("estado")
-  assignedToId     String?           @map("asignado_id") @db.Uuid
-  result           Json?             @map("resultado")
-  note             String?           @map("nota")
+  id               String             @id @default(uuid()) @db.Uuid
+  taskId           String             @map("task_id") @db.Uuid
+  stepDefinitionId String             @map("step_definition_id") @db.Uuid
+  status           StepStatus         @default(pending) @map("estado")
+  assignedToId     String?            @map("asignado_id") @db.Uuid
+  result           Json?              @map("resultado")
+  note             String?            @map("nota")
   failureReason    StepFailureReason? @map("motivo_fallo")
-  startedAt        DateTime?         @map("started_at")
-  workedSeconds    Int?              @map("worked_seconds")
-  completedAt      DateTime?         @map("completado_en")
-  createdAt        DateTime          @default(now()) @map("created_at")
-  updatedAt        DateTime          @updatedAt @map("updated_at")
+  startedAt        DateTime?          @map("started_at")
+  workedSeconds    Int?               @map("worked_seconds")
+  completedAt      DateTime?          @map("completado_en")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
 
   task           Task           @relation(fields: [taskId], references: [id], onDelete: Cascade)
   stepDefinition StepDefinition @relation(fields: [stepDefinitionId], references: [id])
@@ -619,15 +653,15 @@ model AppConfigOption {
 
 // -------------------- Integrations: Auto Open Stores -------------------------
 model AutoOpenPool {
-  id             String         @id @default(uuid()) @db.Uuid
+  id             String   @id @default(uuid()) @db.Uuid
   name           String
   country        Country
-  active         Boolean        @default(true)
-  executionHours Int[]          @map("execution_hours")
-  timezone       String         @default("UTC")
-  webhookId      String?        @map("webhook_id") @db.Uuid
-  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  active         Boolean  @default(true)
+  executionHours Int[]    @map("execution_hours")
+  timezone       String   @default("UTC")
+  webhookId      String?  @map("webhook_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   webhook    Webhook?            @relation(fields: [webhookId], references: [id])
   brands     AutoOpenPoolBrand[]
@@ -668,6 +702,7 @@ model AutoOpenExecution {
 model AutoTurnOffPool {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
+  country   Country
   active    Boolean  @default(true)
   webhookId String?  @map("webhook_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -678,6 +713,52 @@ model AutoTurnOffPool {
   executions AutoTurnOffExecution[]
 
   @@map("auto_turn_off_pool")
+}
+
+// -------------------- Integrations: automated catalog fetches --------------
+model AutoFetchPool {
+  id              String        @id @default(uuid()) @db.Uuid
+  kind            AutoFetchKind
+  country         Country
+  name            String
+  active          Boolean       @default(true)
+  executionHour   Int           @default(2) @map("execution_hour")
+  executionMinute Int           @default(0) @map("execution_minute")
+  timezone        String
+  nextRunAt       DateTime      @map("next_run_at") @db.Timestamptz
+  lastRunAt       DateTime?     @map("last_run_at") @db.Timestamptz
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  executions AutoFetchExecution[]
+
+  @@unique([kind, country])
+  @@index([active, nextRunAt])
+  @@map("auto_fetch_pool")
+}
+
+model AutoFetchExecution {
+  id              String         @id @default(uuid()) @db.Uuid
+  poolId          String         @map("pool_id") @db.Uuid
+  status          AutoOpenStatus @default(pending)
+  trigger         String         @default("scheduled")
+  startedAt       DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt      DateTime?      @map("finished_at") @db.Timestamptz
+  totalBrands     Int            @default(0) @map("total_brands")
+  brandsSucceeded Int            @default(0) @map("brands_succeeded")
+  totalShops      Int            @default(0) @map("total_shops")
+  totalItems      Int            @default(0) @map("total_items")
+  progressPercent Int            @default(0) @map("progress_percent")
+  currentBrand    String?        @map("current_brand")
+  errorMessage    String?        @map("error_message") @db.Text
+  logs            Json?
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  pool AutoFetchPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+
+  @@index([poolId, createdAt])
+  @@index([status])
+  @@map("auto_fetch_execution")
 }
 
 model AutoTurnOffRule {
@@ -713,30 +794,30 @@ model AutoTurnOffRule {
 }
 
 model AutoTurnOffExecution {
-  id             String         @id @default(uuid()) @db.Uuid
-  poolId         String         @map("pool_id") @db.Uuid
-  ruleId         String         @map("rule_id") @db.Uuid
-  status         AutoOpenStatus @default(pending)
-  trigger        String         @default("scheduled")
-  startedAt      DateTime?      @map("started_at") @db.Timestamptz
-  finishedAt     DateTime?      @map("finished_at") @db.Timestamptz
-  totalShops     Int            @default(0) @map("total_shops")
-  shopsSucceeded Int            @default(0) @map("shops_succeeded")
-  itemsTurnedOff Int            @default(0) @map("items_turned_off")
-  currentStep    String?        @map("current_step")
-  progressCurrent Int           @default(0) @map("progress_current")
-  progressTotal  Int            @default(0) @map("progress_total")
-  progressPercent Int           @default(0) @map("progress_percent")
-  errorMessage   String?        @map("error_message") @db.Text
-  cancelledById  String?        @map("cancelled_by_id") @db.Uuid
-  cancelledAt    DateTime?      @map("cancelled_at") @db.Timestamptz
-  logs           Json?
-  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  id              String         @id @default(uuid()) @db.Uuid
+  poolId          String         @map("pool_id") @db.Uuid
+  ruleId          String         @map("rule_id") @db.Uuid
+  status          AutoOpenStatus @default(pending)
+  trigger         String         @default("scheduled")
+  startedAt       DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt      DateTime?      @map("finished_at") @db.Timestamptz
+  totalShops      Int            @default(0) @map("total_shops")
+  shopsSucceeded  Int            @default(0) @map("shops_succeeded")
+  itemsTurnedOff  Int            @default(0) @map("items_turned_off")
+  currentStep     String?        @map("current_step")
+  progressCurrent Int            @default(0) @map("progress_current")
+  progressTotal   Int            @default(0) @map("progress_total")
+  progressPercent Int            @default(0) @map("progress_percent")
+  errorMessage    String?        @map("error_message") @db.Text
+  cancelledById   String?        @map("cancelled_by_id") @db.Uuid
+  cancelledAt     DateTime?      @map("cancelled_at") @db.Timestamptz
+  logs            Json?
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
-  pool AutoTurnOffPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
-  rule AutoTurnOffRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
-  cancelledBy Account? @relation("AutoTurnOffExecutionCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
-  shops AutoTurnOffShopExecution[]
+  pool        AutoTurnOffPool            @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  rule        AutoTurnOffRule            @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  cancelledBy Account?                   @relation("AutoTurnOffExecutionCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
+  shops       AutoTurnOffShopExecution[]
 
   @@index([poolId])
   @@index([ruleId])
@@ -776,7 +857,7 @@ model Invitation {
   accountId   String?     @unique @map("account_id") @db.Uuid
   usedAt      DateTime?   @map("used_at")
   expiresAt   DateTime?   @map("expires_at")
-  maxUses     Int?        @map("max_uses")     // null = single-use (legacy)
+  maxUses     Int?        @map("max_uses") // null = single-use (legacy)
   useCount    Int         @default(0) @map("use_count")
   createdAt   DateTime    @default(now()) @map("created_at")
   updatedAt   DateTime    @updatedAt @map("updated_at")

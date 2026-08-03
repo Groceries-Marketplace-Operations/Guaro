@@ -1,5 +1,5 @@
 import { Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
-import { AccountRole } from '@prisma/client';
+import { AccountRole, TaskStatus } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -76,6 +76,17 @@ export class BpoManagementController {
   }
 
   // Admin: performance de un BPO específico
+  @Get('team/:accountId/tasks')
+  @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.director)
+  bpoTasks(
+    @Param('accountId') accountId: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(25), ParseIntPipe) limit: number,
+    @Query('status') status?: TaskStatus,
+  ) {
+    return this.bpoManagementService.bpoTasks(accountId, { page, limit, status });
+  }
+
   @Get('team/:accountId')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.director)
   bpoPerformance(

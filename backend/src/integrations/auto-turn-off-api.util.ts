@@ -22,6 +22,7 @@ export interface ShopResult {
   itemsFailed: number;
   taskId?: string;
   menuTaskId?: string;
+  menuSource?: 'catalog' | 'download';
   requestedUpcs?: number;
   matchedUpcs?: number;
   missingUpcs?: string[];

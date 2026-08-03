@@ -77,6 +77,41 @@ export class BpoManagementService {
     return { account, ...(await this.buildPerformance(accountId, filters)) };
   }
 
+  async bpoTasks(accountId: string, filters: { page?: number; limit?: number; status?: TaskStatus } = {}) {
+    const account = await this.prisma.account.findFirst({
+      where: { id: accountId, deletedAt: null, roles: { has: AccountRole.bpo } },
+      select: { id: true, name: true, email: true },
+    });
+    if (!account) throw new NotFoundException('BPO account not found');
+    const page = Math.max(1, filters.page ?? 1);
+    const limit = Math.min(100, Math.max(1, filters.limit ?? 25));
+    const where: Prisma.TaskWhereInput = {
+      deletedAt: null,
+      ...(filters.status ? { status: filters.status } : {}),
+      stepInstances: { some: { assignedToId: accountId } },
+    };
+    const [data, total] = await Promise.all([
+      this.prisma.task.findMany({
+        where,
+        include: {
+          taskType: { select: { id: true, name: true } },
+          brand: { select: { id: true, brandName: true, country: true } },
+          createdBy: { select: { id: true, name: true, email: true } },
+          stepInstances: {
+            where: { assignedToId: accountId },
+            include: { stepDefinition: { select: { id: true, name: true, order: true } } },
+            orderBy: { stepDefinition: { order: 'asc' } },
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.task.count({ where }),
+    ]);
+    return { account, data, total, page, limit };
+  }
+
   // ── Available filter options (years / months / weeks with real data) ─────
 
   async filterOptions(roles: AccountRole[], sectionId: string | null, year?: number) {

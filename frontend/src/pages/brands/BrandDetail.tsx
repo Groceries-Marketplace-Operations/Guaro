@@ -4,11 +4,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
+import Paginator from '../../components/ui/Paginator';
 import { brandsApi, shopsApi, tasksApi, taskTypesApi, applicationsApi, accountsApi, appConfigApi } from '../../api';
 import type { AppConfigOption } from '../../types';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
-import type { Brand, Shop, Task, TaskType, Paginated, Application, Country } from '../../types';
+import type { Brand, BrandItem, Shop, Task, TaskType, Paginated, Application, Country } from '../../types';
 
 const COUNTRY_EMOJI: Record<string, string> = { MX: '🇲🇽', CO: '🇨🇴', CR: '🇨🇷' };
 
@@ -32,7 +33,9 @@ export default function BrandDetail() {
   const isAdmin = roles.some(r => r === 'admin' || r === 'super_admin');
   const isBpo   = roles.some(r => r === 'bpo') && !isAdmin;
 
-  const [tab, setTab] = useState<'shops' | 'tasks'>('shops');
+  const [tab, setTab] = useState<'shops' | 'menu' | 'tasks'>('shops');
+  const [menuPage, setMenuPage] = useState(1);
+  const [menuSearch, setMenuSearch] = useState('');
   const [openTask, setOpenTask] = useState(false);
   const [taskTypeId, setTaskTypeId] = useState('');
   const [savingTask, setSavingTask] = useState(false);
@@ -79,6 +82,13 @@ export default function BrandDetail() {
 
   const shops = shopsResult?.data ?? [];
   const tasks = tasksResult?.data ?? [];
+
+  const { data: menuResult, isLoading: loadingMenu } = useQuery<Paginated<BrandItem> & { shopsWithMenu: number; lastSyncedAt?: string }>({
+    queryKey: ['brand-menu', id, menuPage, menuSearch],
+    queryFn: () => brandsApi.menu(id!, { page: menuPage, limit: 50, q: menuSearch || undefined }).then(r => r.data),
+    enabled: tab === 'menu',
+  });
+  const menuItems = menuResult?.data ?? [];
 
   const { data: typesResult } = useQuery<Paginated<TaskType>>({
     queryKey: ['task-types'],
@@ -359,6 +369,9 @@ export default function BrandDetail() {
           <div className={`tab ${tab === 'tasks' ? 'active' : ''}`} onClick={() => setTab('tasks')}>
             {t('pages.brandDetail.tabTasks').replace('{count}', String(tasks.length))}
           </div>
+          <div className={`tab ${tab === 'menu' ? 'active' : ''}`} onClick={() => setTab('menu')}>
+            Menu ({menuResult?.total ?? '—'})
+          </div>
         </div>
 
         {tab === 'shops' && (
@@ -421,12 +434,13 @@ export default function BrandDetail() {
                     </th>
                     <th>{t('pages.brandDetail.colShopId')}</th>
                     <th>{t('pages.brandDetail.colAppShopId')}</th>
+                    <th>Nombre</th>
                     <th>{t('pages.brandDetail.colCity')}</th>
                     <th>{t('pages.brandDetail.colStatus')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {shops.length === 0 && <tr><td colSpan={5}><div className="empty-state"><p>{t('pages.brandDetail.noShops')}</p></div></td></tr>}
+                  {shops.length === 0 && <tr><td colSpan={6}><div className="empty-state"><p>{t('pages.brandDetail.noShops')}</p></div></td></tr>}
                   {shops.map(s => (
                     <tr key={s.id} style={{ cursor: 'pointer', background: selectedShopIds.has(s.id) ? 'rgba(255,105,0,0.04)' : '' }}>
                       <td onClick={e => { e.stopPropagation(); toggleShop(s.id); }}>
@@ -439,6 +453,7 @@ export default function BrandDetail() {
                       </td>
                       <td className="td-mono" onClick={() => nav(`/shops/${s.id}`)}>{s.shopId}</td>
                       <td className="td-mono" onClick={() => nav(`/shops/${s.id}`)}>{s.appShopId}</td>
+                      <td onClick={() => nav(`/shops/${s.id}`)}>{s.name ?? '—'}</td>
                       <td onClick={() => nav(`/shops/${s.id}`)}>{s.city ?? '—'}</td>
                       <td onClick={() => nav(`/shops/${s.id}`)}><StatusBadge status={s.status} /></td>
                     </tr>
@@ -471,6 +486,44 @@ export default function BrandDetail() {
               </tbody>
             </table>
           </div>
+        )}
+
+        {tab === 'menu' && (
+          <>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+              <input
+                className="form-input"
+                style={{ maxWidth: 420, margin: 0 }}
+                value={menuSearch}
+                onChange={event => { setMenuSearch(event.target.value); setMenuPage(1); }}
+                placeholder="Buscar por nombre, UPC, appItemId o appShopId…"
+              />
+              <span className="text-muted text-sm">
+                {menuResult?.shopsWithMenu ?? 0}/{shops.length} tiendas con menú
+                {menuResult?.lastSyncedAt ? ` · Última descarga ${new Date(menuResult.lastSyncedAt).toLocaleString()}` : ''}
+              </span>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Nombre</th><th>UPC</th><th>appItemId</th><th>shop_id</th><th>appShopId</th><th>Actualizado</th></tr></thead>
+                <tbody>
+                  {loadingMenu && <tr><td colSpan={6} className="text-muted">Cargando menú…</td></tr>}
+                  {!loadingMenu && menuItems.length === 0 && <tr><td colSpan={6}><div className="empty-state"><p>No hay artículos almacenados para esta marca.</p></div></td></tr>}
+                  {menuItems.map(item => (
+                    <tr key={item.id}>
+                      <td style={{ fontWeight: 600 }}>{item.name}</td>
+                      <td className="td-mono">{item.upc ?? '—'}</td>
+                      <td className="td-mono">{item.appItemId}</td>
+                      <td className="td-mono">{item.shop?.shopId ?? '—'}</td>
+                      <td className="td-mono">{item.appShopId}</td>
+                      <td className="text-muted text-sm">{new Date(item.lastSeenAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <Paginator page={menuPage} total={menuResult?.total ?? 0} limit={50} onChange={setMenuPage} />
+            </div>
+          </>
         )}
       </main>
 

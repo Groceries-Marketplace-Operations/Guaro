@@ -21,6 +21,7 @@ type StockEndpoint = 'setStock' | 'setstockSync';
 
 interface PoolForm {
   name: string;
+  country: 'MX' | 'CO' | 'CR';
   webhookId: string;
   active: boolean;
 }
@@ -38,7 +39,7 @@ interface RuleForm {
   active: boolean;
 }
 
-const emptyPool: PoolForm = { name: '', webhookId: '', active: true };
+const emptyPool: PoolForm = { name: '', country: 'MX', webhookId: '', active: true };
 function defaultStartsAt() {
   const date = new Date(Date.now() + 10 * 60_000);
   date.setSeconds(0, 0);
@@ -152,7 +153,7 @@ export default function AutoTurnOffItemsPage() {
   const copy = es ? {
     title: 'Apagado automático de ítems',
     subtitle: 'Ejecuta Stock API con stock 0 por regla, marca, tiendas y UPCs.',
-    newPool: 'Nuevo pool', editPool: 'Editar pool', poolName: 'Nombre del pool',
+    newPool: 'Nuevo pool', editPool: 'Editar pool', poolName: 'Nombre del pool', country: 'País',
     webhook: 'Webhook (opcional)', noWebhook: 'Sin webhook', active: 'Activo', inactive: 'Inactivo',
     noPools: 'No hay pools configurados.', rules: 'reglas', addRule: 'Agregar regla',
     editRule: 'Editar regla', newRule: 'Nueva regla', ruleName: 'Nombre de la regla', brand: 'Marca',
@@ -183,7 +184,7 @@ export default function AutoTurnOffItemsPage() {
   } : {
     title: 'Auto Turn Off Items',
     subtitle: 'Run Stock API with stock 0 by rule, brand, stores and UPCs.',
-    newPool: 'New pool', editPool: 'Edit pool', poolName: 'Pool name',
+    newPool: 'New pool', editPool: 'Edit pool', poolName: 'Pool name', country: 'Country',
     webhook: 'Webhook (optional)', noWebhook: 'No webhook', active: 'Active', inactive: 'Inactive',
     noPools: 'No pools configured.', rules: 'rules', addRule: 'Add rule',
     editRule: 'Edit rule', newRule: 'New rule', ruleName: 'Rule name', brand: 'Brand',
@@ -274,7 +275,7 @@ export default function AutoTurnOffItemsPage() {
   };
   const openEditPool = (pool: AutoTurnOffPool) => {
     setEditingPool(pool);
-    setPoolForm({ name: pool.name, webhookId: pool.webhookId ?? '', active: pool.active });
+    setPoolForm({ name: pool.name, country: pool.country, webhookId: pool.webhookId ?? '', active: pool.active });
     setError(''); setPoolModal(true);
   };
   const openNewRule = (poolId: string) => {
@@ -309,7 +310,7 @@ export default function AutoTurnOffItemsPage() {
     if (!poolForm.name.trim()) return setError(`${copy.poolName} is required`);
     setSaving(true); setError('');
     try {
-      const payload = { name: poolForm.name.trim(), active: poolForm.active, webhookId: poolForm.webhookId || null };
+      const payload = { name: poolForm.name.trim(), country: poolForm.country, active: poolForm.active, webhookId: poolForm.webhookId || null };
       if (editingPool) await autoTurnOffApi.updatePool(editingPool.id, payload);
       else await autoTurnOffApi.createPool(payload);
       await refreshPools(); setPoolModal(false);
@@ -405,7 +406,7 @@ export default function AutoTurnOffItemsPage() {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 700 }}>{pool.name}</div>
                   <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                    {pool.rules.length} {copy.rules}{pool.webhook ? ` · ${pool.webhook.name}` : ''}
+                    {pool.country} · {pool.rules.length} {copy.rules}{pool.webhook ? ` · ${pool.webhook.name}` : ''}
                   </div>
                 </div>
                 <button className="btn btn-ghost btn-sm" onClick={() => setHistoryPoolId(historyPoolId === pool.id ? null : pool.id)}>
@@ -524,6 +525,7 @@ export default function AutoTurnOffItemsPage() {
           <div className="modal-body">
             {error && <div className="error-banner" style={{ marginBottom: 12 }}>{error}</div>}
             <div className="form-group"><label className="form-label">{copy.poolName}</label><input className="form-input" value={poolForm.name} onChange={event => setPoolForm({ ...poolForm, name: event.target.value })} /></div>
+            <div className="form-group"><label className="form-label">{copy.country}</label><select className="form-input" value={poolForm.country} disabled={!!editingPool} onChange={event => setPoolForm({ ...poolForm, country: event.target.value as PoolForm['country'] })}><option value="MX">México</option><option value="CO">Colombia</option><option value="CR">Costa Rica</option></select></div>
             <div className="form-group"><label className="form-label">{copy.webhook}</label><select className="form-input" value={poolForm.webhookId} onChange={event => setPoolForm({ ...poolForm, webhookId: event.target.value })}><option value="">{copy.noWebhook}</option>{webhooks.map(webhook => <option key={webhook.id} value={webhook.id}>{webhook.name}</option>)}</select></div>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: '0.84rem' }}><input type="checkbox" checked={poolForm.active} onChange={event => setPoolForm({ ...poolForm, active: event.target.checked })} />{copy.active}</label>
           </div>
@@ -537,7 +539,7 @@ export default function AutoTurnOffItemsPage() {
           <div className="modal-body">
             {error && <div className="error-banner" style={{ marginBottom: 12 }}>{error}</div>}
             <div className="form-group"><label className="form-label">{copy.ruleName}</label><input className="form-input" value={ruleForm.name} onChange={event => setRuleForm({ ...ruleForm, name: event.target.value })} /></div>
-            <div className="form-group"><label className="form-label">{copy.brand}</label><select className="form-input" value={ruleForm.brandId} onChange={event => { setRuleForm({ ...ruleForm, brandId: event.target.value, shopIds: '' }); setShopSearch(''); }}><option value="">{copy.selectBrand}</option>{brands.map(brand => <option key={brand.id} value={brand.id}>{brand.brandName} ({brand.brandId})</option>)}</select></div>
+            <div className="form-group"><label className="form-label">{copy.brand}</label><select className="form-input" value={ruleForm.brandId} onChange={event => { setRuleForm({ ...ruleForm, brandId: event.target.value, shopIds: '' }); setShopSearch(''); }}><option value="">{copy.selectBrand}</option>{brands.filter(brand => brand.country === pools.find(pool => pool.id === rulePoolId)?.country).map(brand => <option key={brand.id} value={brand.id}>{brand.brandName} ({brand.brandId})</option>)}</select></div>
             <div className="form-group">
               <label className="form-label">{copy.endpoint}</label>
               <select className="form-input" value={ruleForm.stockEndpoint} onChange={event => setRuleForm({ ...ruleForm, stockEndpoint: event.target.value as StockEndpoint })}>

@@ -18,6 +18,7 @@ import { AccountsModule } from './accounts/accounts.module';
 import { AppConfigModule } from './app-config/app-config.module';
 import { DevModule } from './dev/dev.module';
 import { IntegrationsModule } from './integrations/integrations.module';
+import { CatalogModule } from './catalog/catalog.module';
 import { AdminModule } from './admin/admin.module';
 
 const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
@@ -42,6 +43,7 @@ const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
     AccountsModule,
     AppConfigModule,
     IntegrationsModule,
+    CatalogModule,
     AdminModule,
     ...devModules,
   ],

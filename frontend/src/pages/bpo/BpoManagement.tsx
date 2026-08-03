@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import Topbar from '../../components/layout/Topbar';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Modal from '../../components/ui/Modal';
@@ -41,6 +42,17 @@ interface HistoryArchive {
   archivedAt: string;
 }
 
+interface BpoAssignedTask {
+  id: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  taskType?: { name: string };
+  brand?: { brandName: string; country: string };
+  createdBy?: { name: string; email: string };
+  stepInstances?: Array<{ id: string; status: string; stepDefinition?: { name: string; order: number } }>;
+}
+
 const COUNTRY_EMOJI: Record<string, string> = { MX: '🇲🇽', CO: '🇨🇴', CR: '🇨🇷' };
 
 function completionBar(completed: number, failed: number) {
@@ -61,8 +73,12 @@ const HISTORY_LIMIT = 25;
 
 export default function BpoManagement() {
   const t = useT();
-  const [tab, setTab] = useState<'team' | 'history'>('team');
+  const nav = useNavigate();
+  const [tab, setTab] = useState<'team' | 'tasks' | 'history'>('team');
   const [selected, setSelected] = useState<BpoPerf | null>(null);
+  const [selectedBpoId, setSelectedBpoId] = useState('');
+  const [bpoTaskPage, setBpoTaskPage] = useState(1);
+  const [bpoTaskStatus, setBpoTaskStatus] = useState('');
   const [historyPage, setHistoryPage] = useState(1);
 
   // Shared filters (used by both tabs)
@@ -114,6 +130,12 @@ export default function BpoManagement() {
   });
   const history = historyResult?.data ?? [];
   const historyTotal = historyResult?.total ?? 0;
+
+  const { data: bpoTasksResult, isLoading: loadingBpoTasks } = useQuery<Paginated<BpoAssignedTask> & { account: BpoAccount }>({
+    queryKey: ['bpo-assigned-tasks', selectedBpoId, bpoTaskPage, bpoTaskStatus],
+    queryFn: () => bpoApi.bpoTasks(selectedBpoId, bpoTaskPage, 25, bpoTaskStatus).then(r => r.data),
+    enabled: tab === 'tasks' && !!selectedBpoId,
+  });
 
   const totalActive    = team.reduce((s, b) => s + b.stepsInProgress, 0);
   const totalCompleted = team.reduce((s, b) => s + b.stepsCompleted, 0);
@@ -191,6 +213,9 @@ export default function BpoManagement() {
           </div>
           <div className={`tab ${tab === 'history' ? 'active' : ''}`} onClick={() => setTab('history')}>
             {t('pages.bpoMgmt.tabHistory')}
+          </div>
+          <div className={`tab ${tab === 'tasks' ? 'active' : ''}`} onClick={() => setTab('tasks')}>
+            Tareas por BPO
           </div>
         </div>
 
@@ -302,6 +327,42 @@ export default function BpoManagement() {
               </table>
               <Paginator page={historyPage} total={historyTotal} limit={HISTORY_LIMIT} onChange={setHistoryPage} />
             </div>
+          </>
+        )}
+
+        {tab === 'tasks' && (
+          <>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+              <select className="form-select" style={{ width: 320, margin: 0 }} value={selectedBpoId} onChange={event => { setSelectedBpoId(event.target.value); setBpoTaskPage(1); }}>
+                <option value="">Selecciona un BPO…</option>
+                {team.map(item => <option key={item.account.id} value={item.account.id}>{item.account.name} · {item.account.email}</option>)}
+              </select>
+              <select className="form-select" style={{ width: 180, margin: 0 }} value={bpoTaskStatus} onChange={event => { setBpoTaskStatus(event.target.value); setBpoTaskPage(1); }}>
+                <option value="">Todos los estados</option>
+                {['scheduled', 'pending', 'assigned', 'in_progress', 'blocked', 'done', 'failed'].map(status => <option key={status} value={status}>{status.replace(/_/g, ' ')}</option>)}
+              </select>
+            </div>
+            {!selectedBpoId ? <div className="empty-state"><p>Selecciona un BPO para consultar todas las tareas que tiene o ha trabajado.</p></div> : (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Tarea</th><th>Marca</th><th>Steps del BPO</th><th>Estado</th><th>Actualizada</th></tr></thead>
+                  <tbody>
+                    {loadingBpoTasks && <tr><td colSpan={5} className="text-muted">Cargando tareas…</td></tr>}
+                    {!loadingBpoTasks && (bpoTasksResult?.data ?? []).length === 0 && <tr><td colSpan={5}><div className="empty-state"><p>Este BPO no tiene tareas con los filtros seleccionados.</p></div></td></tr>}
+                    {(bpoTasksResult?.data ?? []).map(task => (
+                      <tr key={task.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/tasks/${task.id}`)}>
+                        <td><strong>{task.taskType?.name ?? '—'}</strong><div className="td-mono text-muted" style={{ fontSize: '0.68rem' }}>{task.id}</div></td>
+                        <td>{task.brand?.brandName ?? '—'} {task.brand?.country ? <span className="text-muted">({task.brand.country})</span> : null}</td>
+                        <td>{(task.stepInstances ?? []).map(step => <div key={step.id} className="text-sm">{step.stepDefinition?.name ?? 'Step'} · <StatusBadge status={step.status} /></div>)}</td>
+                        <td><StatusBadge status={task.status} /></td>
+                        <td className="text-muted text-sm">{new Date(task.updatedAt).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <Paginator page={bpoTaskPage} total={bpoTasksResult?.total ?? 0} limit={25} onChange={setBpoTaskPage} />
+              </div>
+            )}
           </>
         )}
       </main>

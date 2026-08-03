@@ -131,6 +131,7 @@ export interface Shop {
   id: string;
   shopId: string;
   appShopId: string;
+  name?: string;
   city?: string;
   status: ShopStatus;
   brand?: Brand;
@@ -274,12 +275,17 @@ export interface AutoTurnOffRule {
   }>;
   brand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'>;
   createdAt: string;
+  menuSyncStatus?: string;
+  menuSyncedAt?: string;
+  menuSyncError?: string;
+  menuItemCount?: number;
   updatedAt: string;
 }
 
 export interface AutoTurnOffPool {
   id: string;
   name: string;
+  country: Country;
   active: boolean;
   webhookId?: string;
   webhook?: { id: string; name: string };
@@ -310,6 +316,18 @@ export interface AutoTurnOffExecution {
   createdAt: string;
 }
 
+export interface BrandItem {
+  id: string;
+  brandId: string;
+  shopId: string;
+  name: string;
+  upc?: string;
+  appItemId: string;
+  appShopId: string;
+  lastSeenAt: string;
+  shop?: { id: string; shopId: string; appShopId: string };
+}
+
 export interface AutoTurnOffShopResult {
   shopId: string;
   appShopId: string;
@@ -319,6 +337,7 @@ export interface AutoTurnOffShopResult {
   itemsFailed: number;
   taskId?: string;
   menuTaskId?: string;
+  menuSource?: 'catalog' | 'download';
   requestedUpcs?: number;
   matchedUpcs?: number;
   missingUpcs?: string[];
