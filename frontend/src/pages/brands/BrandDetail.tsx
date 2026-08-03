@@ -186,7 +186,8 @@ export default function BrandDetail() {
   const toggleShop = (shopId: string) => {
     setSelectedShopIds(prev => {
       const next = new Set(prev);
-      next.has(shopId) ? next.delete(shopId) : next.add(shopId);
+      if (next.has(shopId)) next.delete(shopId);
+      else next.add(shopId);
       return next;
     });
   };
@@ -436,11 +437,12 @@ export default function BrandDetail() {
                     <th>{t('pages.brandDetail.colAppShopId')}</th>
                     <th>Nombre</th>
                     <th>{t('pages.brandDetail.colCity')}</th>
+                    <th>Coordenadas</th>
                     <th>{t('pages.brandDetail.colStatus')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {shops.length === 0 && <tr><td colSpan={6}><div className="empty-state"><p>{t('pages.brandDetail.noShops')}</p></div></td></tr>}
+                  {shops.length === 0 && <tr><td colSpan={7}><div className="empty-state"><p>{t('pages.brandDetail.noShops')}</p></div></td></tr>}
                   {shops.map(s => (
                     <tr key={s.id} style={{ cursor: 'pointer', background: selectedShopIds.has(s.id) ? 'rgba(255,105,0,0.04)' : '' }}>
                       <td onClick={e => { e.stopPropagation(); toggleShop(s.id); }}>
@@ -455,6 +457,7 @@ export default function BrandDetail() {
                       <td className="td-mono" onClick={() => nav(`/shops/${s.id}`)}>{s.appShopId}</td>
                       <td onClick={() => nav(`/shops/${s.id}`)}>{s.name ?? '—'}</td>
                       <td onClick={() => nav(`/shops/${s.id}`)}>{s.city ?? '—'}</td>
+                      <td className="td-mono" title={s.address}>{s.latitude && s.longitude ? `${s.latitude}, ${s.longitude}` : '—'}</td>
                       <td onClick={() => nav(`/shops/${s.id}`)}><StatusBadge status={s.status} /></td>
                     </tr>
                   ))}
@@ -496,7 +499,7 @@ export default function BrandDetail() {
                 style={{ maxWidth: 420, margin: 0 }}
                 value={menuSearch}
                 onChange={event => { setMenuSearch(event.target.value); setMenuPage(1); }}
-                placeholder="Buscar por nombre, UPC, appItemId o appShopId…"
+                placeholder="Buscar por nombre, UPC, appItemId, ciudad o tienda fuente…"
               />
               <span className="text-muted text-sm">
                 {menuResult?.shopsWithMenu ?? 0}/{shops.length} tiendas con menú
@@ -505,7 +508,7 @@ export default function BrandDetail() {
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Nombre</th><th>UPC</th><th>appItemId</th><th>shop_id</th><th>appShopId</th><th>Actualizado</th></tr></thead>
+                <thead><tr><th>Nombre</th><th>UPC</th><th>appItemId</th><th>Ciudad fuente</th><th>Tienda fuente</th><th>Actualizado</th></tr></thead>
                 <tbody>
                   {loadingMenu && <tr><td colSpan={6} className="text-muted">Cargando menú…</td></tr>}
                   {!loadingMenu && menuItems.length === 0 && <tr><td colSpan={6}><div className="empty-state"><p>No hay artículos almacenados para esta marca.</p></div></td></tr>}
@@ -514,8 +517,8 @@ export default function BrandDetail() {
                       <td style={{ fontWeight: 600 }}>{item.name}</td>
                       <td className="td-mono">{item.upc ?? '—'}</td>
                       <td className="td-mono">{item.appItemId}</td>
-                      <td className="td-mono">{item.shop?.shopId ?? '—'}</td>
-                      <td className="td-mono">{item.appShopId}</td>
+                      <td>{item.sourceCity ?? '—'}</td>
+                      <td className="td-mono">{item.sourceShopId ?? '—'}</td>
                       <td className="text-muted text-sm">{new Date(item.lastSeenAt).toLocaleString()}</td>
                     </tr>
                   ))}

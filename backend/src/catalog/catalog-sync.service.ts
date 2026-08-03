@@ -28,6 +28,7 @@ interface CatalogShopDetail {
   brandId: string | null;
   name: string | null;
   city: string | null;
+  address: string | null;
   latitude: string | null;
   longitude: string | null;
 }
@@ -50,6 +51,24 @@ function textValue(value: unknown): string {
   return '';
 }
 
+export function inferShopCity(detail: Record<string, unknown>): string | null {
+  const poi = detail.poi_name && typeof detail.poi_name === 'object'
+    ? detail.poi_name as Record<string, unknown>
+    : {};
+  const direct = textValue(detail.city_name ?? detail.city ?? poi.city_name ?? poi.city);
+  if (direct) return direct;
+
+  const location = textValue(detail.poi_name ?? detail.addr);
+  const segments = location.split(',').map(segment => segment.trim()).filter(Boolean);
+  for (const segment of [...segments].reverse()) {
+    const postalCity = /^\d{4,6}\s+(.+)$/u.exec(segment);
+    if (postalCity?.[1]) return postalCity[1].trim();
+  }
+  const countryNames = /^(mexico|méxico|colombia|costa rica|cr|mx|co)$/iu;
+  const fallback = [...segments].reverse().find(segment => !countryNames.test(segment));
+  return fallback && fallback.length <= 80 ? fallback : null;
+}
+
 export function normalizeMenuItems(items: Array<Record<string, unknown>>): CatalogMenuItem[] {
   const unique = new Map<string, CatalogMenuItem>();
   for (const item of items) {
@@ -60,6 +79,17 @@ export function normalizeMenuItems(items: Array<Record<string, unknown>>): Catal
     unique.set(appItemId, { appItemId, name, upc });
   }
   return [...unique.values()];
+}
+
+export function selectMenuSampleShops<T extends { city: string | null; shopId: string }>(shops: T[], perCity = 2): T[] {
+  const byCity = new Map<string, T[]>();
+  for (const shop of shops) {
+    const cityKey = shop.city?.trim().toLocaleLowerCase() || '__unknown__';
+    const cityShops = byCity.get(cityKey) ?? [];
+    if (cityShops.length < perCity) cityShops.push(shop);
+    byCity.set(cityKey, cityShops);
+  }
+  return [...byCity.values()].flat();
 }
 
 @Injectable()
@@ -117,13 +147,9 @@ export class CatalogSyncService {
 
     for (let offset = 0; offset < shops.length; offset += 100) {
       const chunk = shops.slice(offset, offset + 100);
-      await this.prisma.$transaction(chunk.flatMap(shop => {
+      await this.prisma.$transaction(chunk.map(shop => {
         const previous = existingByShopId.get(shop.shopId);
-        return [
-          ...(previous && previous.brandId !== brand.id
-            ? [this.prisma.brandItem.deleteMany({ where: { shopId: previous.id } })]
-            : []),
-          this.prisma.shop.upsert({
+        return this.prisma.shop.upsert({
             where: { shopId: shop.shopId },
             create: {
               shopId: shop.shopId,
@@ -131,6 +157,7 @@ export class CatalogSyncService {
               name: shop.name,
               brandId: brand.id,
               city: shop.city,
+              address: shop.address,
               latitude: shop.latitude,
               longitude: shop.longitude,
               status: 'integrated',
@@ -139,9 +166,10 @@ export class CatalogSyncService {
               appShopId: shop.appShopId,
               name: shop.name,
               brandId: brand.id,
-              city: shop.city,
-              latitude: shop.latitude,
-              longitude: shop.longitude,
+              city: shop.city ?? undefined,
+              address: shop.address ?? undefined,
+              latitude: shop.latitude ?? undefined,
+              longitude: shop.longitude ?? undefined,
               deletedAt: null,
               ...(previous && previous.brandId !== brand.id ? {
                 menuSyncStatus: 'never',
@@ -150,8 +178,7 @@ export class CatalogSyncService {
                 menuItemCount: 0,
               } : {}),
             },
-          }),
-        ];
+          });
       }));
     }
 
@@ -208,27 +235,33 @@ export class CatalogSyncService {
   async replaceShopMenu(shopDatabaseId: string, rawItems: Array<Record<string, unknown>>) {
     const shop = await this.prisma.shop.findUnique({
       where: { id: shopDatabaseId },
-      select: { id: true, brandId: true, appShopId: true },
+      select: { id: true, brandId: true, shopId: true, city: true },
     });
     if (!shop) throw new NotFoundException('Shop not found');
     const items = normalizeMenuItems(rawItems);
     const now = new Date();
 
-    await this.prisma.brandItem.deleteMany({ where: { shopId: shop.id } });
-    for (let offset = 0; offset < items.length; offset += 1000) {
-      const chunk = items.slice(offset, offset + 1000);
-      await this.prisma.brandItem.createMany({
-        data: chunk.map(item => ({
+    for (let offset = 0; offset < items.length; offset += 100) {
+      const chunk = items.slice(offset, offset + 100);
+      await this.prisma.$transaction(chunk.map(item => this.prisma.brandItem.upsert({
+        where: { brandId_appItemId: { brandId: shop.brandId, appItemId: item.appItemId } },
+        create: {
           brandId: shop.brandId,
-          shopId: shop.id,
           name: item.name,
           upc: item.upc,
           appItemId: item.appItemId,
-          appShopId: shop.appShopId,
+          sourceShopId: shop.shopId,
+          sourceCity: shop.city,
           lastSeenAt: now,
-        })),
-        skipDuplicates: true,
-      });
+        },
+        update: {
+          name: item.name,
+          upc: item.upc,
+          sourceShopId: shop.shopId,
+          sourceCity: shop.city,
+          lastSeenAt: now,
+        },
+      })));
     }
     await this.prisma.shop.update({
       where: { id: shop.id },
@@ -253,24 +286,27 @@ export class CatalogSyncService {
         brandName: true,
         shops: {
           where: { deletedAt: null },
-          select: { id: true, shopId: true },
-          orderBy: { shopId: 'asc' },
+          select: { id: true, shopId: true, city: true },
+          orderBy: [{ city: 'asc' }, { shopId: 'asc' }],
         },
       },
     });
     if (!brand) throw new NotFoundException('Brand not found');
 
+    const sampledShops = selectMenuSampleShops(brand.shops);
+    const sampledCities = new Set(brand.shops.map(shop => shop.city?.trim().toLocaleLowerCase() || '__unknown__')).size;
+    const syncStartedAt = new Date();
     let cursor = 0;
     let succeeded = 0;
     let totalItems = 0;
     const failures: Array<{ shopId: string; error: string }> = [];
-    const concurrency = Math.min(3, Math.max(1, brand.shops.length));
+    const concurrency = Math.min(3, Math.max(1, sampledShops.length));
 
     const worker = async () => {
       while (true) {
         const index = cursor++;
-        if (index >= brand.shops.length) return;
-        const shop = brand.shops[index];
+        if (index >= sampledShops.length) return;
+        const shop = sampledShops[index];
         try {
           const result = await this.syncShopMenu(shop.id);
           succeeded++;
@@ -278,15 +314,23 @@ export class CatalogSyncService {
         } catch (error) {
           failures.push({ shopId: shop.shopId, error: (error as Error).message });
         }
-        await onProgress?.(index + 1, brand.shops.length, shop.shopId);
+        await onProgress?.(index + 1, sampledShops.length, shop.shopId);
       }
     };
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
+    if (sampledShops.length > 0 && failures.length === 0) {
+      await this.prisma.brandItem.deleteMany({
+        where: { brandId: brand.id, lastSeenAt: { lt: syncStartedAt } },
+      });
+    }
+
     return {
       brandId: brand.id,
       brandName: brand.brandName,
-      totalShops: brand.shops.length,
+      totalShops: sampledShops.length,
+      availableShops: brand.shops.length,
+      sampledCities,
       shopsSucceeded: succeeded,
       shopsFailed: failures.length,
       totalItems,
@@ -294,25 +338,24 @@ export class CatalogSyncService {
     };
   }
 
-  async listBrandItems(brandId: string, params: { page?: number; limit?: number; q?: string; shopId?: string }) {
+  async listBrandItems(brandId: string, params: { page?: number; limit?: number; q?: string }) {
     const page = Math.max(1, params.page ?? 1);
     const limit = Math.min(200, Math.max(1, params.limit ?? 50));
     const where: Prisma.BrandItemWhereInput = {
       brandId,
-      ...(params.shopId ? { shopId: params.shopId } : {}),
       ...(params.q ? {
         OR: [
           { name: { contains: params.q, mode: 'insensitive' } },
           { upc: { contains: params.q } },
           { appItemId: { contains: params.q } },
-          { appShopId: { contains: params.q } },
+          { sourceShopId: { contains: params.q } },
+          { sourceCity: { contains: params.q, mode: 'insensitive' } },
         ],
       } : {}),
     };
     const [data, total, shopsWithMenu, lastSynced] = await Promise.all([
       this.prisma.brandItem.findMany({
         where,
-        include: { shop: { select: { id: true, shopId: true, appShopId: true } } },
         orderBy: [{ name: 'asc' }, { appItemId: 'asc' }],
         skip: (page - 1) * limit,
         take: limit,
@@ -387,7 +430,8 @@ export class CatalogSyncService {
           appShopId: shop.appShopId,
           brandId: textValue(detail.brand_id) || null,
           name: textValue(detail.name) || null,
-          city: textValue(detail.city_name ?? detail.city) || null,
+          city: inferShopCity(detail),
+          address: textValue(detail.addr ?? detail.announce ?? detail.poi_name) || null,
           latitude: textValue(detail.lat) || null,
           longitude: textValue(detail.lng) || null,
         };

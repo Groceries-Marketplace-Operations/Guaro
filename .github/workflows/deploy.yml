@@ -22,6 +22,12 @@ jobs:
           script: |
             set -e
             cd /opt/guaro
+            umask 077
+            mkdir -p backups
+            backup_file="backups/pre-deploy-$(date +%Y%m%d-%H%M%S).dump"
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
+              sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" -Fc' > "$backup_file"
+            test -s "$backup_file"
             git pull origin main
             docker compose -f docker-compose.prod.yml --env-file .env.prod build
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d

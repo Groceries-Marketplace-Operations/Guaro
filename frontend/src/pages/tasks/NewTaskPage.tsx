@@ -2,9 +2,10 @@ import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
+import ValidationAssistant from '../../components/tasks/ValidationAssistant';
 import { taskTypesApi, brandsApi, shopsApi, tasksApi, appConfigApi } from '../../api';
 import { useT } from '../../i18n';
-import type { TaskType, FormField, Brand, Shop } from '../../types';
+import type { TaskType, FormField, Brand, Shop, FileValidationResult } from '../../types';
 
 type ApiError = { response?: { data?: { message?: string | string[] } } };
 function errMsg(ex: unknown) {
@@ -235,6 +236,7 @@ export default function NewTaskPage() {
   const [urlErrors, setUrlErrors] = useState<Record<string, string>>({});
   const [fileUploading, setFileUploading] = useState<Record<string, boolean>>({});
   const [fileUploadErrors, setFileUploadErrors] = useState<Record<string, string>>({});
+  const [latestFileValidation, setLatestFileValidation] = useState<FileValidationResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -242,7 +244,7 @@ export default function NewTaskPage() {
     queryKey: ['task-types', { page: 1, limit: 200 }],
     queryFn: () => taskTypesApi.list({ page: 1, limit: 200 }).then(r => r.data as { data: TaskType[] }),
   });
-  const taskTypes: TaskType[] = taskTypesResult?.data ?? [];
+  const taskTypes: TaskType[] = useMemo(() => taskTypesResult?.data ?? [], [taskTypesResult?.data]);
 
   const { data: selectedTT = null } = useQuery<TaskType>({
     queryKey: ['task-type', selectedTTId],
@@ -305,6 +307,7 @@ export default function NewTaskPage() {
     setFormValues({});
     setUrlErrors({});
     setScheduledStart('');
+    setLatestFileValidation(null);
     setErr('');
   };
 
@@ -329,7 +332,8 @@ export default function NewTaskPage() {
   const toggleSection = (sectionId: string) => {
     setCollapsedSections(prev => {
       const next = new Set(prev);
-      next.has(sectionId) ? next.delete(sectionId) : next.add(sectionId);
+      if (next.has(sectionId)) next.delete(sectionId);
+      else next.add(sectionId);
       return next;
     });
   };
@@ -396,11 +400,26 @@ export default function NewTaskPage() {
     try {
       const fd = new FormData();
       fd.append('file', file);
+      fd.append('taskTypeId', selectedTTId ?? '');
+      fd.append('formFieldId', fieldId);
       const res = await tasksApi.uploadExcel(fd);
-      const { tempPath, originalName } = res.data;
-      setField(fieldId, { name: originalName, tempPath } as FileFieldValue);
-    } catch {
-      setFileUploadErrors(p => ({ ...p, [fieldId]: t('pages.newTask.fileUploadError') }));
+      setLatestFileValidation(res.data);
+      if (res.data.canProceed && res.data.tempPath) {
+        setField(fieldId, { name: res.data.originalName, tempPath: res.data.tempPath } as FileFieldValue);
+      } else {
+        setField(fieldId, { name: '', tempPath: '' } as FileFieldValue);
+        setFileUploadErrors(p => ({ ...p, [fieldId]: res.data.summary }));
+      }
+    } catch (ex) {
+      const message = errMsg(ex);
+      setLatestFileValidation({
+        originalName: file.name,
+        canProceed: false,
+        summary: message,
+        checks: [{ id: 'upload', label: 'Upload', status: 'failed', message }],
+        stats: { validRows: 0, totalRows: 0 },
+      });
+      setFileUploadErrors(p => ({ ...p, [fieldId]: message || t('pages.newTask.fileUploadError') }));
     } finally {
       setFileUploading(p => ({ ...p, [fieldId]: false }));
     }
@@ -593,7 +612,7 @@ export default function NewTaskPage() {
           <p className="form-hint" style={{ marginBottom: 6 }}>{t('pages.newTask.excelHint')}</p>
           <input
             type="file"
-            accept=".xlsx,.xls"
+            accept=".xlsx"
             disabled={uploading}
             style={{ fontSize: '0.84rem' }}
             onChange={e => {
@@ -625,6 +644,15 @@ export default function NewTaskPage() {
 
   const hasUrlErrors = Object.keys(urlErrors).length > 0;
   const canSubmit = !saving && !missingRequired && !hasUrlErrors;
+  const missingRequiredLabels = fields.filter(f => {
+    if (!f.required) return false;
+    const val = formValues[f.id];
+    if (f.tipo === 'file') return !(val as FileFieldValue | undefined)?.tempPath;
+    if (f.multiple) return !Array.isArray(val) || val.length === 0;
+    return !val;
+  }).map(f => f.label);
+  const fileFields = fields.filter(f => f.tipo === 'file');
+  const validFiles = fileFields.filter(f => !!(formValues[f.id] as FileFieldValue | undefined)?.tempPath).length;
 
   return (
     <>
@@ -684,7 +712,8 @@ export default function NewTaskPage() {
               <p style={{ fontSize: '0.9rem' }}>{t('pages.newTask.selectPrompt')}</p>
             </div>
           ) : (
-            <div style={{ maxWidth: 640 }}>
+            <div className="new-task-workspace">
+              <div className="new-task-form-column">
               <div style={{ marginBottom: 28 }}>
                 <h1 style={{ fontSize: '1.35rem', fontWeight: 700, marginBottom: 4 }}>{selectedTT.name}</h1>
                 {selectedTT.description && (
@@ -795,6 +824,18 @@ export default function NewTaskPage() {
                   {saving ? t('pages.newTask.creating') : t('pages.newTask.createTaskBtn')}
                 </button>
               </div>
+              </div>
+              <ValidationAssistant
+                key={selectedTT.id}
+                taskTypeId={selectedTT.id}
+                readiness={{
+                  missingRequired: missingRequiredLabels,
+                  hasUrlErrors,
+                  fileFields: fileFields.length,
+                  validFiles,
+                }}
+                latestValidation={latestFileValidation}
+              />
             </div>
           )}
         </div>

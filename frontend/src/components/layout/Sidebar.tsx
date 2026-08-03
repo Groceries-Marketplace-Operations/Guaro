@@ -163,6 +163,9 @@ export default function Sidebar() {
           <NavLink to="/integrations/auto-turn-off" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> {t('nav.autoTurnOffItems')}
           </NavLink>
+          <NavLink to="/integrations/emergencies" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconBriefcase /> Emergencias
+          </NavLink>
         </div>
       )}
 
@@ -174,6 +177,9 @@ export default function Sidebar() {
               <IconApp /> {t('nav.applications')}
             </NavLink>
           )}
+          <NavLink to="/sftp-applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconApp /> Aplicaciones SFTP
+          </NavLink>
           {canSeeModule('bpo_team') && (
             <NavLink to="/bpo-management" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
               <IconBriefcase /> {t('nav.bpoTeam')}

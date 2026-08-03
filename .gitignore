@@ -8,6 +8,7 @@
 /backend/build
 /backend/tmp
 /backend/data
+/backups/
 
 # Logs
 logs

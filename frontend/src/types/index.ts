@@ -133,6 +133,7 @@ export interface Shop {
   appShopId: string;
   name?: string;
   city?: string;
+  address?: string;
   status: ShopStatus;
   brand?: Brand;
   brandId: string;
@@ -242,6 +243,43 @@ export interface AutoOpenExecution {
   createdAt: string;
 }
 
+export interface AssistantCheck {
+  id: string;
+  label: string;
+  status: 'passed' | 'warning' | 'failed';
+  message: string;
+  details?: string[];
+}
+
+export interface FileValidationResult {
+  originalName: string;
+  tempPath?: string;
+  canProceed: boolean;
+  summary: string;
+  checks: AssistantCheck[];
+  stats: { validRows: number; totalRows: number };
+}
+
+export interface AssistantContext {
+  assistantName: string;
+  taskTypeId: string;
+  taskTypeName: string;
+  canAccess: boolean;
+  accessMessage: string;
+  hasFileValidation: boolean;
+  fileRules: Array<{
+    fieldId: string;
+    fieldLabel: string;
+    acceptedExtensions: string[];
+    maxSizeMb: number;
+    expectedColumns: string[];
+    validator: string;
+  }>;
+  requiredFields: string[];
+  templates: Array<{ name: string; url: string; type: string }>;
+  greeting: string;
+}
+
 export interface AutoTurnOffRule {
   id: string;
   poolId: string;
@@ -319,13 +357,52 @@ export interface AutoTurnOffExecution {
 export interface BrandItem {
   id: string;
   brandId: string;
-  shopId: string;
   name: string;
   upc?: string;
   appItemId: string;
-  appShopId: string;
+  sourceShopId?: string;
+  sourceCity?: string;
   lastSeenAt: string;
-  shop?: { id: string; shopId: string; appShopId: string };
+}
+
+export interface SftpApplication {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  rootPath?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoreEmergencyTarget {
+  id: string;
+  offlineStatus: string;
+  restoreStatus: string;
+  offlineError?: string;
+  restoreError?: string;
+  offlineAt?: string;
+  restoredAt?: string;
+  shop: Pick<Shop, 'id' | 'shopId' | 'appShopId' | 'name' | 'city'>;
+}
+
+export interface StoreEmergency {
+  id: string;
+  mode: 'all_brand' | 'shop_list';
+  requestedIds: string[];
+  endsAt: string;
+  status: string;
+  startedAt?: string;
+  offlineAt?: string;
+  restoredAt?: string;
+  finishedAt?: string;
+  errorMessage?: string;
+  createdAt: string;
+  brand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'>;
+  createdBy: Pick<Account, 'id' | 'name' | 'email'>;
+  targets: StoreEmergencyTarget[];
 }
 
 export interface AutoTurnOffShopResult {

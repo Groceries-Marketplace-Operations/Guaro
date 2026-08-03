@@ -259,7 +259,12 @@ export class AutoTurnOffService {
 
     await Promise.allSettled([
       ...executions.flatMap(execution => this.coordinatorQueues().map(queue => this.removeWaitingJob(queue, execution.id))),
-      ...executions.flatMap(execution => execution.shops.map(shop => this.removeWaitingJob(this.shopQueue, shop.id))),
+      ...executions.map(execution => this.removeWaitingJob(this.shopQueue, `advance-${execution.id}`)),
+      ...executions.flatMap(execution => execution.shops.flatMap(shop => [
+        this.removeWaitingJob(this.shopQueue, shop.id),
+        this.removeWaitingJob(this.shopQueue, `${shop.id}-local`),
+        this.removeWaitingJob(this.shopQueue, `${shop.id}-menu`),
+      ])),
     ]);
 
     return {

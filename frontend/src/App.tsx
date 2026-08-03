@@ -28,6 +28,8 @@ import IntegrationsPage from './pages/integrations/IntegrationsPage';
 import AutoTurnOffItemsPage from './pages/integrations/AutoTurnOffItemsPage';
 import AdminPanel from './pages/admin/AdminPanel';
 import AutoFetchPage from './pages/integrations/AutoFetchPage';
+import StoreEmergenciesPage from './pages/integrations/StoreEmergenciesPage';
+import SftpApplicationsPage from './pages/admin/SftpApplicationsPage';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
 
@@ -63,6 +65,8 @@ export default function App() {
               <Route path="integrations/auto-turn-off" element={<AutoTurnOffItemsPage />} />
               <Route path="integrations/auto-stores-fetch" element={<AutoFetchPage kind="stores" />} />
               <Route path="integrations/auto-menu-fetch" element={<AutoFetchPage kind="menu" />} />
+              <Route path="integrations/emergencies" element={<StoreEmergenciesPage />} />
+              <Route path="sftp-applications" element={<SftpApplicationsPage />} />
               <Route path="admin" element={<AdminPanel />} />
               <Route path="*" element={<NotFound />} />
             </Route>

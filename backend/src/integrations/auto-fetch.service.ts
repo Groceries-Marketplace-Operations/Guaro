@@ -23,7 +23,7 @@ export class AutoFetchService implements OnModuleInit {
     }
     for (const item of defaults) {
       const timezone = timezoneForCountry(item.country);
-      const pool = await this.prisma.autoFetchPool.upsert({
+      await this.prisma.autoFetchPool.upsert({
         where: { kind_country: { kind: item.kind, country: item.country } },
         create: {
           kind: item.kind,
@@ -34,10 +34,6 @@ export class AutoFetchService implements OnModuleInit {
           nextRunAt: nextDailyRun(new Date(), item.hour, 0, timezone),
         },
         update: {},
-      });
-      await this.prisma.autoFetchPool.update({
-        where: { id: pool.id },
-        data: { nextRunAt: nextDailyRun(new Date(), pool.executionHour, pool.executionMinute, pool.timezone) },
       });
     }
   }

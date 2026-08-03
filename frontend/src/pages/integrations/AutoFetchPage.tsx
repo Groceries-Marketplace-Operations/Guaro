@@ -43,8 +43,8 @@ export default function AutoFetchPage({ kind }: { kind: FetchKind }) {
   const [expanded, setExpanded] = useState<string>('');
   const title = kind === 'stores' ? 'Auto Stores Fetch' : 'Auto Menu Fetch';
   const description = kind === 'stores'
-    ? 'Descarga diariamente las tiendas de todas las marcas KA y almacena shop_id y appShopId.'
-    : 'Descarga diariamente los menús de las tiendas KA y almacena nombre, UPC, appItemId y appShopId.';
+    ? 'Descarga diariamente las tiendas KA y enriquece cada una con nombre, ciudad, dirección y coordenadas.'
+    : 'Toma hasta 2 tiendas por ciudad y construye un catálogo global de nombre, UPC y appItemId para cada marca.';
 
   const { data: pools = [], isLoading } = useQuery<FetchPool[]>({
     queryKey: ['auto-fetch', kind],
@@ -72,6 +72,7 @@ export default function AutoFetchPage({ kind }: { kind: FetchKind }) {
         </div>
         <div className="alert alert-info" style={{ marginBottom: 18 }}>
           Los pools incluyen automáticamente solo marcas KA con una aplicación vinculada. La hora se interpreta en la zona horaria de cada país.
+          {kind === 'menu' && ' Los ítems no se cuentan por tienda: cada marca conserva un catálogo único reutilizable en el apagado de ítems.'}
         </div>
         {isLoading && <div className="text-muted">Cargando pools…</div>}
         <div style={{ display: 'grid', gap: 16 }}>

@@ -6,16 +6,47 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { decrypt } from '../common/crypto.util';
-import { getAuthToken } from '../queue/handlers/didi-food.util';
+import { fetchShopIdMap, getAuthToken } from '../queue/handlers/didi-food.util';
 import { CatalogSyncService } from '../catalog/catalog-sync.service';
 import {
   AutoTurnOffCancelledError,
   callStockApi,
   downloadMenu,
+  FailedItem,
   resolveAppItemIds,
   ShopResult,
   StockEndpoint,
 } from './auto-turn-off-api.util';
+
+type ShopPhase = 'local' | 'menu';
+type WorkerJobData =
+  | { shopExecutionId: string; phase: ShopPhase }
+  | { executionId: string; phase: 'advance' };
+
+interface DeferredShopResult extends ShopResult {
+  phase?: 'waiting_menu';
+  pendingUpcs?: string[];
+  taskIds?: string[];
+}
+
+type ShopTarget = Prisma.AutoTurnOffShopExecutionGetPayload<{
+  include: {
+    execution: {
+      include: {
+        pool: true;
+        rule: {
+          include: {
+            brand: {
+              include: {
+                application: { select: { appId: true; appSecret: true } };
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+}>;
 
 @Injectable()
 @Processor('auto-turn-off-shop', { concurrency: 24 })
@@ -35,11 +66,24 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<{ shopExecutionId: string }>): Promise<void> {
-    const { shopExecutionId } = job.data;
+  async process(job: Job<WorkerJobData>): Promise<void> {
+    if (job.data.phase === 'advance') {
+      await this.continuePipeline(job.data.executionId);
+      return;
+    }
+
+    const { shopExecutionId, phase } = job.data;
+    const expectedSteps = phase === 'local'
+      ? ['queued_local', 'queued_resolved']
+      : ['waiting_menu_download'];
     const claimed = await this.prisma.autoTurnOffShopExecution.updateMany({
-      where: { id: shopExecutionId, status: 'pending' },
-      data: { status: 'running', currentStep: 'authenticating', startedAt: new Date() },
+      where: { id: shopExecutionId, status: 'pending', currentStep: { in: expectedSteps } },
+      data: {
+        status: 'running',
+        currentStep: phase === 'local' ? 'authenticating_local' : 'authenticating_menu_retry',
+        startedAt: new Date(),
+        finishedAt: null,
+      },
     });
     if (claimed.count === 0) return;
 
@@ -72,7 +116,8 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
         itemsSucceeded: 0,
         itemsFailed: rule.upcs.length,
         error: !application ? 'Brand has no application linked' : 'Missing app_shop_id',
-      });
+      }, phase === 'local' ? 3 : 1);
+      await this.continuePipeline(execution.id);
       return;
     }
 
@@ -82,89 +127,8 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
         const encryptionKey = this.config.get<string>('APP_SECRET_ENCRYPTION_KEY') ?? '';
         const appSecret = encryptionKey ? decrypt(application.appSecret, encryptionKey) : application.appSecret;
         const authToken = await getAuthToken(application.appId, appSecret, target.appShopId!);
-
-        const catalogItems = await this.prisma.brandItem.findMany({
-          where: {
-            brandId: rule.brandId,
-            upc: { in: rule.upcs },
-            shop: { shopId: target.shopId },
-          },
-          select: { upc: true, appItemId: true },
-        });
-        const cached = resolveAppItemIds(
-          catalogItems.map(item => ({ upc: item.upc, app_item_id: item.appItemId })),
-          rule.upcs,
-        );
-        let appItemIds = cached.appItemIds;
-        let matchedUpcs = cached.matchedUpcs;
-        let missingUpcs = cached.missingUpcs;
-        let menuTaskId: string | undefined;
-        let menuSource: 'catalog' | 'download' = 'catalog';
-
-        if (missingUpcs.length > 0) {
-          menuSource = 'download';
-          await this.setCurrentStep(target.id, execution.id, `downloading_menu:${target.shopId}`);
-          const menu = await downloadMenu(authToken, () => this.ensureActive(target.id, execution.id));
-          menuTaskId = menu.taskId;
-          const localShop = await this.prisma.shop.findFirst({
-            where: { brandId: rule.brandId, shopId: target.shopId, deletedAt: null },
-            select: { id: true },
-          });
-          if (localShop) await this.catalog.replaceShopMenu(localShop.id, menu.items);
-          const resolved = resolveAppItemIds(menu.items, rule.upcs);
-          appItemIds = resolved.appItemIds;
-          matchedUpcs = resolved.matchedUpcs;
-          missingUpcs = resolved.missingUpcs;
-        }
-
-        await this.advanceStep(target.id, execution.id, `matching_upcs:${target.shopId}`);
-
-        await this.advanceStep(target.id, execution.id, `updating_stock:${target.shopId}`);
-        if (appItemIds.length === 0) {
-          await this.finishShop(target.id, {
-            shopId: target.shopId,
-            appShopId: target.appShopId!,
-            endpoint: rule.stockEndpoint as StockEndpoint,
-            success: false,
-            itemsSucceeded: 0,
-            itemsFailed: rule.upcs.length,
-            menuTaskId,
-            menuSource,
-            requestedUpcs: rule.upcs.length,
-            matchedUpcs: 0,
-            missingUpcs,
-            failedItems: missingUpcs.map(upc => ({ upc, reason: 'UPC was not found in the exported store menu' })),
-            error: `None of the ${rule.upcs.length} UPC(s) were found in the exported store menu`,
-          });
-          return;
-        }
-
-        await this.ensureActive(target.id, execution.id);
-        const endpoint = rule.stockEndpoint as StockEndpoint;
-        const stockList = appItemIds.map(appItemId => ({ app_item_id: appItemId, stock: 0 }));
-        const apiResult = await callStockApi(endpoint, authToken, stockList);
-        const missingFailures = missingUpcs.map(upc => ({
-          upc,
-          reason: 'UPC was not found in the exported store menu',
-        }));
-        const missingMessage = missingUpcs.length > 0
-          ? `${missingUpcs.length} UPC(s) were not found in the exported store menu`
-          : undefined;
-        await this.finishShop(target.id, {
-          shopId: target.shopId,
-          appShopId: target.appShopId!,
-          endpoint,
-          ...apiResult,
-          success: apiResult.success && missingUpcs.length === 0,
-          itemsFailed: apiResult.itemsFailed + missingUpcs.length,
-          menuTaskId,
-          menuSource,
-          requestedUpcs: rule.upcs.length,
-          matchedUpcs,
-          missingUpcs: missingUpcs.length ? missingUpcs : undefined,
-          failedItems: [...(apiResult.failedItems ?? []), ...missingFailures],
-          error: [apiResult.error, missingMessage].filter(Boolean).join('; ') || undefined,
-        });
+        if (phase === 'local') await this.processLocalPhase(target, authToken);
+        else await this.processMenuPhase(target, authToken);
       } catch (error) {
         if (error instanceof AutoTurnOffCancelledError) {
           await this.prisma.autoTurnOffShopExecution.updateMany({
@@ -173,23 +137,246 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
           });
           return;
         }
-        this.logger.error(`Shop worker failed for ${target.shopId}: ${(error as Error).message}`);
-        await this.finishShop(target.id, {
-          shopId: target.shopId,
-          appShopId: target.appShopId!,
-          endpoint: rule.stockEndpoint as StockEndpoint,
-          success: false,
-          itemsSucceeded: 0,
-          itemsFailed: rule.upcs.length,
-          error: (error as Error).message,
-        });
+        this.logger.error(`${phase} phase failed for shop ${target.shopId}: ${(error as Error).message}`);
+        if (phase === 'menu') {
+          await this.finishMenuFailure(target, (error as Error).message);
+        } else {
+          await this.finishShop(target.id, {
+            shopId: target.shopId,
+            appShopId: target.appShopId!,
+            endpoint: rule.stockEndpoint as StockEndpoint,
+            success: false,
+            itemsSucceeded: 0,
+            itemsFailed: rule.upcs.length,
+            failedItems: rule.upcs.map(upc => ({ upc, reason: (error as Error).message })),
+            error: (error as Error).message,
+          }, 3);
+        }
       }
     });
+    await this.continuePipeline(execution.id);
+  }
+
+  private async processLocalPhase(
+    target: ShopTarget,
+    authToken: string,
+  ) {
+    const { execution } = target;
+    const { rule } = execution;
+    const endpoint = rule.stockEndpoint as StockEndpoint;
+    const catalogItems = await this.prisma.brandItem.findMany({
+      where: {
+        brandId: rule.brandId,
+        upc: { in: rule.upcs },
+      },
+      select: { upc: true, appItemId: true },
+    });
+    const cached = resolveAppItemIds(
+      catalogItems.map(item => ({ upc: item.upc, app_item_id: item.appItemId })),
+      rule.upcs,
+    );
+
+    await this.advanceStep(target.id, execution.id, `matching_local_upcs:${target.shopId}`);
+    await this.advanceStep(target.id, execution.id, `updating_local_stock:${target.shopId}`);
+
+    let localResult: Omit<ShopResult, 'shopId' | 'appShopId' | 'endpoint'> = {
+      success: cached.appItemIds.length === 0,
+      itemsSucceeded: 0,
+      itemsFailed: 0,
+    };
+    if (cached.appItemIds.length > 0) {
+      await this.ensureActive(target.id, execution.id);
+      try {
+        localResult = await callStockApi(
+          endpoint,
+          authToken,
+          cached.appItemIds.map(appItemId => ({ app_item_id: appItemId, stock: 0 })),
+        );
+      } catch (error) {
+        const reason = (error as Error).message;
+        localResult = {
+          success: false,
+          itemsSucceeded: 0,
+          itemsFailed: cached.appItemIds.length,
+          failedItems: cached.appItemIds.map(appItemId => ({ appItemId, reason })),
+          error: reason,
+        };
+      }
+    }
+
+    if (cached.missingUpcs.length === 0) {
+      await this.finishShop(target.id, {
+        shopId: target.shopId,
+        appShopId: target.appShopId!,
+        endpoint,
+        ...localResult,
+        requestedUpcs: rule.upcs.length,
+        matchedUpcs: cached.matchedUpcs,
+        menuSource: 'catalog',
+      }, 1);
+      return;
+    }
+
+    const deferred: DeferredShopResult = {
+      shopId: target.shopId,
+      appShopId: target.appShopId!,
+      endpoint,
+      ...localResult,
+      success: false,
+      requestedUpcs: rule.upcs.length,
+      matchedUpcs: cached.matchedUpcs,
+      missingUpcs: cached.missingUpcs,
+      pendingUpcs: cached.missingUpcs,
+      menuSource: 'catalog',
+      phase: 'waiting_menu',
+      taskIds: localResult.taskId ? [localResult.taskId] : undefined,
+    };
+    const deferredUpdate = await this.prisma.autoTurnOffShopExecution.updateMany({
+      where: { id: target.id, status: 'running' },
+      data: {
+        status: 'pending',
+        currentStep: 'waiting_menu_download',
+        itemsSucceeded: localResult.itemsSucceeded,
+        itemsFailed: localResult.itemsFailed,
+        result: deferred as unknown as Prisma.InputJsonValue,
+        finishedAt: null,
+      },
+    });
+    if (deferredUpdate.count === 0) throw new AutoTurnOffCancelledError();
+  }
+
+  private async processMenuPhase(
+    target: ShopTarget,
+    authToken: string,
+  ) {
+    const { execution } = target;
+    const { rule } = execution;
+    const endpoint = rule.stockEndpoint as StockEndpoint;
+    const previous = (target.result ?? {}) as unknown as DeferredShopResult;
+    const pendingUpcs = previous.pendingUpcs ?? previous.missingUpcs ?? rule.upcs;
+
+    const refreshedItems = await this.prisma.brandItem.findMany({
+      where: { brandId: rule.brandId, upc: { in: pendingUpcs } },
+      select: { upc: true, appItemId: true },
+    });
+    const refreshed = resolveAppItemIds(
+      refreshedItems.map(item => ({ upc: item.upc, app_item_id: item.appItemId })),
+      pendingUpcs,
+    );
+    let resolved = refreshed;
+    let menuTaskId: string | undefined;
+    let menuSource: 'catalog' | 'download' = 'catalog';
+    if (refreshed.missingUpcs.length > 0) {
+      menuSource = 'download';
+      await this.setCurrentStep(target.id, execution.id, `downloading_deferred_menu:${target.shopId}`);
+      const menu = await downloadMenu(authToken, () => this.ensureActive(target.id, execution.id));
+      menuTaskId = menu.taskId;
+      const localShop = await this.prisma.shop.findFirst({
+        where: { brandId: rule.brandId, shopId: target.shopId, deletedAt: null },
+        select: { id: true },
+      });
+      if (localShop) await this.catalog.replaceShopMenu(localShop.id, menu.items);
+      const downloaded = resolveAppItemIds(menu.items, refreshed.missingUpcs);
+      resolved = {
+        appItemIds: [...new Set([...refreshed.appItemIds, ...downloaded.appItemIds])],
+        matchedUpcs: refreshed.matchedUpcs + downloaded.matchedUpcs,
+        missingUpcs: downloaded.missingUpcs,
+      };
+    }
+    await this.setCurrentStep(target.id, execution.id, `updating_deferred_stock:${target.shopId}`);
+    let retryResult: Omit<ShopResult, 'shopId' | 'appShopId' | 'endpoint'> = {
+      success: resolved.appItemIds.length === 0,
+      itemsSucceeded: 0,
+      itemsFailed: 0,
+    };
+    if (resolved.appItemIds.length > 0) {
+      await this.ensureActive(target.id, execution.id);
+      try {
+        retryResult = await callStockApi(
+          endpoint,
+          authToken,
+          resolved.appItemIds.map(appItemId => ({ app_item_id: appItemId, stock: 0 })),
+        );
+      } catch (error) {
+        const reason = (error as Error).message;
+        retryResult = {
+          success: false,
+          itemsSucceeded: 0,
+          itemsFailed: resolved.appItemIds.length,
+          failedItems: resolved.appItemIds.map(appItemId => ({ appItemId, reason })),
+          error: reason,
+        };
+      }
+    }
+
+    const missingFailures: FailedItem[] = resolved.missingUpcs.map(upc => ({
+      upc,
+      reason: 'UPC was not found after the deferred store menu download',
+    }));
+    const failedItems = [
+      ...(previous.failedItems ?? []),
+      ...(retryResult.failedItems ?? []),
+      ...missingFailures,
+    ];
+    const itemsSucceeded = previous.itemsSucceeded + retryResult.itemsSucceeded;
+    const itemsFailed = previous.itemsFailed + retryResult.itemsFailed + resolved.missingUpcs.length;
+    const errors = [
+      previous.error,
+      retryResult.error,
+      resolved.missingUpcs.length > 0
+        ? `${resolved.missingUpcs.length} UPC(s) were not found after the deferred menu download`
+        : undefined,
+    ].filter(Boolean);
+
+    await this.finishShop(target.id, {
+      shopId: target.shopId,
+      appShopId: target.appShopId!,
+      endpoint,
+      success: itemsFailed === 0,
+      itemsSucceeded,
+      itemsFailed,
+      taskId: retryResult.taskId ?? previous.taskId,
+      menuTaskId,
+      menuSource,
+      requestedUpcs: rule.upcs.length,
+      matchedUpcs: (previous.matchedUpcs ?? 0) + resolved.matchedUpcs,
+      missingUpcs: resolved.missingUpcs.length > 0 ? resolved.missingUpcs : undefined,
+      failedItems: failedItems.length > 0 ? failedItems : undefined,
+      error: errors.join('; ') || undefined,
+    }, 1);
+  }
+
+  private async finishMenuFailure(
+    target: ShopTarget,
+    message: string,
+  ) {
+    const previous = (target.result ?? {}) as unknown as DeferredShopResult;
+    const pendingUpcs = previous.pendingUpcs ?? previous.missingUpcs ?? target.execution.rule.upcs;
+    await this.finishShop(target.id, {
+      shopId: target.shopId,
+      appShopId: target.appShopId ?? '-',
+      endpoint: target.execution.rule.stockEndpoint as StockEndpoint,
+      success: false,
+      itemsSucceeded: previous.itemsSucceeded ?? 0,
+      itemsFailed: (previous.itemsFailed ?? 0) + pendingUpcs.length,
+      requestedUpcs: target.execution.rule.upcs.length,
+      matchedUpcs: previous.matchedUpcs ?? 0,
+      missingUpcs: pendingUpcs,
+      failedItems: [
+        ...(previous.failedItems ?? []),
+        ...pendingUpcs.map(upc => ({ upc, reason: message })),
+      ],
+      error: [previous.error, message].filter(Boolean).join('; '),
+    }, 1);
   }
 
   @OnWorkerEvent('failed')
-  async onFailed(job: Job<{ shopExecutionId: string }> | undefined, error: Error) {
-    if (!job?.data.shopExecutionId) return;
+  async onFailed(job: Job<WorkerJobData> | undefined, error: Error) {
+    if (!job) return;
+    if (job.data.phase === 'advance') {
+      await this.failExecution(job.data.executionId, error.message);
+      return;
+    }
     const shop = await this.prisma.autoTurnOffShopExecution.findUnique({
       where: { id: job.data.shopExecutionId },
       include: { execution: { include: { rule: true } } },
@@ -200,10 +387,11 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
       appShopId: shop.appShopId ?? '-',
       endpoint: shop.execution.rule.stockEndpoint as StockEndpoint,
       success: false,
-      itemsSucceeded: 0,
-      itemsFailed: shop.execution.rule.upcs.length,
+      itemsSucceeded: shop.itemsSucceeded,
+      itemsFailed: Math.max(shop.itemsFailed, shop.execution.rule.upcs.length - shop.itemsSucceeded),
       error: error.message,
-    });
+    }, job.data.phase === 'local' ? 3 : 1);
+    await this.continuePipeline(shop.executionId);
   }
 
   private async ensureActive(shopExecutionId: string, executionId: string) {
@@ -250,15 +438,12 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     `);
   }
 
-  private async finishShop(shopExecutionId: string, result: ShopResult) {
+  private async finishShop(shopExecutionId: string, result: ShopResult, remainingProgress: number) {
     const current = await this.prisma.autoTurnOffShopExecution.findUnique({
       where: { id: shopExecutionId },
-      select: { executionId: true, currentStep: true },
+      select: { executionId: true },
     });
     if (!current) return;
-    const completedSteps = current.currentStep?.startsWith('updating_stock')
-      ? 2
-      : (current.currentStep?.startsWith('matching_upcs') ? 1 : 0);
     const status = result.success
       ? 'done'
       : (result.itemsSucceeded > 0 ? 'partial_success' : 'failed');
@@ -276,33 +461,180 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     if (updated.count === 0) return;
     await this.advanceExecution(
       current.executionId,
-      status === 'done' ? 'processing_shops' : status === 'partial_success' ? 'shop_partial_success' : 'shop_failed',
-      3 - completedSteps,
+      status === 'done' ? 'processing_local_data' : status === 'partial_success' ? 'shop_partial_success' : 'shop_failed',
+      remainingProgress,
     );
-    await this.enqueueNextOrFinalize(current.executionId);
   }
 
-  private async enqueueNextOrFinalize(executionId: string) {
+  private async continuePipeline(executionId: string): Promise<void> {
     const execution = await this.prisma.autoTurnOffExecution.findUnique({
       where: { id: executionId },
       select: { status: true },
     });
     if (execution?.status !== 'running') return;
-    const next = await this.prisma.autoTurnOffShopExecution.findFirst({
-      where: { executionId, status: 'pending' },
+
+    const nextLocal = await this.prisma.autoTurnOffShopExecution.findFirst({
+      where: {
+        executionId,
+        status: 'pending',
+        currentStep: { in: ['queued_local', 'queued_resolved'] },
+      },
       orderBy: { createdAt: 'asc' },
       select: { id: true },
     });
-    if (next) {
-      await this.shopQueue.add('turn-off-shop-items', { shopExecutionId: next.id }, {
-        jobId: next.id,
-        attempts: 1,
-        removeOnComplete: 1000,
-        removeOnFail: 1000,
-      });
+    if (nextLocal) {
+      await this.enqueueShop(nextLocal.id, 'local');
+      return;
+    }
+
+    const unresolvedCount = await this.prisma.autoTurnOffShopExecution.count({
+      where: { executionId, status: 'pending', currentStep: 'waiting_shop_resolution' },
+    });
+    if (unresolvedCount > 0) {
+      await this.resolveDeferredShops(executionId);
+      await this.continuePipeline(executionId);
+      return;
+    }
+
+    const nextMenu = await this.prisma.autoTurnOffShopExecution.findFirst({
+      where: { executionId, status: 'pending', currentStep: 'waiting_menu_download' },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (nextMenu) {
+      await this.enqueueShop(nextMenu.id, 'menu');
       return;
     }
     await this.finalizeIfComplete(executionId);
+  }
+
+  private async resolveDeferredShops(executionId: string) {
+    const execution = await this.prisma.autoTurnOffExecution.findUnique({
+      where: { id: executionId },
+      include: {
+        rule: {
+          include: { brand: { include: { application: { select: { appId: true, appSecret: true } } } } },
+        },
+      },
+    });
+    if (!execution || execution.status !== 'running') return;
+    const deferred = await this.prisma.autoTurnOffShopExecution.findMany({
+      where: { executionId, status: 'pending', currentStep: 'waiting_shop_resolution' },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, shopId: true },
+    });
+    if (deferred.length === 0) return;
+
+    await this.prisma.autoTurnOffExecution.updateMany({
+      where: { id: executionId, status: 'running' },
+      data: { currentStep: 'resolving_deferred_shops' },
+    });
+    const application = execution.rule.brand.application;
+    let mappings = new Map<string, string>();
+    let resolutionError: string | undefined;
+    if (!application) {
+      resolutionError = 'Brand has no application linked';
+    } else {
+      try {
+        const encryptionKey = this.config.get<string>('APP_SECRET_ENCRYPTION_KEY') ?? '';
+        const appSecret = encryptionKey ? decrypt(application.appSecret, encryptionKey) : application.appSecret;
+        mappings = await this.withApplicationSlot(application.appId, () =>
+          fetchShopIdMap(application.appId, appSecret, deferred.map(shop => shop.shopId)));
+      } catch (error) {
+        resolutionError = `Could not resolve deferred shop_id values from DiDi: ${(error as Error).message}`;
+      }
+    }
+
+    const now = new Date();
+    for (const shop of deferred) {
+      const appShopId = mappings.get(shop.shopId);
+      if (appShopId) {
+        await this.prisma.autoTurnOffShopExecution.updateMany({
+          where: { id: shop.id, status: 'pending', currentStep: 'waiting_shop_resolution' },
+          data: { appShopId, currentStep: 'queued_resolved' },
+        });
+        continue;
+      }
+      const message = resolutionError ?? 'shop_id was not found in the DiDi shop list for this application';
+      const result: ShopResult = {
+        shopId: shop.shopId,
+        appShopId: '-',
+        endpoint: execution.rule.stockEndpoint as StockEndpoint,
+        success: false,
+        itemsSucceeded: 0,
+        itemsFailed: execution.rule.upcs.length,
+        failedItems: execution.rule.upcs.map(upc => ({ upc, reason: message })),
+        error: message,
+      };
+      await this.prisma.autoTurnOffShopExecution.updateMany({
+        where: { id: shop.id, status: 'pending', currentStep: 'waiting_shop_resolution' },
+        data: {
+          status: 'failed',
+          currentStep: 'shop_not_found',
+          itemsFailed: execution.rule.upcs.length,
+          result: result as unknown as Prisma.InputJsonValue,
+          finishedAt: now,
+        },
+      });
+      await this.advanceExecution(executionId, 'resolving_deferred_shops', 3);
+    }
+
+    const resolved = deferred
+      .map(shop => ({ shopId: shop.shopId, appShopId: mappings.get(shop.shopId) }))
+      .filter((shop): shop is { shopId: string; appShopId: string } => Boolean(shop.appShopId));
+    await this.persistResolvedShops(execution.rule.brandId, resolved);
+    if (resolved.length > 0) {
+      const previous = execution.rule.resolvedShopIds
+        && typeof execution.rule.resolvedShopIds === 'object'
+        && !Array.isArray(execution.rule.resolvedShopIds)
+        ? execution.rule.resolvedShopIds as Record<string, string>
+        : {};
+      await this.prisma.autoTurnOffRule.update({
+        where: { id: execution.ruleId },
+        data: {
+          resolvedShopIds: {
+            ...previous,
+            ...Object.fromEntries(resolved.map(shop => [shop.shopId, shop.appShopId])),
+          } as Prisma.InputJsonValue,
+        },
+      });
+    }
+  }
+
+  private async persistResolvedShops(
+    brandId: string,
+    resolved: Array<{ shopId: string; appShopId: string }>,
+  ) {
+    for (let offset = 0; offset < resolved.length; offset += 100) {
+      const chunk = resolved.slice(offset, offset + 100);
+      await this.prisma.$transaction(chunk.map(shop => this.prisma.shop.upsert({
+        where: { shopId: shop.shopId },
+        create: { ...shop, brandId, status: 'integrated' },
+        update: { appShopId: shop.appShopId, brandId, deletedAt: null },
+      })));
+    }
+  }
+
+  private async enqueueShop(shopExecutionId: string, phase: ShopPhase) {
+    await this.shopQueue.add('turn-off-shop-items', { shopExecutionId, phase }, {
+      jobId: `${shopExecutionId}-${phase}`,
+      attempts: 1,
+      removeOnComplete: 1000,
+      removeOnFail: 1000,
+    });
+  }
+
+  private async failExecution(executionId: string, message: string) {
+    await this.prisma.autoTurnOffExecution.updateMany({
+      where: { id: executionId, status: { in: ['pending', 'running'] } },
+      data: {
+        status: 'failed',
+        currentStep: 'failed',
+        errorMessage: message,
+        finishedAt: new Date(),
+        progressPercent: 100,
+      },
+    });
   }
 
   private async finalizeIfComplete(executionId: string) {

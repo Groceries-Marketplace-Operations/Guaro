@@ -17,8 +17,7 @@ export class BrandMenuController {
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
     @Query('q') q?: string,
-    @Query('shopId') shopId?: string,
   ) {
-    return this.catalog.listBrandItems(brandId, { page, limit, q, shopId });
+    return this.catalog.listBrandItems(brandId, { page, limit, q });
   }
 }

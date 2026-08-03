@@ -22,6 +22,10 @@ import { AutoFetchController } from './auto-fetch.controller';
 import { AutoFetchService } from './auto-fetch.service';
 import { AutoFetchScheduler } from './auto-fetch.scheduler';
 import { AutoFetchProcessor } from './auto-fetch.processor';
+import { StoreEmergencyController } from './store-emergency.controller';
+import { StoreEmergencyService } from './store-emergency.service';
+import { StoreEmergencyProcessor } from './store-emergency.processor';
+import { StoreEmergencyScheduler } from './store-emergency.scheduler';
 
 @Module({
   imports: [
@@ -31,12 +35,13 @@ import { AutoFetchProcessor } from './auto-fetch.processor';
     BullModule.registerQueue({ name: 'auto-turn-off-CR' }),
     BullModule.registerQueue({ name: 'auto-turn-off-shop' }),
     BullModule.registerQueue({ name: 'auto-fetch' }),
+    BullModule.registerQueue({ name: 'store-emergency' }),
     PrismaModule,
     WebhooksModule,
     ConfigModule,
     CatalogModule,
   ],
-  controllers: [AutoOpenPoolsController, AutoTurnOffController, AutoFetchController],
+  controllers: [AutoOpenPoolsController, AutoTurnOffController, AutoFetchController, StoreEmergencyController],
   providers: [
     AutoOpenPoolsService,
     AutoOpenProcessor,
@@ -51,6 +56,9 @@ import { AutoFetchProcessor } from './auto-fetch.processor';
     AutoFetchService,
     AutoFetchScheduler,
     AutoFetchProcessor,
+    StoreEmergencyService,
+    StoreEmergencyProcessor,
+    StoreEmergencyScheduler,
   ],
 })
 export class IntegrationsModule {}

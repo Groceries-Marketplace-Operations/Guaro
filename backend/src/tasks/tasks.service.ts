@@ -3,6 +3,8 @@ import { AccountRole, Prisma, StepFailureReason, TaskStatus } from '@prisma/clie
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from './task-engine.service';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { JwtUser } from '../auth/types/jwt-user.interface';
+import { TaskValidationService } from './task-validation.service';
 
 const TASK_INCLUDE = {
   taskType: { select: { id: true, name: true, sectionId: true } },
@@ -30,11 +32,14 @@ export class TasksService {
   constructor(
     private prisma: PrismaService,
     private engine: TaskEngineService,
+    private validation: TaskValidationService,
   ) {}
 
   // ── Create task ───────────────────────────────────────────────────────────
 
-  async create(dto: CreateTaskDto, createdById: string) {
+  async create(dto: CreateTaskDto, user: JwtUser) {
+    await this.validation.assertTaskTypeAccess(dto.taskTypeId, user);
+    const createdById = user.id;
     const taskType = await this.prisma.taskType.findUnique({
       where: { id: dto.taskTypeId },
       include: { stepDefinitions: { orderBy: { order: 'asc' } } },

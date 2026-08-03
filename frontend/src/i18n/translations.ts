@@ -479,9 +479,9 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.newTask.selectKaType': 'Select KA Type…',
     'pages.newTask.selectCountry': 'Select Country…',
     'pages.newTask.selectBizCategory': 'Select category…',
-    'pages.newTask.chooseExcel': 'Click to choose an Excel file (.xlsx / .xls)',
+    'pages.newTask.chooseExcel': 'Click to choose an Excel file (.xlsx)',
     'pages.newTask.uploading': 'Uploading…',
-    'pages.newTask.excelHint': 'Upload an .xlsx or .xls file. Max 5 MB.',
+    'pages.newTask.excelHint': 'Upload an .xlsx file. Naranja validates its contents. Max 5 MB.',
     'pages.newTask.fileUploadError': 'Failed to upload file. Please try again.',
 
     // ── Task Types List ──────────────────────────────────────────────────────
@@ -1223,9 +1223,9 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.newTask.selectKaType': 'Selecciona tipo KA…',
     'pages.newTask.selectCountry': 'Selecciona país…',
     'pages.newTask.selectBizCategory': 'Selecciona categoría…',
-    'pages.newTask.chooseExcel': 'Haz clic para elegir un archivo Excel (.xlsx / .xls)',
+    'pages.newTask.chooseExcel': 'Haz clic para elegir un archivo Excel (.xlsx)',
     'pages.newTask.uploading': 'Subiendo…',
-    'pages.newTask.excelHint': 'Sube un archivo .xlsx o .xls. Máx. 5 MB.',
+    'pages.newTask.excelHint': 'Sube un archivo .xlsx. Naranja validará su contenido. Máx. 5 MB.',
     'pages.newTask.fileUploadError': 'Error al subir el archivo. Intenta de nuevo.',
 
     // ── Task Types List ──────────────────────────────────────────────────────

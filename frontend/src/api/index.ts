@@ -126,10 +126,21 @@ export const tasksApi = {
     client.get<{ fileKey: string; mimeType: string; contentBase64: string }>(
       `/tasks/${taskId}/steps/${stepId}/download`,
     ),
+  assistantContext: (taskTypeId: string) =>
+    client.get<import('../types').AssistantContext>(`/tasks/validation-assistant/${taskTypeId}/context`),
+  assistantMessage: (taskTypeId: string, question: string, locale: string) =>
+    client.post<{ answer: string }>(`/tasks/validation-assistant/${taskTypeId}/message`, { question, locale }),
   uploadExcel: (formData: FormData) =>
-    client.post<{ tempPath: string; originalName: string }>('/tasks/upload-excel', formData, {
+    client.post<import('../types').FileValidationResult>('/tasks/upload-excel', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
+};
+
+export const sftpApplicationsApi = {
+  list: (params?: object) => client.get('/sftp-applications', { params }),
+  create: (data: object) => client.post('/sftp-applications', data),
+  update: (id: string, data: object) => client.patch(`/sftp-applications/${id}`, data),
+  delete: (id: string) => client.delete(`/sftp-applications/${id}`),
 };
 
 /* ── BPO Management ─────────────────────────────────────────── */
@@ -209,6 +220,12 @@ export const autoFetchApi = {
   updatePool: (id: string, data: object) => client.patch(`/integrations/auto-fetch/pools/${id}`, data),
   runPool: (id: string) => client.post(`/integrations/auto-fetch/pools/${id}/run`),
   listExecutions: (id: string, page = 1) => client.get(`/integrations/auto-fetch/pools/${id}/executions`, { params: { page } }),
+};
+
+export const storeEmergenciesApi = {
+  list: (page = 1, limit = 20) => client.get('/integrations/store-emergencies', { params: { page, limit } }),
+  get: (id: string) => client.get(`/integrations/store-emergencies/${id}`),
+  create: (data: object) => client.post('/integrations/store-emergencies', data),
 };
 
 /* ── Admin (super_admin only) ────────────────────────────────── */

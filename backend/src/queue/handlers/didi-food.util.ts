@@ -85,11 +85,24 @@ export function isClosed(schedule: string | null | undefined): boolean {
  * Returns array of {begin, end} in minutes from midnight.
  */
 export function parseScheduleString(s: string): { begin: number; end: number }[] {
-  return s.split(',').map(range => {
-    const [startStr, endStr] = range.trim().split('-');
-    const [sh, sm] = startStr.split(':').map(Number);
-    const [eh, em] = endStr.split(':').map(Number);
-    return { begin: sh * 60 + (sm || 0), end: eh * 60 + (em || 0) };
+  const value = s.trim();
+  if (!value) throw new Error('Schedule is empty');
+
+  return value.split(',').map(rawRange => {
+    const range = rawRange.trim();
+    const match = /^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/.exec(range);
+    if (!match) throw new Error(`Invalid schedule "${range}". Use HH:MM-HH:MM`);
+
+    const [, shRaw, smRaw, ehRaw, emRaw] = match;
+    const sh = Number(shRaw);
+    const sm = Number(smRaw);
+    const eh = Number(ehRaw);
+    const em = Number(emRaw);
+    const validStart = sh >= 0 && sh <= 23 && sm >= 0 && sm <= 59;
+    const validEnd = eh >= 0 && eh <= 24 && em >= 0 && em <= 59 && (eh !== 24 || em === 0);
+    if (!validStart || !validEnd) throw new Error(`Invalid time in schedule "${range}"`);
+
+    return { begin: sh * 60 + sm, end: eh * 60 + em };
   });
 }
 
@@ -103,6 +116,7 @@ export function minutesToHHMM(minutes: number): string {
 /** Normalise a JS Date or date string to "YYYY-MM-DD". */
 export function normalizeDate(d: Date | string): string {
   const date = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(date.getTime())) throw new Error(`Invalid date "${String(d)}"`);
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');

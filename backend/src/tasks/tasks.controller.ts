@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { readFile } from 'fs/promises';
+import { readFile, unlink } from 'fs/promises';
 import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
 import { AccountRole, TaskStatus } from '@prisma/client';
@@ -16,6 +16,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { FailStepDto } from './dto/fail-step.dto';
 import { TasksService } from './tasks.service';
 import { TaskEngineService } from './task-engine.service';
+import { TaskValidationService } from './task-validation.service';
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -23,6 +24,7 @@ export class TasksController {
   constructor(
     private tasksService: TasksService,
     private taskEngine: TaskEngineService,
+    private taskValidation: TaskValidationService,
   ) {}
 
   @Get()
@@ -47,7 +49,23 @@ export class TasksController {
   @Post()
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateTaskDto) {
-    return this.tasksService.create(dto, u.id);
+    return this.tasksService.create(dto, u);
+  }
+
+  @Get('validation-assistant/:taskTypeId/context')
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  assistantContext(@Param('taskTypeId') taskTypeId: string, @CurrentUser() u: JwtUser) {
+    return this.taskValidation.getContext(taskTypeId, u);
+  }
+
+  @Post('validation-assistant/:taskTypeId/message')
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  assistantMessage(
+    @Param('taskTypeId') taskTypeId: string,
+    @Body() body: { question?: string; locale?: string },
+    @CurrentUser() u: JwtUser,
+  ) {
+    return this.taskValidation.answer(taskTypeId, body.question?.trim() ?? '', body.locale, u);
   }
 
   @Patch(':id/steps/:stepId/complete')
@@ -142,12 +160,21 @@ export class TasksController {
     }),
     fileFilter: (_, file, cb) => {
       const ok = /\.(xlsx|xls)$/i.test(file.originalname);
-      cb(ok ? null : new BadRequestException('Only .xlsx and .xls files are allowed'), ok);
+      cb(ok ? null : new BadRequestException('Only Excel files are allowed'), ok);
     },
     limits: { fileSize: 5 * 1024 * 1024 },
   }))
-  uploadExcel(@UploadedFile() file: Express.Multer.File) {
+  async uploadExcel(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('taskTypeId') taskTypeId: string,
+    @Body('formFieldId') formFieldId: string,
+    @CurrentUser() u: JwtUser,
+  ) {
     if (!file) throw new BadRequestException('No file uploaded');
-    return { tempPath: file.filename, originalName: file.originalname };
+    if (!taskTypeId || !formFieldId) {
+      await unlink(file.path).catch(() => undefined);
+      throw new BadRequestException('Task type and file field are required');
+    }
+    return this.taskValidation.validateUpload(taskTypeId, formFieldId, file, u);
   }
 }
