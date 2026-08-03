@@ -41,7 +41,9 @@ export class AccountsController {
 
     if (!isSuperAdmin) {
       where.sectionId = requester.sectionId ?? undefined;
-      where.roles = { hasSome: [AccountRole.user, AccountRole.bpo] };
+      where.roles = role
+        ? { has: role }
+        : { hasSome: [AccountRole.user, AccountRole.bpo] };
     } else if (role) {
       where.roles = { has: role };
     }

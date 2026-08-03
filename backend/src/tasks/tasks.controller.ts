@@ -11,11 +11,11 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { BlockStepDto } from './dto/block-step.dto';
+import { AssignStepDto } from './dto/assign-step.dto';
 import { CompleteStepDto } from './dto/complete-step.dto';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { FailStepDto } from './dto/fail-step.dto';
 import { TasksService } from './tasks.service';
-import { TaskEngineService } from './task-engine.service';
 import { TaskValidationService } from './task-validation.service';
 
 @Controller('tasks')
@@ -23,7 +23,6 @@ import { TaskValidationService } from './task-validation.service';
 export class TasksController {
   constructor(
     private tasksService: TasksService,
-    private taskEngine: TaskEngineService,
     private taskValidation: TaskValidationService,
   ) {}
 
@@ -74,8 +73,9 @@ export class TasksController {
     @Param('id') id: string,
     @Param('stepId') stepId: string,
     @Body() dto: CompleteStepDto,
+    @CurrentUser() u: JwtUser,
   ) {
-    return this.tasksService.completeStep(id, stepId, dto.result, dto.note);
+    return this.tasksService.completeStep(id, stepId, dto.result, dto.note, u);
   }
 
   @Patch(':id/steps/:stepId/fail')
@@ -84,8 +84,9 @@ export class TasksController {
     @Param('id') id: string,
     @Param('stepId') stepId: string,
     @Body() dto: FailStepDto,
+    @CurrentUser() u: JwtUser,
   ) {
-    return this.tasksService.failStep(id, stepId, dto.failureReason, dto.note);
+    return this.tasksService.failStep(id, stepId, dto.failureReason, dto.note, u);
   }
 
   @Patch(':id/steps/:stepId/block')
@@ -94,35 +95,38 @@ export class TasksController {
     @Param('id') id: string,
     @Param('stepId') stepId: string,
     @Body() dto: BlockStepDto,
+    @CurrentUser() u: JwtUser,
   ) {
-    return this.tasksService.blockStep(id, stepId, dto.note);
+    return this.tasksService.blockStep(id, stepId, dto.note, u);
   }
 
   @Patch(':id/steps/:stepId/retry')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
-  retryStep(@Param('id') id: string, @Param('stepId') stepId: string) {
-    return this.tasksService.retryStep(id, stepId);
+  retryStep(@Param('id') id: string, @Param('stepId') stepId: string, @CurrentUser() u: JwtUser) {
+    return this.tasksService.retryStep(id, stepId, u);
   }
 
   @Patch(':id/steps/:stepId/force-retry')
   @Roles(AccountRole.admin, AccountRole.super_admin)
-  forceRetryStep(@Param('id') id: string, @Param('stepId') stepId: string) {
-    return this.tasksService.forceRetryStep(id, stepId);
+  forceRetryStep(@Param('id') id: string, @Param('stepId') stepId: string, @CurrentUser() u: JwtUser) {
+    return this.tasksService.forceRetryStep(id, stepId, u);
   }
 
   @Patch(':id/steps/:stepId/start')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
-  startStep(@Param('id') id: string, @Param('stepId') stepId: string) {
-    return this.tasksService.startStep(id, stepId);
+  startStep(@Param('id') id: string, @Param('stepId') stepId: string, @CurrentUser() u: JwtUser) {
+    return this.tasksService.startStep(id, stepId, u);
   }
 
   @Patch(':id/steps/:stepId/assign')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   assignStep(
+    @Param('id') id: string,
     @Param('stepId') stepId: string,
-    @Body('accountId') accountId: string,
+    @Body() dto: AssignStepDto,
+    @CurrentUser() u: JwtUser,
   ) {
-    return this.taskEngine.assignStepManually(stepId, accountId);
+    return this.tasksService.assignStep(id, stepId, dto.accountId, u);
   }
 
   @Get(':id/steps/:stepId/download')

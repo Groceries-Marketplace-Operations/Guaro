@@ -327,37 +327,61 @@ export class TaskEngineService {
   // Overridden by QueueModule to publish the job (avoids circular dep)
   emitAutoStep: (stepInstanceId: string, handlerId: string, taskId: string) => void = () => undefined;
 
-  // ── Manual step assignment (admin assigns BPO at runtime) ────────────────
+  // ── Human step assignment / reassignment ─────────────────────────────────
 
-  async assignStepManually(stepInstanceId: string, accountId: string): Promise<void> {
+  async assignOrReassignStep(stepInstanceId: string, accountId: string): Promise<void> {
+    let taskId = '';
+    let stepDefinitionId = '';
+
     await this.prisma.$transaction(async (tx) => {
       const step = await tx.stepInstance.findUnique({
         where: { id: stepInstanceId },
-        include: { stepDefinition: true },
+        include: { stepDefinition: true, task: true },
       });
       if (!step) throw new NotFoundException('StepInstance not found');
-      if (step.stepDefinition.assignmentStrategy !== AssignmentStrategy.manual) {
-        throw new BadRequestException('Step does not use manual assignment strategy');
+      if (step.stepDefinition.executionType === ExecutionType.automatic) {
+        throw new BadRequestException('Automatic steps cannot be assigned to a BPO');
       }
-      if (step.status !== StepStatus.pending) {
-        throw new BadRequestException('Step must be pending to be manually assigned');
+      if (step.status !== StepStatus.pending &&
+          step.status !== StepStatus.in_progress &&
+          step.status !== StepStatus.blocked) {
+        throw new BadRequestException('Only active human steps can be reassigned');
       }
+      if (step.assignedToId === accountId) {
+        throw new BadRequestException('The selected BPO is already assigned to this step');
+      }
+
+      const now = new Date();
+      const elapsedSeconds = step.status === StepStatus.in_progress && step.startedAt
+        ? Math.max(0, Math.floor((now.getTime() - step.startedAt.getTime()) / 1000))
+        : 0;
 
       await tx.stepInstance.update({
         where: { id: stepInstanceId },
-        data: { assignedToId: accountId },
+        data: {
+          assignedToId: accountId,
+          ...(step.status === StepStatus.in_progress
+            ? {
+                workedSeconds: (step.workedSeconds ?? 0) + elapsedSeconds,
+                startedAt: now,
+              }
+            : {}),
+        },
       });
       await tx.task.update({
         where: { id: step.taskId },
-        data: { status: TaskStatus.assigned },
+        data: {
+          status: step.status === StepStatus.pending
+            ? TaskStatus.assigned
+            : step.task.status,
+        },
       });
+
+      taskId = step.taskId;
+      stepDefinitionId = step.stepDefinitionId;
     });
 
-    // Fire on_assignment webhook after manual assignment
-    const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
-    if (step) {
-      await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_assignment, step.taskId);
-    }
+    await this.sendStepWebhook(stepDefinitionId, WebhookEvent.on_assignment, taskId);
   }
 
   // ── Just-in-time assignment ───────────────────────────────────────────────

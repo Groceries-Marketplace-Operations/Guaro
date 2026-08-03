@@ -185,6 +185,8 @@ export default function TaskDetail() {
           <StatusBadge status={task.status} />
         </div>
 
+        {err && !action && <div className="error-banner" style={{ marginBottom: 16 }}>{err}</div>}
+
         {steps.length > 1 && (
           <div className="card mb-4">
             <div className="pipeline">
@@ -226,30 +228,34 @@ export default function TaskDetail() {
                     <td><StatusBadge status={s.status} /></td>
                     <td className="text-muted text-sm">{s.note ?? '—'}</td>
                     <td>
-                      {canManualAssign && s.stepDefinition?.assignmentStrategy === 'manual' && s.status === 'pending' && !s.assignedToId && (
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {canManualAssign && s.stepDefinition?.executionType !== 'automatic' &&
+                        ['pending', 'in_progress', 'blocked'].includes(s.status) && (
                         manualAssignStep === s.id ? (
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                             <select className="form-select" style={{ fontSize: '0.8rem', padding: '3px 8px', height: 'auto' }}
                               value={manualAssignBpo} onChange={e => setManualAssignBpo(e.target.value)}>
                               <option value="">{t('pages.taskDetail.selectBpo')}</option>
-                              {bpoAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                              {bpoAccounts.filter(a => a.id !== s.assignedToId).map(a => (
+                                <option key={a.id} value={a.id}>{a.name} · {a.email}</option>
+                              ))}
                             </select>
                             <button className="btn btn-sm btn-primary" disabled={!manualAssignBpo || saving}
                               onClick={() => handleManualAssign(s.id)}>
-                              {t('common.assign')}
+                              {s.assignedToId ? t('pages.taskDetail.confirmReassign') : t('common.assign')}
                             </button>
                             <button className="btn btn-sm btn-ghost" onClick={() => { setManualAssignStep(null); setManualAssignBpo(''); }}>
                               {t('common.cancel')}
                             </button>
                           </div>
                         ) : (
-                          <button className="btn btn-sm btn-ghost" onClick={() => { setManualAssignStep(s.id); setManualAssignBpo(''); }}>
-                            {t('pages.taskDetail.assignBpo')}
+                          <button className="btn btn-sm btn-ghost" onClick={() => { setManualAssignStep(s.id); setManualAssignBpo(''); setErr(''); }}>
+                            {s.assignedToId ? t('pages.taskDetail.reassignBpo') : t('pages.taskDetail.assignBpo')}
                           </button>
                         )
                       )}
                       {canActOnStep && s.status === 'pending' && s.stepDefinition?.executionType !== 'automatic' &&
-                        !(s.stepDefinition?.assignmentStrategy === 'manual' && !s.assignedToId) &&
+                        !!s.assignedToId &&
                         (s.assignedToId === account?.id || roles.some(r => r === 'admin' || r === 'super_admin')) && (
                         <button
                           className="btn btn-sm btn-primary"
@@ -260,7 +266,8 @@ export default function TaskDetail() {
                           <PlayIcon /> {t('pages.taskDetail.startReview')}
                         </button>
                       )}
-                      {canActOnStep && s.status === 'in_progress' && s.stepDefinition?.executionType !== 'automatic' && (
+                      {canActOnStep && s.status === 'in_progress' && s.stepDefinition?.executionType !== 'automatic' &&
+                        (s.assignedToId === account?.id || canManualAssign) && (
                         <div className="flex gap-2">
                           <button className="btn btn-sm btn-primary" title={t('pages.taskDetail.btnComplete')}
                             onClick={() => { setActiveStep(s); setAction('complete'); }}>
@@ -276,7 +283,8 @@ export default function TaskDetail() {
                           </button>
                         </div>
                       )}
-                      {canActOnStep && s.status === 'blocked' && (
+                      {canActOnStep && s.status === 'blocked' &&
+                        (s.assignedToId === account?.id || canManualAssign) && (
                         <div className="flex gap-2">
                           <button className="btn btn-sm btn-primary" title={t('pages.taskDetail.retry')}
                             onClick={() => handleRetry(s)}>
@@ -324,6 +332,7 @@ export default function TaskDetail() {
                           <RefreshIcon /> {t('pages.taskDetail.forceRetry')}
                         </button>
                       )}
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AccountRole, Prisma, StepFailureReason, TaskStatus } from '@prisma/client';
+import { AccountRole, ExecutionType, Prisma, StepFailureReason, StepStatus, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from './task-engine.service';
 import { CreateTaskDto } from './dto/create-task.dto';
@@ -208,44 +208,102 @@ export class TasksService {
   }
   // ── Step actions ──────────────────────────────────────────────────────────
 
-  async completeStep(taskId: string, stepId: string, result?: unknown, note?: string) {
-    await this.assertStepOfTask(taskId, stepId);
+  async assignStep(taskId: string, stepId: string, accountId: string, requester: JwtUser) {
+    const viewer = {
+      roles: requester.roles,
+      accountId: requester.id,
+      sectionId: requester.sectionId,
+    };
+    const task = await this.findOne(taskId, viewer);
+    const step = task.stepInstances.find((item) => item.id === stepId);
+    if (!step) throw new NotFoundException('Step not found in this task');
+    if (step.stepDefinition.executionType === ExecutionType.automatic) {
+      throw new BadRequestException('Automatic steps cannot be assigned to a BPO');
+    }
+    if (step.status !== StepStatus.pending &&
+        step.status !== StepStatus.in_progress &&
+        step.status !== StepStatus.blocked) {
+      throw new BadRequestException('Only active human steps can be reassigned');
+    }
+    if (step.assignedToId === accountId) {
+      throw new BadRequestException('The selected BPO is already assigned to this step');
+    }
+
+    const isSuperAdmin = requester.roles.includes(AccountRole.super_admin);
+    const target = await this.prisma.account.findFirst({
+      where: {
+        id: accountId,
+        deletedAt: null,
+        roles: { has: AccountRole.bpo },
+        ...(!isSuperAdmin ? { sectionId: requester.sectionId ?? undefined } : {}),
+      },
+      select: { id: true },
+    });
+    if (!target) {
+      throw new BadRequestException('Selected account is not an available BPO in your section');
+    }
+
+    await this.engine.assignOrReassignStep(stepId, accountId);
+    return this.findOne(taskId, viewer);
+  }
+
+  async completeStep(taskId: string, stepId: string, result: unknown, note: string | undefined, requester: JwtUser) {
+    const viewer = await this.assertCanActOnStep(taskId, stepId, requester);
     await this.engine.completeStep(stepId, result, note);
-    return this.findOne(taskId);
+    return this.findOne(taskId, viewer);
   }
 
-  async failStep(taskId: string, stepId: string, failureReason: StepFailureReason, note?: string) {
-    await this.assertStepOfTask(taskId, stepId);
+  async failStep(taskId: string, stepId: string, failureReason: StepFailureReason, note: string | undefined, requester: JwtUser) {
+    const viewer = await this.assertCanActOnStep(taskId, stepId, requester);
     await this.engine.failStep(stepId, failureReason, note);
-    return this.findOne(taskId);
+    return this.findOne(taskId, viewer);
   }
 
-  async blockStep(taskId: string, stepId: string, note?: string) {
-    await this.assertStepOfTask(taskId, stepId);
+  async blockStep(taskId: string, stepId: string, note: string | undefined, requester: JwtUser) {
+    const viewer = await this.assertCanActOnStep(taskId, stepId, requester);
     await this.engine.blockStep(stepId, note);
-    return this.findOne(taskId);
+    return this.findOne(taskId, viewer);
   }
 
-  async retryStep(taskId: string, stepId: string) {
-    await this.assertStepOfTask(taskId, stepId);
+  async retryStep(taskId: string, stepId: string, requester: JwtUser) {
+    const viewer = await this.assertCanActOnStep(taskId, stepId, requester);
     await this.engine.retryStep(stepId);
-    return this.findOne(taskId);
+    return this.findOne(taskId, viewer);
   }
 
-  async forceRetryStep(taskId: string, stepId: string) {
-    await this.assertStepOfTask(taskId, stepId);
+  async forceRetryStep(taskId: string, stepId: string, requester: JwtUser) {
+    const viewer = await this.assertCanActOnStep(taskId, stepId, requester, true);
     await this.engine.forceRetryStep(stepId);
-    return this.findOne(taskId);
+    return this.findOne(taskId, viewer);
   }
 
-  async startStep(taskId: string, stepId: string) {
-    await this.assertStepOfTask(taskId, stepId);
+  async startStep(taskId: string, stepId: string, requester: JwtUser) {
+    const viewer = await this.assertCanActOnStep(taskId, stepId, requester);
     await this.engine.startStep(stepId);
-    return this.findOne(taskId);
+    return this.findOne(taskId, viewer);
   }
 
-  private async assertStepOfTask(taskId: string, stepId: string) {
-    const step = await this.prisma.stepInstance.findUnique({ where: { id: stepId } });
-    if (!step || step.taskId !== taskId) throw new NotFoundException('Step not found in this task');
+  private async assertCanActOnStep(
+    taskId: string,
+    stepId: string,
+    requester: JwtUser,
+    adminOnly = false,
+  ) {
+    const viewer = {
+      roles: requester.roles,
+      accountId: requester.id,
+      sectionId: requester.sectionId,
+    };
+    const task = await this.findOne(taskId, viewer);
+    const step = task.stepInstances.find((item) => item.id === stepId);
+    if (!step) throw new NotFoundException('Step not found in this task');
+
+    const isAdmin = requester.roles.includes(AccountRole.admin) ||
+      requester.roles.includes(AccountRole.super_admin);
+    if (adminOnly && !isAdmin) throw new ForbiddenException('Only admins can perform this action');
+    if (!isAdmin && step.assignedToId !== requester.id) {
+      throw new ForbiddenException('This step is assigned to another BPO');
+    }
+    return viewer;
   }
 }

@@ -108,21 +108,22 @@ export default function Sidebar() {
         </div>
       )}
 
-      <div className="sidebar-section">
+      <nav className="sidebar-scroll" aria-label={t('nav.mainNavigation')}>
+        <div className="sidebar-section">
         <div className="sidebar-section-label">{t('nav.overview')}</div>
         <NavLink to="/" end className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
           <IconGrid /> {t('nav.dashboard')}
         </NavLink>
-      </div>
+        </div>
 
-      <div className="sidebar-section">
+        <div className="sidebar-section">
         <div className="sidebar-section-label">{t('nav.catalog')}</div>
         <NavLink to="/brands" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
           <IconTag /> {t('nav.brands')}
         </NavLink>
-      </div>
+        </div>
 
-      <div className="sidebar-section">
+        <div className="sidebar-section">
         <div className="sidebar-section-label">{t('nav.tasks')}</div>
         <NavLink to="/tasks" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
           <IconClipboard /> {t('nav.tasks')}
@@ -132,7 +133,7 @@ export default function Sidebar() {
             <IconLayers /> {t('nav.taskTypes')}
           </NavLink>
         )}
-      </div>
+        </div>
 
       {isBpo && (
         <div className="sidebar-section">
@@ -205,6 +206,7 @@ export default function Sidebar() {
           )}
         </div>
       )}
+      </nav>
 
       <div className="sidebar-footer">
         <button className="nav-item w-full" style={{ background: 'none', border: 'none', cursor: 'pointer', width: '100%', color: 'var(--sidebar-text)' }} onClick={logout}>
