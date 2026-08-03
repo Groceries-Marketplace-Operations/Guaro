@@ -88,6 +88,7 @@ export const shopsApi = {
   get: (id: string) => client.get(`/shops/${id}`),
   create: (data: object) => client.post('/shops', data),
   createBatch: (shops: object[]) => client.post('/shops/batch', { shops }),
+  downloadImportTemplate: () => client.get('/shops/import-template', { responseType: 'blob' }),
   batchStatus: (ids: string[], status: string) => client.patch('/shops/batch-status', { ids, status }),
   update: (id: string, data: object) => client.patch(`/shops/${id}`, data),
   delete: (id: string) => client.delete(`/shops/${id}`),

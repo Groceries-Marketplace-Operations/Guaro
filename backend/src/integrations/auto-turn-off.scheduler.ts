@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { AutoTurnOffService } from './auto-turn-off.service';
+import { timezoneForCountry } from './auto-fetch-time.util';
+import { nextAutoTurnOffOccurrence } from './auto-turn-off-time.util';
 
 @Injectable()
 export class AutoTurnOffScheduler {
@@ -28,13 +30,26 @@ export class AutoTurnOffScheduler {
         OR: [{ endsAt: null }, { endsAt: { gt: now } }],
         pool: { active: true },
       },
-      select: { id: true, poolId: true, name: true, startsAt: true, intervalMinutes: true },
+      select: {
+        id: true,
+        poolId: true,
+        name: true,
+        startsAt: true,
+        intervalMinutes: true,
+        scheduleMode: true,
+        executionTimes: true,
+        pool: { select: { country: true } },
+      },
       orderBy: { nextRunAt: 'asc' },
     });
 
     for (const rule of dueRules) {
       try {
-        const nextRunAt = this.nextOccurrence(rule.startsAt, rule.intervalMinutes, new Date(now.getTime() + 1));
+        const nextRunAt = nextAutoTurnOffOccurrence({
+          ...rule,
+          timezone: timezoneForCountry(rule.pool.country),
+          after: new Date(now.getTime() + 1),
+        });
         const claimed = await this.prisma.autoTurnOffRule.updateMany({
           where: {
             id: rule.id,
@@ -62,12 +77,5 @@ export class AutoTurnOffScheduler {
       where: { createdAt: { lt: cutoff } },
     });
     if (count > 0) this.logger.log(`Cleaned up ${count} auto turn off executions older than 30 days`);
-  }
-
-  private nextOccurrence(startsAt: Date, intervalMinutes: number, after: Date) {
-    if (startsAt.getTime() >= after.getTime()) return startsAt;
-    const intervalMs = intervalMinutes * 60_000;
-    const elapsed = after.getTime() - startsAt.getTime();
-    return new Date(startsAt.getTime() + Math.ceil(elapsed / intervalMs) * intervalMs);
   }
 }

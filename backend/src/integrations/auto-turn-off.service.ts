@@ -7,6 +7,8 @@ import { CreateAutoTurnOffPoolDto } from './dto/create-auto-turn-off-pool.dto';
 import { UpdateAutoTurnOffPoolDto } from './dto/update-auto-turn-off-pool.dto';
 import { CreateAutoTurnOffRuleDto } from './dto/create-auto-turn-off-rule.dto';
 import { UpdateAutoTurnOffRuleDto } from './dto/update-auto-turn-off-rule.dto';
+import { timezoneForCountry } from './auto-fetch-time.util';
+import { AutoTurnOffScheduleMode, nextAutoTurnOffOccurrence } from './auto-turn-off-time.util';
 
 const RULE_INCLUDE = {
   brand: { select: { id: true, brandId: true, brandName: true, country: true } },
@@ -84,11 +86,16 @@ export class AutoTurnOffService {
       if (wasActivated) {
         const activeRules = await tx.autoTurnOffRule.findMany({
           where: { poolId: id, active: true },
-          select: { id: true, startsAt: true, intervalMinutes: true },
+          select: { id: true, startsAt: true, intervalMinutes: true, scheduleMode: true, executionTimes: true },
         });
         await Promise.all(activeRules.map(rule => tx.autoTurnOffRule.update({
           where: { id: rule.id },
-          data: { nextRunAt: this.nextOccurrence(rule.startsAt, rule.intervalMinutes) },
+          data: {
+            nextRunAt: nextAutoTurnOffOccurrence({
+              ...rule,
+              timezone: timezoneForCountry(current.country),
+            }),
+          },
         })));
       }
 
@@ -114,8 +121,13 @@ export class AutoTurnOffService {
     const pool = await this.findPool(poolId);
     const shopIds = this.normalizeShopIds(dto.shopIds);
     const upcs = this.normalizeUpcs(dto.upcs);
+    const scheduleMode = dto.scheduleMode ?? 'interval';
+    const intervalMinutes = dto.intervalMinutes ?? 10;
+    const executionTimes = scheduleMode === 'daily_times'
+      ? this.normalizeExecutionTimes(dto.executionTimes ?? [])
+      : [];
     await this.validateBrand(dto.brandId, pool.country);
-    this.validateEndpointLimits(dto.stockEndpoint, dto.intervalMinutes, upcs.length);
+    this.validateEndpointLimits(dto.stockEndpoint, intervalMinutes, upcs.length, scheduleMode, executionTimes);
     const startsAt = new Date(dto.startsAt);
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
     this.validateLifetime(startsAt, endsAt, dto.active ?? true);
@@ -127,14 +139,22 @@ export class AutoTurnOffService {
         brandId: dto.brandId,
         name: dto.name.trim(),
         active: dto.active ?? true,
-        intervalMinutes: dto.intervalMinutes,
+        scheduleMode,
+        intervalMinutes,
+        executionTimes,
         upcs,
         shopIds,
         resolvedShopIds: {},
         stockEndpoint: dto.stockEndpoint,
         startsAt,
         endsAt,
-        nextRunAt: this.nextOccurrence(startsAt, dto.intervalMinutes),
+        nextRunAt: nextAutoTurnOffOccurrence({
+          startsAt,
+          intervalMinutes,
+          scheduleMode,
+          executionTimes,
+          timezone: timezoneForCountry(pool.country),
+        }),
         createdById: userId,
         updatedById: userId,
       },
@@ -156,11 +176,18 @@ export class AutoTurnOffService {
     const upcs = dto.upcs ? this.normalizeUpcs(dto.upcs) : current.upcs;
     const stockEndpoint = dto.stockEndpoint ?? current.stockEndpoint;
     const intervalMinutes = dto.intervalMinutes ?? current.intervalMinutes;
+    const scheduleMode = dto.scheduleMode ?? current.scheduleMode;
+    const executionTimes = scheduleMode === 'daily_times'
+      ? this.normalizeExecutionTimes(dto.executionTimes ?? current.executionTimes)
+      : [];
     await this.validateBrand(brandId, pool.country);
-    this.validateEndpointLimits(stockEndpoint, intervalMinutes, upcs.length);
+    this.validateEndpointLimits(stockEndpoint, intervalMinutes, upcs.length, scheduleMode, executionTimes);
     if (dto.active ?? current.active) await this.validateNoActiveShopConflicts(shopIds, stockEndpoint, id);
 
     const intervalChanged = dto.intervalMinutes !== undefined && dto.intervalMinutes !== current.intervalMinutes;
+    const scheduleChanged = dto.scheduleMode !== undefined && dto.scheduleMode !== current.scheduleMode;
+    const timesChanged = dto.executionTimes !== undefined
+      && executionTimes.join(',') !== current.executionTimes.join(',');
     const startChanged = dto.startsAt !== undefined
       && new Date(dto.startsAt).getTime() !== current.startsAt.getTime();
     const wasActivated = current.active === false && dto.active === true;
@@ -179,13 +206,21 @@ export class AutoTurnOffService {
         shopIds,
         resolvedShopIds: dto.shopIds !== undefined || dto.brandId !== undefined ? {} : undefined,
         stockEndpoint: dto.stockEndpoint,
+        scheduleMode: dto.scheduleMode,
+        executionTimes,
         startsAt: dto.startsAt ? startsAt : undefined,
         endsAt: dto.endsAt === undefined ? undefined : endsAt,
         intervalMinutes: dto.intervalMinutes,
         active: dto.active,
         updatedById: userId,
-        nextRunAt: intervalChanged || startChanged || wasActivated
-          ? this.nextOccurrence(startsAt, intervalMinutes)
+        nextRunAt: intervalChanged || scheduleChanged || timesChanged || startChanged || wasActivated
+          ? nextAutoTurnOffOccurrence({
+              startsAt,
+              intervalMinutes,
+              scheduleMode,
+              executionTimes,
+              timezone: timezoneForCountry(pool.country),
+            })
           : undefined,
       },
       include: RULE_INCLUDE,
@@ -373,13 +408,6 @@ export class AutoTurnOffService {
     return { data, total, page: safePage, limit: safeLimit, requestedUpcs: execution.rule.upcs };
   }
 
-  private nextOccurrence(startsAt: Date, intervalMinutes: number, after = new Date()) {
-    if (startsAt.getTime() >= after.getTime()) return startsAt;
-    const intervalMs = intervalMinutes * 60_000;
-    const elapsed = after.getTime() - startsAt.getTime();
-    return new Date(startsAt.getTime() + Math.ceil(elapsed / intervalMs) * intervalMs);
-  }
-
   private unique(values: string[]) {
     return [...new Set(values)];
   }
@@ -403,13 +431,41 @@ export class AutoTurnOffService {
     return normalized;
   }
 
-  private validateEndpointLimits(stockEndpoint: string, intervalMinutes: number, upcCount: number) {
-    if (stockEndpoint === 'setStock' && intervalMinutes < 10) {
+  private validateEndpointLimits(
+    stockEndpoint: string,
+    intervalMinutes: number,
+    upcCount: number,
+    scheduleMode: AutoTurnOffScheduleMode | string,
+    executionTimes: string[],
+  ) {
+    if (scheduleMode === 'interval' && stockEndpoint === 'setStock' && intervalMinutes < 10) {
       throw new BadRequestException('setStock requires an interval of at least 10 minutes per shop');
+    }
+    if (scheduleMode === 'daily_times' && stockEndpoint === 'setStock') {
+      const minutes = executionTimes.map(value => {
+        const [hour, minute] = value.split(':').map(Number);
+        return hour * 60 + minute;
+      }).sort((left, right) => left - right);
+      const gaps = minutes.map((value, index) => {
+        const next = minutes[(index + 1) % minutes.length] + (index === minutes.length - 1 ? 1440 : 0);
+        return next - value;
+      });
+      if (gaps.some(gap => gap < 10)) {
+        throw new BadRequestException('setStock daily execution times must be at least 10 minutes apart');
+      }
     }
     if (stockEndpoint === 'setstockSync' && upcCount > 2000) {
       throw new BadRequestException('setstockSync accepts a maximum of 2000 UPCs per rule');
     }
+  }
+
+  private normalizeExecutionTimes(values: string[]) {
+    const normalized = this.unique(values.map(value => value.trim()).filter(Boolean)).sort();
+    if (normalized.length === 0) throw new BadRequestException('At least one daily execution time is required');
+    if (normalized.length > 48) throw new BadRequestException('A rule accepts a maximum of 48 daily execution times');
+    const invalid = normalized.filter(value => !/^([01]\d|2[0-3]):[0-5]\d$/.test(value));
+    if (invalid.length > 0) throw new BadRequestException(`Invalid daily execution time: ${invalid.join(', ')}`);
+    return normalized;
   }
 
   private validateLifetime(startsAt: Date, endsAt: Date | null, active: boolean) {

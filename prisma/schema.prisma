@@ -812,7 +812,9 @@ model AutoTurnOffRule {
   brandId         String    @map("brand_id") @db.Uuid
   name            String
   active          Boolean   @default(true)
+  scheduleMode    String    @default("interval") @map("schedule_mode")
   intervalMinutes Int       @map("interval_minutes")
+  executionTimes  String[]  @default([]) @map("execution_times")
   upcs            String[]
   shopIds         String[]  @map("shop_ids")
   resolvedShopIds Json?     @map("resolved_shop_ids")

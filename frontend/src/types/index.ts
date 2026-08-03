@@ -286,7 +286,9 @@ export interface AutoTurnOffRule {
   brandId: string;
   name: string;
   active: boolean;
+  scheduleMode: 'interval' | 'daily_times';
   intervalMinutes: number;
+  executionTimes: string[];
   upcs: string[];
   shopIds: string[];
   stockEndpoint: 'setStock' | 'setstockSync';

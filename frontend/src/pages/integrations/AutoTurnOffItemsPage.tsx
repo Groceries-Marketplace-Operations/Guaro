@@ -18,6 +18,7 @@ import type {
 type ApiError = { response?: { data?: { message?: string | string[] } } };
 type FrequencyUnit = 'minutes' | 'hours' | 'days';
 type StockEndpoint = 'setStock' | 'setstockSync';
+type ScheduleMode = 'interval' | 'daily_times';
 
 interface PoolForm {
   name: string;
@@ -32,8 +33,10 @@ interface RuleForm {
   shopIds: string;
   upcs: string;
   stockEndpoint: StockEndpoint;
+  scheduleMode: ScheduleMode;
   frequency: number;
   unit: FrequencyUnit;
+  executionTimes: string[];
   startsAt: string;
   endsAt: string;
   active: boolean;
@@ -49,7 +52,8 @@ function defaultStartsAt() {
 function newRuleForm(): RuleForm {
   return {
     name: '', brandId: '', shopIds: '', upcs: '', stockEndpoint: 'setStock', frequency: 10,
-    unit: 'minutes', startsAt: defaultStartsAt(), endsAt: '', active: true,
+    scheduleMode: 'interval', unit: 'minutes', executionTimes: ['09:00'],
+    startsAt: defaultStartsAt(), endsAt: '', active: true,
   };
 }
 
@@ -102,6 +106,13 @@ function formatFrequency(minutes: number, es: boolean) {
   if (minutes % 1440 === 0) return `${minutes / 1440} ${es ? 'día(s)' : 'day(s)'}`;
   if (minutes % 60 === 0) return `${minutes / 60} ${es ? 'hora(s)' : 'hour(s)'}`;
   return `${minutes} min`;
+}
+
+function formatRuleSchedule(rule: AutoTurnOffRule, es: boolean) {
+  if (rule.scheduleMode === 'daily_times') {
+    return `${es ? 'A las' : 'At'} ${rule.executionTimes.join(', ')}`;
+  }
+  return `${es ? 'Cada' : 'Every'} ${formatFrequency(rule.intervalMinutes, es)}`;
 }
 
 function progressStep(step: string | undefined, es: boolean) {
@@ -166,6 +177,9 @@ export default function AutoTurnOffItemsPage() {
     noPools: 'No hay pools configurados.', rules: 'reglas', addRule: 'Agregar regla',
     editRule: 'Editar regla', newRule: 'Nueva regla', ruleName: 'Nombre de la regla', brand: 'Marca',
     shops: 'shop_id objetivo', upcs: 'UPCs', frequency: 'Frecuencia',
+    schedule: 'Programación', intervalSchedule: 'Por intervalo', dailySchedule: 'Horas específicas del día',
+    dailyTimes: 'Horas diarias', addTime: 'Agregar hora', removeTime: 'Quitar',
+    dailyTimesHelp: 'Las horas se interpretan en la zona horaria del país del pool.',
     endpoint: 'Versión de Stock API', asyncEndpoint: 'setStock (asíncrono)', syncEndpoint: 'setstockSync (síncrono)',
     shopHelp: 'Ingresa un shop_id de DiDi por línea o separado por coma. Debe tener 19 dígitos e iniciar con 57.',
     frequencyHelp: 'setStock requiere mínimo 10 minutos; setstockSync permite desde 1 minuto.',
@@ -197,6 +211,9 @@ export default function AutoTurnOffItemsPage() {
     noPools: 'No pools configured.', rules: 'rules', addRule: 'Add rule',
     editRule: 'Edit rule', newRule: 'New rule', ruleName: 'Rule name', brand: 'Brand',
     shops: 'Target shop_id values', upcs: 'UPCs', frequency: 'Frequency',
+    schedule: 'Schedule', intervalSchedule: 'By interval', dailySchedule: 'Specific times of day',
+    dailyTimes: 'Daily times', addTime: 'Add time', removeTime: 'Remove',
+    dailyTimesHelp: 'Times use the timezone of the pool country.',
     endpoint: 'Stock API version', asyncEndpoint: 'setStock (asynchronous)', syncEndpoint: 'setstockSync (synchronous)',
     shopHelp: 'Enter one DiDi shop_id per line or comma-separated. It must contain 19 digits and start with 57.',
     frequencyHelp: 'setStock requires at least 10 minutes; setstockSync allows intervals from 1 minute.',
@@ -297,6 +314,8 @@ export default function AutoTurnOffItemsPage() {
       shopIds: rule.shopIds.join('\n'),
       upcs: rule.upcs.join('\n'),
       stockEndpoint: rule.stockEndpoint,
+      scheduleMode: rule.scheduleMode ?? 'interval',
+      executionTimes: rule.executionTimes?.length ? [...rule.executionTimes] : ['09:00'],
       ...fromMinutes(rule.intervalMinutes),
       startsAt: toLocalDateTimeInput(rule.startsAt),
       endsAt: rule.endsAt ? toLocalDateTimeInput(rule.endsAt) : '',
@@ -327,13 +346,21 @@ export default function AutoTurnOffItemsPage() {
 
   const saveRule = async () => {
     const intervalMinutes = toMinutes(ruleForm.frequency, ruleForm.unit);
+    const executionTimes = [...new Set(ruleForm.executionTimes.map(value => value.trim()).filter(Boolean))].sort();
     const shopIds = parseShopIds(ruleForm.shopIds);
     const upcs = parseUpcs(ruleForm.upcs);
     if (!ruleForm.name.trim() || !ruleForm.brandId || shopIds.length === 0 || upcs.length === 0 || !ruleForm.startsAt) {
       return setError(es ? 'Completa nombre, marca, tiendas y UPCs.' : 'Complete name, brand, stores and UPCs.');
     }
     const minimumMinutes = ruleForm.stockEndpoint === 'setStock' ? 10 : 1;
-    if (!Number.isInteger(intervalMinutes) || intervalMinutes < minimumMinutes) return setError(copy.frequencyHelp);
+    if (ruleForm.scheduleMode === 'interval'
+      && (!Number.isInteger(intervalMinutes) || intervalMinutes < minimumMinutes)) return setError(copy.frequencyHelp);
+    if (ruleForm.scheduleMode === 'daily_times' && executionTimes.length === 0) {
+      return setError(es ? 'Agrega al menos una hora diaria.' : 'Add at least one daily time.');
+    }
+    if (executionTimes.some(value => !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))) {
+      return setError(es ? 'Las horas deben usar el formato HH:mm.' : 'Times must use HH:mm format.');
+    }
     if (ruleForm.stockEndpoint === 'setstockSync' && upcs.length > 2000) return setError(copy.syncLimit);
     if (ruleForm.endsAt && new Date(ruleForm.endsAt) <= new Date(ruleForm.startsAt)) {
       return setError(es ? 'La fecha de término debe ser posterior al inicio.' : 'End date must be later than start date.');
@@ -343,6 +370,8 @@ export default function AutoTurnOffItemsPage() {
       const payload = {
         name: ruleForm.name.trim(), brandId: ruleForm.brandId, shopIds,
         upcs, stockEndpoint: ruleForm.stockEndpoint, intervalMinutes,
+        scheduleMode: ruleForm.scheduleMode,
+        executionTimes: ruleForm.scheduleMode === 'daily_times' ? executionTimes : undefined,
         startsAt: new Date(ruleForm.startsAt).toISOString(),
         endsAt: ruleForm.endsAt ? new Date(ruleForm.endsAt).toISOString() : null,
         active: ruleForm.active,
@@ -447,7 +476,7 @@ export default function AutoTurnOffItemsPage() {
                         <span style={tag}>{rule.shopIds.length} {copy.stores}</span>
                         <span style={tag}>{rule.upcs.length} {copy.items}</span>
                         <span style={tag}>{rule.stockEndpoint}</span>
-                        <span style={{ ...tag, color: 'var(--orange)' }}>{copy.every} {formatFrequency(rule.intervalMinutes, es)}</span>
+                        <span style={{ ...tag, color: 'var(--orange)' }}>{formatRuleSchedule(rule, es)}</span>
                         <span style={{ ...tag, color: !pool.active && !['running', 'pending'].includes(rule.executions?.[0]?.status ?? '') ? '#B54708' : rule.executions?.[0] ? statusColor[rule.executions[0].status] : rule.active ? '#027A48' : '#667085' }}>
                           {copy.status}: {!pool.active && !['running', 'pending'].includes(rule.executions?.[0]?.status ?? '') ? copy.pausedByPool : rule.executions?.[0] ? executionStatusLabel(rule.executions[0].status, es) : rule.active ? copy.scheduledStatus : copy.inactive}
                         </span>
@@ -560,10 +589,39 @@ export default function AutoTurnOffItemsPage() {
             <div className="form-group"><label className="form-label">{copy.startsAt}</label><input className="form-input" type="datetime-local" value={ruleForm.startsAt} onChange={event => setRuleForm({ ...ruleForm, startsAt: event.target.value })} /></div>
             <div className="form-group"><label className="form-label">{copy.endsAt}</label><input className="form-input" type="datetime-local" value={ruleForm.endsAt} onChange={event => setRuleForm({ ...ruleForm, endsAt: event.target.value })} /><small style={{ color: 'var(--text-muted)' }}>{copy.endHelp}</small></div>
             <div className="form-group">
-              <label className="form-label">{copy.frequency}</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>{copy.every}</span><input className="form-input" style={{ width: 110 }} type="number" min="1" value={ruleForm.frequency} onChange={event => setRuleForm({ ...ruleForm, frequency: Number(event.target.value) })} /><select className="form-input" value={ruleForm.unit} onChange={event => setRuleForm({ ...ruleForm, unit: event.target.value as FrequencyUnit })}><option value="minutes">{copy.minutes}</option><option value="hours">{copy.hours}</option><option value="days">{copy.days}</option></select></div>
-              <small style={{ color: 'var(--text-muted)' }}>{copy.frequencyHelp}</small>
+              <label className="form-label">{copy.schedule}</label>
+              <select className="form-input" value={ruleForm.scheduleMode} onChange={event => setRuleForm({ ...ruleForm, scheduleMode: event.target.value as ScheduleMode })}>
+                <option value="interval">{copy.intervalSchedule}</option>
+                <option value="daily_times">{copy.dailySchedule}</option>
+              </select>
             </div>
+            {ruleForm.scheduleMode === 'interval' ? (
+              <div className="form-group">
+                <label className="form-label">{copy.frequency}</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>{copy.every}</span><input className="form-input" style={{ width: 110 }} type="number" min="1" value={ruleForm.frequency} onChange={event => setRuleForm({ ...ruleForm, frequency: Number(event.target.value) })} /><select className="form-input" value={ruleForm.unit} onChange={event => setRuleForm({ ...ruleForm, unit: event.target.value as FrequencyUnit })}><option value="minutes">{copy.minutes}</option><option value="hours">{copy.hours}</option><option value="days">{copy.days}</option></select></div>
+                <small style={{ color: 'var(--text-muted)' }}>{copy.frequencyHelp}</small>
+              </div>
+            ) : (
+              <div className="form-group">
+                <label className="form-label">{copy.dailyTimes}</label>
+                <div style={{ display: 'grid', gap: 7 }}>
+                  {ruleForm.executionTimes.map((time, index) => (
+                    <div key={`${index}-${time}`} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input className="form-input" type="time" value={time} onChange={event => setRuleForm(current => ({
+                        ...current,
+                        executionTimes: current.executionTimes.map((value, itemIndex) => itemIndex === index ? event.target.value : value),
+                      }))} />
+                      <button type="button" className="btn btn-ghost btn-sm" disabled={ruleForm.executionTimes.length === 1} onClick={() => setRuleForm(current => ({
+                        ...current,
+                        executionTimes: current.executionTimes.filter((_, itemIndex) => itemIndex !== index),
+                      }))}>{copy.removeTime}</button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} disabled={ruleForm.executionTimes.length >= 48} onClick={() => setRuleForm(current => ({ ...current, executionTimes: [...current.executionTimes, '12:00'] }))}>+ {copy.addTime}</button>
+                <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: 6 }}>{copy.dailyTimesHelp}</small>
+              </div>
+            )}
             <div className="form-group">
               <label className="form-label">{copy.shops} ({parseShopIds(ruleForm.shopIds).length})</label>
               {!!ruleForm.brandId && (

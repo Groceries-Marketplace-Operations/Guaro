@@ -23,6 +23,96 @@ function fmt(val?: string | null) {
   return val.replace(/_/g, ' ');
 }
 
+function apiErrorMessage(error: unknown, fallback: string) {
+  const response = error as { response?: { data?: { message?: string | string[] } } };
+  const message = response.response?.data?.message;
+  return Array.isArray(message) ? message.join(', ') : message ?? fallback;
+}
+
+interface ShopBatchRow {
+  shopId: string;
+  appShopId: string;
+  city: string;
+  status: string;
+  _err?: string;
+}
+
+const SHOP_IMPORT_STATUSES = new Set(['lead', 'application', 'integrated', 'online']);
+
+function parseCsvTable(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let quoted = false;
+  const source = text.replace(/^\uFEFF/, '');
+  for (let index = 0; index < source.length; index++) {
+    const character = source[index];
+    if (character === '"') {
+      if (quoted && source[index + 1] === '"') {
+        field += '"';
+        index++;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (character === ',' && !quoted) {
+      row.push(field.trim());
+      field = '';
+    } else if ((character === '\n' || character === '\r') && !quoted) {
+      if (character === '\r' && source[index + 1] === '\n') index++;
+      row.push(field.trim());
+      if (row.some(value => value.length > 0)) rows.push(row);
+      row = [];
+      field = '';
+    } else {
+      field += character;
+    }
+  }
+  row.push(field.trim());
+  if (row.some(value => value.length > 0)) rows.push(row);
+  if (quoted) throw new Error('CSV contains an unclosed quoted value');
+  return rows;
+}
+
+function parseShopImportCsv(text: string): ShopBatchRow[] {
+  const table = parseCsvTable(text);
+  if (table.length === 0) throw new Error('CSV is empty');
+  const header = table[0].map(value => value.trim().toLowerCase().replace(/[\s-]+/g, '_'));
+  const column = (...names: string[]) => names.map(name => header.indexOf(name)).find(index => index >= 0) ?? -1;
+  const shopIdIndex = column('shopid', 'shop_id');
+  const appShopIdIndex = column('appshopid', 'app_shop_id');
+  const cityIndex = column('city', 'ciudad');
+  const statusIndex = column('status', 'estado');
+  if (shopIdIndex < 0 || appShopIdIndex < 0) {
+    throw new Error('CSV must include shopId and appShopId columns');
+  }
+
+  const rows = table.slice(1).map(values => {
+    const status = (statusIndex >= 0 ? values[statusIndex] : '').trim().toLowerCase() || 'lead';
+    return {
+      shopId: values[shopIdIndex]?.trim() ?? '',
+      appShopId: values[appShopIdIndex]?.trim() ?? '',
+      city: cityIndex >= 0 ? values[cityIndex]?.trim() ?? '' : '',
+      status,
+    };
+  });
+  const shopIdCounts = new Map<string, number>();
+  const appShopIdCounts = new Map<string, number>();
+  for (const row of rows) {
+    shopIdCounts.set(row.shopId, (shopIdCounts.get(row.shopId) ?? 0) + 1);
+    appShopIdCounts.set(row.appShopId, (appShopIdCounts.get(row.appShopId) ?? 0) + 1);
+  }
+  return rows.map(row => {
+    const errors = [
+      !row.shopId ? 'shopId is required' : '',
+      !row.appShopId ? 'appShopId is required' : '',
+      row.status && !SHOP_IMPORT_STATUSES.has(row.status) ? `invalid status: ${row.status}` : '',
+      row.shopId && (shopIdCounts.get(row.shopId) ?? 0) > 1 ? 'duplicated shopId' : '',
+      row.appShopId && (appShopIdCounts.get(row.appShopId) ?? 0) > 1 ? 'duplicated appShopId' : '',
+    ].filter(Boolean);
+    return { ...row, _err: errors.join('; ') || undefined };
+  });
+}
+
 export default function BrandDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
@@ -60,9 +150,10 @@ export default function BrandDetail() {
   const [shopMode, setShopMode] = useState<'manual' | 'batch'>('manual');
   const [shopForm, setShopForm] = useState({ shopId: '', appShopId: '', city: '', status: 'lead' });
   const [savingShop, setSavingShop] = useState(false);
+  const [downloadingShopTemplate, setDownloadingShopTemplate] = useState(false);
   const [shopErr, setShopErr] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
-  const [batchRows, setBatchRows] = useState<{ shopId: string; appShopId: string; city: string; status: string; _err?: string }[]>([]);
+  const [batchRows, setBatchRows] = useState<ShopBatchRow[]>([]);
   const [batchDone, setBatchDone] = useState(false);
 
   const { data: brand, refetch: refetchBrand } = useQuery<Brand>({
@@ -225,39 +316,58 @@ export default function BrandDetail() {
     } finally { setSavingShop(false); }
   };
 
-  const parseCSV = (text: string) => {
-    const lines = text.trim().split('\n');
-    const header = lines[0].toLowerCase().split(',').map(h => h.trim());
-    const idx = (name: string) => header.indexOf(name);
-    return lines.slice(1).filter(l => l.trim()).map(line => {
-      const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-      return {
-        shopId:    cols[idx('shopid')]    ?? cols[idx('shop_id')]    ?? '',
-        appShopId: cols[idx('appshopid')] ?? cols[idx('app_shop_id')] ?? '',
-        city:      cols[idx('city')]      ?? '',
-        status:    cols[idx('status')]    ?? 'lead',
-      };
-    });
-  };
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
-      const rows = parseCSV(ev.target?.result as string);
-      setBatchRows(rows);
-      setBatchDone(false);
-      setShopErr('');
+      try {
+        const rows = parseShopImportCsv(ev.target?.result as string);
+        setBatchRows(rows);
+        setBatchDone(false);
+        setShopErr(rows.length === 0 ? 'CSV does not contain store rows' : '');
+      } catch (error) {
+        setBatchRows([]);
+        setBatchDone(false);
+        setShopErr((error as Error).message);
+      }
+      if (fileRef.current) fileRef.current.value = '';
     };
     reader.readAsText(file);
+  };
+
+  const handleDownloadShopTemplate = async () => {
+    setDownloadingShopTemplate(true); setShopErr('');
+    try {
+      const response = await shopsApi.downloadImportTemplate();
+      const url = URL.createObjectURL(response.data as Blob);
+      const disposition = String(response.headers['content-disposition'] ?? '');
+      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? 'shop-import-template.csv';
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setShopErr(apiErrorMessage(error, t('pages.brandDetail.errorUploadingShops')));
+    } finally {
+      setDownloadingShopTemplate(false);
+    }
   };
 
   const handleBatchUpload = async () => {
     if (!batchRows.length) return;
     setSavingShop(true); setShopErr('');
     try {
-      await shopsApi.createBatch(batchRows.map(r => ({ ...r, brandId: id })));
+      await shopsApi.createBatch(batchRows.map(row => ({
+        shopId: row.shopId,
+        appShopId: row.appShopId,
+        city: row.city || undefined,
+        status: row.status || 'lead',
+        brandId: id,
+      })));
       qc.invalidateQueries({ queryKey: ['shops', { brandId: id, limit: 10000 }] });
       setBatchDone(true);
     } catch (ex: unknown) {
@@ -547,7 +657,7 @@ export default function BrandDetail() {
             ) : (
               <>
                 <button className="btn btn-ghost" onClick={() => setOpenAddShop(false)}>{t('common.cancel')}</button>
-                <button className="btn btn-primary" onClick={handleBatchUpload} disabled={savingShop || batchRows.length === 0}>
+                <button className="btn btn-primary" onClick={handleBatchUpload} disabled={savingShop || batchRows.length === 0 || batchRows.some(row => !!row._err)}>
                   {savingShop
                     ? t('pages.brandDetail.uploading')
                     : batchRows.length !== 1
@@ -614,9 +724,12 @@ export default function BrandDetail() {
 
           {shopMode === 'batch' && !batchDone && (
             <>
-              <p className="form-hint" style={{ marginBottom: 10 }}>
-                {t('pages.brandDetail.batchHint')}
-              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'space-between', marginBottom: 10 }}>
+                <p className="form-hint" style={{ margin: 0 }}>{t('pages.brandDetail.batchHint')}</p>
+                <button type="button" className="btn btn-ghost btn-sm" disabled={downloadingShopTemplate} onClick={handleDownloadShopTemplate}>
+                  {downloadingShopTemplate ? t('pages.brandDetail.downloadingShopTemplate') : t('pages.brandDetail.downloadShopTemplate')}
+                </button>
+              </div>
               <div
                 style={{
                   border: '2px dashed var(--border)', borderRadius: 8, padding: '24px 16px', textAlign: 'center',
@@ -638,7 +751,7 @@ export default function BrandDetail() {
                   <table style={{ width: '100%', fontSize: '0.78rem', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ background: 'var(--surface-2)' }}>
-                        {['shopId', 'appShopId', 'city', 'status'].map(h => (
+                        {['shopId', 'appShopId', 'city', 'status', 'validation'].map(h => (
                           <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 600, color: 'var(--text-muted)' }}>{h}</th>
                         ))}
                       </tr>
@@ -650,10 +763,16 @@ export default function BrandDetail() {
                           <td style={{ padding: '5px 10px', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>{r.appShopId || <span style={{ color: 'var(--red)' }}>missing</span>}</td>
                           <td style={{ padding: '5px 10px' }}>{r.city || '—'}</td>
                           <td style={{ padding: '5px 10px' }}>{r.status || 'lead'}</td>
+                          <td style={{ padding: '5px 10px', color: r._err ? 'var(--red)' : 'var(--text-muted)' }}>{r._err ?? 'OK'}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+              {batchRows.some(row => !!row._err) && (
+                <div className="error-banner" style={{ marginTop: 10 }}>
+                  {batchRows.filter(row => !!row._err).length} invalid row(s). Correct the CSV before uploading.
                 </div>
               )}
             </>

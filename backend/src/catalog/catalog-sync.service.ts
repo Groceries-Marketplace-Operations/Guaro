@@ -83,12 +83,17 @@ export function normalizeMenuItems(items: Array<Record<string, unknown>>): Catal
   return [...unique.values()];
 }
 
-export function selectMenuSampleShops<T extends { city: string | null; shopId: string }>(shops: T[], perCity = 2): T[] {
+export function selectMenuSampleShops<T extends { city: string | null; shopId: string }>(
+  shops: T[],
+  perCity = 2,
+  withoutCity = 20,
+): T[] {
   const byCity = new Map<string, T[]>();
   for (const shop of shops) {
     const cityKey = shop.city?.trim().toLocaleLowerCase() || '__unknown__';
     const cityShops = byCity.get(cityKey) ?? [];
-    if (cityShops.length < perCity) cityShops.push(shop);
+    const sampleLimit = cityKey === '__unknown__' ? withoutCity : perCity;
+    if (cityShops.length < sampleLimit) cityShops.push(shop);
     byCity.set(cityKey, cityShops);
   }
   return [...byCity.values()].flat();

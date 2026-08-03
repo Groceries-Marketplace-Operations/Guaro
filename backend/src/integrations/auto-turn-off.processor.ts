@@ -7,6 +7,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { decrypt } from '../common/crypto.util';
 import { AutoTurnOffCancelledError } from './auto-turn-off-api.util';
+import { timezoneForCountry } from './auto-fetch-time.util';
+import { nextAutoTurnOffOccurrence } from './auto-turn-off-time.util';
 
 @Injectable()
 export class AutoTurnOffCoordinator {
@@ -56,7 +58,14 @@ export class AutoTurnOffCoordinator {
     }
 
     const nextAfterCooldown = rule.stockEndpoint === 'setStock'
-      ? this.nextOccurrence(rule.startsAt, rule.intervalMinutes, new Date(now.getTime() + 10 * 60_000))
+      ? nextAutoTurnOffOccurrence({
+          startsAt: rule.startsAt,
+          intervalMinutes: rule.intervalMinutes,
+          scheduleMode: rule.scheduleMode,
+          executionTimes: rule.executionTimes,
+          timezone: timezoneForCountry(execution.pool.country),
+          after: new Date(now.getTime() + 10 * 60_000),
+        })
       : rule.nextRunAt;
     await this.prisma.autoTurnOffRule.update({
       where: { id: rule.id },
@@ -265,13 +274,6 @@ export class AutoTurnOffCoordinator {
         },
       });
     });
-  }
-
-  private nextOccurrence(startsAt: Date, intervalMinutes: number, after: Date) {
-    if (startsAt.getTime() >= after.getTime()) return startsAt;
-    const intervalMs = intervalMinutes * 60_000;
-    const elapsed = after.getTime() - startsAt.getTime();
-    return new Date(startsAt.getTime() + Math.ceil(elapsed / intervalMs) * intervalMs);
   }
 
 }
