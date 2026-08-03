@@ -49,7 +49,7 @@ export class AutoFetchService implements OnModuleInit {
       orderBy: { country: 'asc' },
     });
     const brands = await this.prisma.brand.findMany({
-      where: { kaType: 'KA', deletedAt: null },
+      where: { kaType: 'KA', deletedAt: null, applicationId: { not: null } },
       select: {
         id: true, brandId: true, brandName: true, country: true,
         _count: { select: { shops: { where: { deletedAt: null } }, items: true } },

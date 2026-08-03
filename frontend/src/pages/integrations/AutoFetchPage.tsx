@@ -71,7 +71,7 @@ export default function AutoFetchPage({ kind }: { kind: FetchKind }) {
           <div className="page-header-info"><h1>{title}</h1><p>{description}</p></div>
         </div>
         <div className="alert alert-info" style={{ marginBottom: 18 }}>
-          Los pools incluyen automáticamente solo marcas con KA Type = KA. La hora se interpreta en la zona horaria de cada país.
+          Los pools incluyen automáticamente solo marcas KA con una aplicación vinculada. La hora se interpreta en la zona horaria de cada país.
         </div>
         {isLoading && <div className="text-muted">Cargando pools…</div>}
         <div style={{ display: 'grid', gap: 16 }}>
