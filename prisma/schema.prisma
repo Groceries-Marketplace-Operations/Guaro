@@ -747,6 +747,7 @@ model AutoFetchPool {
   active          Boolean       @default(true)
   executionHour   Int           @default(2) @map("execution_hour")
   executionMinute Int           @default(0) @map("execution_minute")
+  executionTimes  String[]      @default([]) @map("execution_times")
   timezone        String
   nextRunAt       DateTime      @map("next_run_at") @db.Timestamptz
   lastRunAt       DateTime?     @map("last_run_at") @db.Timestamptz

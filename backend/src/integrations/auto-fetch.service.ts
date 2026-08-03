@@ -4,7 +4,7 @@ import { AutoFetchKind, Country, KaType } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateAutoFetchPoolDto } from './dto/update-auto-fetch-pool.dto';
-import { nextDailyRun, timezoneForCountry } from './auto-fetch-time.util';
+import { nextDailyRun, nextDailyRunFromTimes, timezoneForCountry } from './auto-fetch-time.util';
 
 @Injectable()
 export class AutoFetchService implements OnModuleInit {
@@ -32,6 +32,7 @@ export class AutoFetchService implements OnModuleInit {
           country: item.country,
           name: item.name,
           executionHour: item.hour,
+          executionTimes: item.kind === AutoFetchKind.menu ? [this.formatTime(item.hour, 0)] : [],
           timezone,
           nextRunAt: nextDailyRun(new Date(), item.hour, 0, timezone),
         },
@@ -99,14 +100,31 @@ export class AutoFetchService implements OnModuleInit {
     const pool = await this.findOne(id);
     const hour = dto.executionHour ?? pool.executionHour;
     const minute = dto.executionMinute ?? pool.executionMinute;
+    if (dto.executionTimes !== undefined && pool.kind !== AutoFetchKind.menu) {
+      throw new BadRequestException('Multiple daily times are only available for Auto Menu Fetch');
+    }
+    const executionTimes = pool.kind === AutoFetchKind.menu
+      ? this.normalizeExecutionTimes(
+        dto.executionTimes
+          ?? (dto.executionHour !== undefined || dto.executionMinute !== undefined
+            ? [this.formatTime(hour, minute)]
+            : pool.executionTimes),
+      )
+      : [];
+    const scheduleChanged = dto.executionTimes !== undefined
+      || dto.executionHour !== undefined
+      || dto.executionMinute !== undefined;
     return this.prisma.autoFetchPool.update({
       where: { id },
       data: {
         active: dto.active,
         executionHour: dto.executionHour,
         executionMinute: dto.executionMinute,
-        nextRunAt: dto.executionHour !== undefined || dto.executionMinute !== undefined
-          ? nextDailyRun(new Date(), hour, minute, pool.timezone)
+        executionTimes,
+        nextRunAt: scheduleChanged
+          ? (pool.kind === AutoFetchKind.menu
+            ? nextDailyRunFromTimes(new Date(), executionTimes, pool.timezone)
+            : nextDailyRun(new Date(), hour, minute, pool.timezone))
           : undefined,
       },
     });
@@ -319,5 +337,19 @@ export class AutoFetchService implements OnModuleInit {
       );
       this.logger.warn(`Reconciled orphaned auto fetch execution ${execution.id}`);
     }
+  }
+
+  private normalizeExecutionTimes(values: string[]) {
+    const normalized = [...new Set(values.map(value => value.trim()))].sort();
+    if (normalized.length === 0) throw new BadRequestException('At least one daily execution time is required');
+    if (normalized.length > 24) throw new BadRequestException('A maximum of 24 daily execution times is allowed');
+    if (normalized.some(value => !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))) {
+      throw new BadRequestException('Execution times must use HH:mm format');
+    }
+    return normalized;
+  }
+
+  private formatTime(hour: number, minute: number) {
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
   }
 }

@@ -43,3 +43,13 @@ export function nextDailyRun(after: Date, hour: number, minute: number, timezone
   }
   return candidate;
 }
+
+export function nextDailyRunFromTimes(after: Date, executionTimes: string[], timezone: string) {
+  if (executionTimes.length === 0) throw new Error('At least one daily execution time is required');
+  return executionTimes
+    .map(value => {
+      const [hour, minute] = value.split(':').map(Number);
+      return nextDailyRun(after, hour, minute, timezone);
+    })
+    .sort((left, right) => left.getTime() - right.getTime())[0];
+}

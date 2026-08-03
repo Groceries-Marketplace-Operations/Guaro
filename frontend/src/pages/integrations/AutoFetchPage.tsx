@@ -41,6 +41,7 @@ interface FetchPool {
   active: boolean;
   executionHour: number;
   executionMinute: number;
+  executionTimes: string[];
   timezone: string;
   nextRunAt: string;
   lastRunAt?: string;
@@ -52,6 +53,14 @@ interface FetchPool {
 }
 
 const COUNTRY: Record<string, string> = { MX: 'México', CO: 'Colombia', CR: 'Costa Rica' };
+
+function nextAvailableTime(times: string[]) {
+  for (let hour = 0; hour < 24; hour++) {
+    const candidate = `${String(hour).padStart(2, '0')}:00`;
+    if (!times.includes(candidate)) return candidate;
+  }
+  return null;
+}
 
 function apiError(error: unknown) {
   const response = error as { response?: { data?: { message?: string | string[] } } };
@@ -67,7 +76,7 @@ export default function AutoFetchPage({ kind }: { kind: FetchKind }) {
   const title = kind === 'stores' ? 'Auto Stores Fetch' : 'Auto Menu Fetch';
   const description = kind === 'stores'
     ? 'Descarga diariamente las tiendas y enriquece cada una con nombre, ciudad, dirección y coordenadas.'
-    : 'Toma hasta 2 tiendas por ciudad y construye un catálogo global de nombre, UPC y appItemId para cada marca.';
+    : 'Puede ejecutarse varias veces al día. Toma hasta 2 tiendas por ciudad y construye un catálogo global de nombre, UPC y appItemId para cada marca.';
 
   const { data: pools = [], isLoading } = useQuery<FetchPool[]>({
     queryKey: ['auto-fetch', kind],
@@ -133,6 +142,7 @@ export default function AutoFetchPage({ kind }: { kind: FetchKind }) {
             const latest = pool.executions[0];
             const running = !!latest && ['pending', 'running'].includes(latest.status);
             const time = `${String(pool.executionHour).padStart(2, '0')}:${String(pool.executionMinute).padStart(2, '0')}`;
+            const executionTimes = pool.executionTimes?.length ? pool.executionTimes : [time];
             return (
               <section className="card" key={pool.id} style={{ padding: 18 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -144,14 +154,37 @@ export default function AutoFetchPage({ kind }: { kind: FetchKind }) {
                     </div>
                     <div className="text-muted text-sm" style={{ marginTop: 7 }}>
                       Próxima ejecución: {new Date(pool.nextRunAt).toLocaleString(undefined, { timeZone: pool.timezone })} · Zona: {pool.timezone}
+                      {kind === 'menu' && <> · Horarios: {executionTimes.join(', ')}</>}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input className="form-input" type="time" value={time} style={{ width: 115, margin: 0 }}
+                    {kind === 'menu' ? <>
+                      {executionTimes.map((executionTime, index) => (
+                        <span key={index} style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                          <input className="form-input" type="time" value={executionTime} style={{ width: 115, margin: 0 }}
+                            aria-label={`Horario ${index + 1}`}
+                            onChange={event => {
+                              if (!event.target.value) return;
+                              const next = executionTimes.map((value, current) => current === index ? event.target.value : value);
+                              action.mutate(() => autoFetchApi.updatePool(pool.id, { executionTimes: next }));
+                            }} />
+                          <button className="btn btn-ghost btn-sm" aria-label={`Quitar horario ${executionTime}`}
+                            disabled={executionTimes.length === 1 || action.isPending}
+                            onClick={() => action.mutate(() => autoFetchApi.updatePool(pool.id, {
+                              executionTimes: executionTimes.filter((_, current) => current !== index),
+                            }))}>×</button>
+                        </span>
+                      ))}
+                      <button className="btn btn-ghost btn-sm" disabled={executionTimes.length >= 24 || action.isPending}
+                        onClick={() => {
+                          const additional = nextAvailableTime(executionTimes);
+                          if (additional) action.mutate(() => autoFetchApi.updatePool(pool.id, { executionTimes: [...executionTimes, additional] }));
+                        }}>+ Horario</button>
+                    </> : <input className="form-input" type="time" value={time} style={{ width: 115, margin: 0 }}
                       onChange={event => {
                         const [executionHour, executionMinute] = event.target.value.split(':').map(Number);
                         action.mutate(() => autoFetchApi.updatePool(pool.id, { executionHour, executionMinute }));
-                      }} />
+                      }} />}
                     <button className="btn btn-ghost btn-sm" onClick={() => action.mutate(() => autoFetchApi.updatePool(pool.id, { active: !pool.active }))}>
                       {pool.active ? 'Pausar país' : 'Reanudar país'}
                     </button>

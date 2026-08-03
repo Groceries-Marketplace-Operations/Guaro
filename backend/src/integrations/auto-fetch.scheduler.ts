@@ -3,7 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
-import { nextDailyRun } from './auto-fetch-time.util';
+import { nextDailyRun, nextDailyRunFromTimes } from './auto-fetch-time.util';
 
 @Injectable()
 export class AutoFetchScheduler {
@@ -22,7 +22,9 @@ export class AutoFetchScheduler {
       orderBy: { nextRunAt: 'asc' },
     });
     for (const pool of pools) {
-      const nextRunAt = nextDailyRun(now, pool.executionHour, pool.executionMinute, pool.timezone);
+      const nextRunAt = pool.kind === 'menu' && pool.executionTimes.length > 0
+        ? nextDailyRunFromTimes(now, pool.executionTimes, pool.timezone)
+        : nextDailyRun(now, pool.executionHour, pool.executionMinute, pool.timezone);
       const claimed = await this.prisma.autoFetchPool.updateMany({
         where: { id: pool.id, active: true, nextRunAt: { lte: now } },
         data: { nextRunAt, lastRunAt: now },
