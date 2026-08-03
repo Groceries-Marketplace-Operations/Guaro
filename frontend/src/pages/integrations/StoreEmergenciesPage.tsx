@@ -60,6 +60,15 @@ export default function StoreEmergenciesPage() {
       setError(Array.isArray(message) ? message.join(', ') : message ?? 'No se pudo iniciar la emergencia');
     },
   });
+  const restore = useMutation({
+    mutationFn: (id: string) => storeEmergenciesApi.restoreNow(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['store-emergencies'] }),
+    onError: (err: unknown) => {
+      const response = err as { response?: { data?: { message?: string | string[] } } };
+      const message = response.response?.data?.message;
+      setError(Array.isArray(message) ? message.join(', ') : message ?? 'No se pudo encender las tiendas');
+    },
+  });
 
   if (!isAdmin) return <Navigate to="/" replace />;
   const brands = (brandsResult?.data ?? []).filter(brand => !!brand.applicationId);
@@ -89,6 +98,7 @@ export default function StoreEmergenciesPage() {
       <div className="alert" style={{ marginBottom: 18, borderColor: '#ffc7b2', background: '#fff4ee', color: '#8b2d00' }}>
         Esta acción cambia tiendas reales a Offline usando únicamente las tiendas almacenadas localmente. Al vencer el periodo, el sistema intentará reabrir solo las tiendas que logró apagar.
       </div>
+      {error && !open && <div className="error-banner" style={{ marginBottom: 14 }}>{error}</div>}
       <div className="table-wrap">
         <table>
           <thead><tr><th>Marca</th><th>Alcance</th><th>Tiendas</th><th>Estado</th><th>Reapertura</th><th>Creada por</th><th></th></tr></thead>
@@ -105,7 +115,16 @@ export default function StoreEmergenciesPage() {
                 <td><StatusBadge status={item.status} />{item.errorMessage && <div style={{ color: 'var(--red)', fontSize: '.68rem', marginTop: 4 }}>{item.errorMessage}</div>}</td>
                 <td>{new Date(item.endsAt).toLocaleString()}</td>
                 <td>{item.createdBy.name}</td>
-                <td><button className="btn btn-ghost btn-sm" onClick={() => setDetail(item)}>Ver tiendas</button></td>
+                <td><div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  {['offline', 'partial_success'].includes(item.status) && <button
+                    className="btn btn-primary btn-sm"
+                    disabled={restore.isPending}
+                    onClick={() => {
+                      if (window.confirm(`¿Encender ahora las tiendas apagadas de ${item.brand.brandName}?`)) restore.mutate(item.id);
+                    }}
+                  >Encender ahora</button>}
+                  <button className="btn btn-ghost btn-sm" onClick={() => setDetail(item)}>Ver tiendas</button>
+                </div></td>
               </tr>;
             })}
           </tbody>

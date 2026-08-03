@@ -114,6 +114,37 @@ export class StoreEmergencyService {
     return emergency;
   }
 
+  async restoreNow(id: string) {
+    const emergency = await this.prisma.storeEmergency.findUnique({
+      where: { id },
+      select: { id: true, status: true },
+    });
+    if (!emergency) throw new NotFoundException('Store emergency not found');
+    if (!['offline', 'partial_success'].includes(emergency.status)) {
+      throw new BadRequestException('Only an active offline emergency can be restored immediately');
+    }
+    const claimed = await this.prisma.storeEmergency.updateMany({
+      where: { id, status: { in: ['offline', 'partial_success'] } },
+      data: { status: 'restoring', endsAt: new Date(), errorMessage: null },
+    });
+    if (claimed.count === 0) throw new BadRequestException('Emergency is already changing status');
+    try {
+      await this.queue.add('set-store-emergency-status', { emergencyId: id, action: 'restore' }, {
+        jobId: `${id}-restore`,
+        attempts: 1,
+        removeOnComplete: 500,
+        removeOnFail: 500,
+      });
+    } catch (error) {
+      await this.prisma.storeEmergency.update({
+        where: { id },
+        data: { status: emergency.status, errorMessage: `Could not enqueue immediate restore: ${(error as Error).message}` },
+      });
+      throw error;
+    }
+    return this.findOne(id);
+  }
+
   private include() {
     return {
       brand: { select: { id: true, brandId: true, brandName: true, country: true } },

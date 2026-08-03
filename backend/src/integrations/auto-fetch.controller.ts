@@ -1,10 +1,12 @@
-import { BadRequestException, Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AccountRole, AutoFetchKind } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { AutoFetchService } from './auto-fetch.service';
 import { UpdateAutoFetchPoolDto } from './dto/update-auto-fetch-pool.dto';
+import { AddAutoFetchBrandDto } from './dto/add-auto-fetch-brand.dto';
+import { UpdateAutoFetchBrandDto } from './dto/update-auto-fetch-brand.dto';
 
 @Controller('integrations/auto-fetch')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -26,6 +28,40 @@ export class AutoFetchController {
   @Post('pools/:id/run')
   run(@Param('id') id: string) {
     return this.service.runNow(id);
+  }
+
+  @Post('pools/:id/stop')
+  stop(@Param('id') id: string) {
+    return this.service.stopPool(id);
+  }
+
+  @Post('pools/:id/brands')
+  addCkaBrand(@Param('id') id: string, @Body() dto: AddAutoFetchBrandDto) {
+    return this.service.addCkaBrand(id, dto.brandId);
+  }
+
+  @Delete('pools/:id/brands/:brandId')
+  removeCkaBrand(@Param('id') id: string, @Param('brandId') brandId: string) {
+    return this.service.removeCkaBrand(id, brandId);
+  }
+
+  @Patch('pools/:id/brands/:brandId')
+  updateBrand(
+    @Param('id') id: string,
+    @Param('brandId') brandId: string,
+    @Body() dto: UpdateAutoFetchBrandDto,
+  ) {
+    return this.service.updateBrand(id, brandId, dto.active);
+  }
+
+  @Post('pools/:id/brands/:brandId/run')
+  runBrand(@Param('id') id: string, @Param('brandId') brandId: string) {
+    return this.service.runBrand(id, brandId);
+  }
+
+  @Post('pools/:id/brands/:brandId/stop')
+  stopBrand(@Param('id') id: string, @Param('brandId') brandId: string) {
+    return this.service.stopBrand(id, brandId);
   }
 
   @Get('pools/:id/executions')

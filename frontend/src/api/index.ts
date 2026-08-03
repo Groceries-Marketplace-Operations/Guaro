@@ -219,6 +219,12 @@ export const autoFetchApi = {
   listPools: (kind: 'stores' | 'menu') => client.get(`/integrations/auto-fetch/${kind}/pools`),
   updatePool: (id: string, data: object) => client.patch(`/integrations/auto-fetch/pools/${id}`, data),
   runPool: (id: string) => client.post(`/integrations/auto-fetch/pools/${id}/run`),
+  stopPool: (id: string) => client.post(`/integrations/auto-fetch/pools/${id}/stop`),
+  addCkaBrand: (id: string, brandId: string) => client.post(`/integrations/auto-fetch/pools/${id}/brands`, { brandId }),
+  removeCkaBrand: (id: string, brandId: string) => client.delete(`/integrations/auto-fetch/pools/${id}/brands/${brandId}`),
+  updateBrand: (id: string, brandId: string, active: boolean) => client.patch(`/integrations/auto-fetch/pools/${id}/brands/${brandId}`, { active }),
+  runBrand: (id: string, brandId: string) => client.post(`/integrations/auto-fetch/pools/${id}/brands/${brandId}/run`),
+  stopBrand: (id: string, brandId: string) => client.post(`/integrations/auto-fetch/pools/${id}/brands/${brandId}/stop`),
   listExecutions: (id: string, page = 1) => client.get(`/integrations/auto-fetch/pools/${id}/executions`, { params: { page } }),
 };
 
@@ -226,6 +232,7 @@ export const storeEmergenciesApi = {
   list: (page = 1, limit = 20) => client.get('/integrations/store-emergencies', { params: { page, limit } }),
   get: (id: string) => client.get(`/integrations/store-emergencies/${id}`),
   create: (data: object) => client.post('/integrations/store-emergencies', data),
+  restoreNow: (id: string) => client.post(`/integrations/store-emergencies/${id}/restore`),
 };
 
 /* ── Admin (super_admin only) ────────────────────────────────── */

@@ -7,27 +7,18 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { decrypt } from '../common/crypto.util';
 import { fetchShopIdMap, getAuthToken } from '../queue/handlers/didi-food.util';
-import { CatalogSyncService } from '../catalog/catalog-sync.service';
 import {
   AutoTurnOffCancelledError,
   callStockApi,
-  downloadMenu,
-  FailedItem,
   resolveAppItemIds,
   ShopResult,
   StockEndpoint,
 } from './auto-turn-off-api.util';
 
-type ShopPhase = 'local' | 'menu';
+type ShopPhase = 'local';
 type WorkerJobData =
   | { shopExecutionId: string; phase: ShopPhase }
   | { executionId: string; phase: 'advance' };
-
-interface DeferredShopResult extends ShopResult {
-  phase?: 'waiting_menu';
-  pendingUpcs?: string[];
-  taskIds?: string[];
-}
 
 type ShopTarget = Prisma.AutoTurnOffShopExecutionGetPayload<{
   include: {
@@ -60,7 +51,6 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly webhooks: WebhookSenderService,
-    private readonly catalog: CatalogSyncService,
     @InjectQueue('auto-turn-off-shop') private readonly shopQueue: Queue,
   ) {
     super();
@@ -72,15 +62,12 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
       return;
     }
 
-    const { shopExecutionId, phase } = job.data;
-    const expectedSteps = phase === 'local'
-      ? ['queued_local', 'queued_resolved']
-      : ['waiting_menu_download'];
+    const { shopExecutionId } = job.data;
     const claimed = await this.prisma.autoTurnOffShopExecution.updateMany({
-      where: { id: shopExecutionId, status: 'pending', currentStep: { in: expectedSteps } },
+      where: { id: shopExecutionId, status: 'pending', currentStep: { in: ['queued_local', 'queued_resolved'] } },
       data: {
         status: 'running',
-        currentStep: phase === 'local' ? 'authenticating_local' : 'authenticating_menu_retry',
+        currentStep: 'authenticating_local',
         startedAt: new Date(),
         finishedAt: null,
       },
@@ -116,7 +103,7 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
         itemsSucceeded: 0,
         itemsFailed: rule.upcs.length,
         error: !application ? 'Brand has no application linked' : 'Missing app_shop_id',
-      }, phase === 'local' ? 3 : 1);
+      }, 3);
       await this.continuePipeline(execution.id);
       return;
     }
@@ -127,8 +114,7 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
         const encryptionKey = this.config.get<string>('APP_SECRET_ENCRYPTION_KEY') ?? '';
         const appSecret = encryptionKey ? decrypt(application.appSecret, encryptionKey) : application.appSecret;
         const authToken = await getAuthToken(application.appId, appSecret, target.appShopId!);
-        if (phase === 'local') await this.processLocalPhase(target, authToken);
-        else await this.processMenuPhase(target, authToken);
+        await this.processLocalPhase(target, authToken);
       } catch (error) {
         if (error instanceof AutoTurnOffCancelledError) {
           await this.prisma.autoTurnOffShopExecution.updateMany({
@@ -137,21 +123,17 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
           });
           return;
         }
-        this.logger.error(`${phase} phase failed for shop ${target.shopId}: ${(error as Error).message}`);
-        if (phase === 'menu') {
-          await this.finishMenuFailure(target, (error as Error).message);
-        } else {
-          await this.finishShop(target.id, {
-            shopId: target.shopId,
-            appShopId: target.appShopId!,
-            endpoint: rule.stockEndpoint as StockEndpoint,
-            success: false,
-            itemsSucceeded: 0,
-            itemsFailed: rule.upcs.length,
-            failedItems: rule.upcs.map(upc => ({ upc, reason: (error as Error).message })),
-            error: (error as Error).message,
-          }, 3);
-        }
+        this.logger.error(`local catalog phase failed for shop ${target.shopId}: ${(error as Error).message}`);
+        await this.finishShop(target.id, {
+          shopId: target.shopId,
+          appShopId: target.appShopId!,
+          endpoint: rule.stockEndpoint as StockEndpoint,
+          success: false,
+          itemsSucceeded: 0,
+          itemsFailed: rule.upcs.length,
+          failedItems: rule.upcs.map(upc => ({ upc, reason: (error as Error).message })),
+          error: (error as Error).message,
+        }, 3);
       }
     });
     await this.continuePipeline(execution.id);
@@ -204,169 +186,27 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
       }
     }
 
-    if (cached.missingUpcs.length === 0) {
-      await this.finishShop(target.id, {
-        shopId: target.shopId,
-        appShopId: target.appShopId!,
-        endpoint,
-        ...localResult,
-        requestedUpcs: rule.upcs.length,
-        matchedUpcs: cached.matchedUpcs,
-        menuSource: 'catalog',
-      }, 1);
-      return;
-    }
-
-    const deferred: DeferredShopResult = {
+    const missingFailures = cached.missingUpcs.map(upc => ({
+      upc,
+      reason: 'UPC is not available in the local brand catalog; Auto Turn Off does not download menus',
+    }));
+    const failedItems = [...(localResult.failedItems ?? []), ...missingFailures];
+    const itemsFailed = localResult.itemsFailed + cached.missingUpcs.length;
+    await this.finishShop(target.id, {
       shopId: target.shopId,
       appShopId: target.appShopId!,
       endpoint,
       ...localResult,
-      success: false,
+      success: itemsFailed === 0,
+      itemsFailed,
       requestedUpcs: rule.upcs.length,
       matchedUpcs: cached.matchedUpcs,
-      missingUpcs: cached.missingUpcs,
-      pendingUpcs: cached.missingUpcs,
-      menuSource: 'catalog',
-      phase: 'waiting_menu',
-      taskIds: localResult.taskId ? [localResult.taskId] : undefined,
-    };
-    const deferredUpdate = await this.prisma.autoTurnOffShopExecution.updateMany({
-      where: { id: target.id, status: 'running' },
-      data: {
-        status: 'pending',
-        currentStep: 'waiting_menu_download',
-        itemsSucceeded: localResult.itemsSucceeded,
-        itemsFailed: localResult.itemsFailed,
-        result: deferred as unknown as Prisma.InputJsonValue,
-        finishedAt: null,
-      },
-    });
-    if (deferredUpdate.count === 0) throw new AutoTurnOffCancelledError();
-  }
-
-  private async processMenuPhase(
-    target: ShopTarget,
-    authToken: string,
-  ) {
-    const { execution } = target;
-    const { rule } = execution;
-    const endpoint = rule.stockEndpoint as StockEndpoint;
-    const previous = (target.result ?? {}) as unknown as DeferredShopResult;
-    const pendingUpcs = previous.pendingUpcs ?? previous.missingUpcs ?? rule.upcs;
-
-    const refreshedItems = await this.prisma.brandItem.findMany({
-      where: { brandId: rule.brandId, upc: { in: pendingUpcs } },
-      select: { upc: true, appItemId: true },
-    });
-    const refreshed = resolveAppItemIds(
-      refreshedItems.map(item => ({ upc: item.upc, app_item_id: item.appItemId })),
-      pendingUpcs,
-    );
-    let resolved = refreshed;
-    let menuTaskId: string | undefined;
-    let menuSource: 'catalog' | 'download' = 'catalog';
-    if (refreshed.missingUpcs.length > 0) {
-      menuSource = 'download';
-      await this.setCurrentStep(target.id, execution.id, `downloading_deferred_menu:${target.shopId}`);
-      const menu = await downloadMenu(authToken, () => this.ensureActive(target.id, execution.id));
-      menuTaskId = menu.taskId;
-      const localShop = await this.prisma.shop.findFirst({
-        where: { brandId: rule.brandId, shopId: target.shopId, deletedAt: null },
-        select: { id: true },
-      });
-      if (localShop) await this.catalog.replaceShopMenu(localShop.id, menu.items);
-      const downloaded = resolveAppItemIds(menu.items, refreshed.missingUpcs);
-      resolved = {
-        appItemIds: [...new Set([...refreshed.appItemIds, ...downloaded.appItemIds])],
-        matchedUpcs: refreshed.matchedUpcs + downloaded.matchedUpcs,
-        missingUpcs: downloaded.missingUpcs,
-      };
-    }
-    await this.setCurrentStep(target.id, execution.id, `updating_deferred_stock:${target.shopId}`);
-    let retryResult: Omit<ShopResult, 'shopId' | 'appShopId' | 'endpoint'> = {
-      success: resolved.appItemIds.length === 0,
-      itemsSucceeded: 0,
-      itemsFailed: 0,
-    };
-    if (resolved.appItemIds.length > 0) {
-      await this.ensureActive(target.id, execution.id);
-      try {
-        retryResult = await callStockApi(
-          endpoint,
-          authToken,
-          resolved.appItemIds.map(appItemId => ({ app_item_id: appItemId, stock: 0 })),
-        );
-      } catch (error) {
-        const reason = (error as Error).message;
-        retryResult = {
-          success: false,
-          itemsSucceeded: 0,
-          itemsFailed: resolved.appItemIds.length,
-          failedItems: resolved.appItemIds.map(appItemId => ({ appItemId, reason })),
-          error: reason,
-        };
-      }
-    }
-
-    const missingFailures: FailedItem[] = resolved.missingUpcs.map(upc => ({
-      upc,
-      reason: 'UPC was not found after the deferred store menu download',
-    }));
-    const failedItems = [
-      ...(previous.failedItems ?? []),
-      ...(retryResult.failedItems ?? []),
-      ...missingFailures,
-    ];
-    const itemsSucceeded = previous.itemsSucceeded + retryResult.itemsSucceeded;
-    const itemsFailed = previous.itemsFailed + retryResult.itemsFailed + resolved.missingUpcs.length;
-    const errors = [
-      previous.error,
-      retryResult.error,
-      resolved.missingUpcs.length > 0
-        ? `${resolved.missingUpcs.length} UPC(s) were not found after the deferred menu download`
-        : undefined,
-    ].filter(Boolean);
-
-    await this.finishShop(target.id, {
-      shopId: target.shopId,
-      appShopId: target.appShopId!,
-      endpoint,
-      success: itemsFailed === 0,
-      itemsSucceeded,
-      itemsFailed,
-      taskId: retryResult.taskId ?? previous.taskId,
-      menuTaskId,
-      menuSource,
-      requestedUpcs: rule.upcs.length,
-      matchedUpcs: (previous.matchedUpcs ?? 0) + resolved.matchedUpcs,
-      missingUpcs: resolved.missingUpcs.length > 0 ? resolved.missingUpcs : undefined,
+      missingUpcs: cached.missingUpcs.length > 0 ? cached.missingUpcs : undefined,
       failedItems: failedItems.length > 0 ? failedItems : undefined,
-      error: errors.join('; ') || undefined,
-    }, 1);
-  }
-
-  private async finishMenuFailure(
-    target: ShopTarget,
-    message: string,
-  ) {
-    const previous = (target.result ?? {}) as unknown as DeferredShopResult;
-    const pendingUpcs = previous.pendingUpcs ?? previous.missingUpcs ?? target.execution.rule.upcs;
-    await this.finishShop(target.id, {
-      shopId: target.shopId,
-      appShopId: target.appShopId ?? '-',
-      endpoint: target.execution.rule.stockEndpoint as StockEndpoint,
-      success: false,
-      itemsSucceeded: previous.itemsSucceeded ?? 0,
-      itemsFailed: (previous.itemsFailed ?? 0) + pendingUpcs.length,
-      requestedUpcs: target.execution.rule.upcs.length,
-      matchedUpcs: previous.matchedUpcs ?? 0,
-      missingUpcs: pendingUpcs,
-      failedItems: [
-        ...(previous.failedItems ?? []),
-        ...pendingUpcs.map(upc => ({ upc, reason: message })),
-      ],
-      error: [previous.error, message].filter(Boolean).join('; '),
+      error: cached.missingUpcs.length > 0
+        ? `${cached.missingUpcs.length} UPC(s) are missing from the local brand catalog`
+        : localResult.error,
+      menuSource: 'catalog',
     }, 1);
   }
 
@@ -390,7 +230,7 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
       itemsSucceeded: shop.itemsSucceeded,
       itemsFailed: Math.max(shop.itemsFailed, shop.execution.rule.upcs.length - shop.itemsSucceeded),
       error: error.message,
-    }, job.data.phase === 'local' ? 3 : 1);
+    }, 3);
     await this.continuePipeline(shop.executionId);
   }
 
@@ -400,20 +240,6 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
       this.prisma.autoTurnOffExecution.findUnique({ where: { id: executionId }, select: { status: true } }),
     ]);
     if (shop?.status !== 'running' || execution?.status !== 'running') throw new AutoTurnOffCancelledError();
-  }
-
-  private async setCurrentStep(shopExecutionId: string, executionId: string, currentStep: string) {
-    const [shop] = await this.prisma.$transaction([
-      this.prisma.autoTurnOffShopExecution.updateMany({
-        where: { id: shopExecutionId, status: 'running' },
-        data: { currentStep },
-      }),
-      this.prisma.autoTurnOffExecution.updateMany({
-        where: { id: executionId, status: 'running' },
-        data: { currentStep },
-      }),
-    ]);
-    if (shop.count === 0) throw new AutoTurnOffCancelledError();
   }
 
   private async advanceStep(shopExecutionId: string, executionId: string, currentStep: string) {
@@ -496,13 +322,32 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
       return;
     }
 
-    const nextMenu = await this.prisma.autoTurnOffShopExecution.findFirst({
+    const legacyMenuStep = await this.prisma.autoTurnOffShopExecution.findFirst({
       where: { executionId, status: 'pending', currentStep: 'waiting_menu_download' },
       orderBy: { createdAt: 'asc' },
-      select: { id: true },
+      include: { execution: { include: { rule: true } } },
     });
-    if (nextMenu) {
-      await this.enqueueShop(nextMenu.id, 'menu');
+    if (legacyMenuStep) {
+      const previous = (legacyMenuStep.result ?? {}) as unknown as ShopResult;
+      const missingUpcs = previous.missingUpcs ?? legacyMenuStep.execution.rule.upcs;
+      const message = `${missingUpcs.length} UPC(s) are missing from the local brand catalog; menu download was removed`;
+      await this.finishShop(legacyMenuStep.id, {
+        ...previous,
+        shopId: legacyMenuStep.shopId,
+        appShopId: legacyMenuStep.appShopId ?? '-',
+        endpoint: legacyMenuStep.execution.rule.stockEndpoint as StockEndpoint,
+        success: false,
+        itemsSucceeded: previous.itemsSucceeded ?? legacyMenuStep.itemsSucceeded,
+        itemsFailed: (previous.itemsFailed ?? legacyMenuStep.itemsFailed) + missingUpcs.length,
+        missingUpcs,
+        failedItems: [
+          ...(previous.failedItems ?? []),
+          ...missingUpcs.map(upc => ({ upc, reason: message })),
+        ],
+        error: message,
+        menuSource: 'catalog',
+      }, 1);
+      await this.continuePipeline(executionId);
       return;
     }
     await this.finalizeIfComplete(executionId);

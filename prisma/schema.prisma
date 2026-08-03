@@ -427,17 +427,18 @@ model Brand {
   updatedAt       DateTime         @updatedAt @map("updated_at")
   deletedAt       DateTime?        @map("deleted_at")
 
-  owner              Account?            @relation("BrandResponsable", fields: [ownerId], references: [id])
-  createdBy          Account?            @relation("BrandCreador", fields: [createdById], references: [id])
-  application        Application?        @relation(fields: [applicationId], references: [id])
-  webhooks           BrandWebhook[]
-  shops              Shop[]
-  tasks              Task[]
-  formValues         FormValue[]
-  autoOpenPoolBrands AutoOpenPoolBrand[]
-  autoTurnOffRules   AutoTurnOffRule[]
-  storeEmergencies   StoreEmergency[]
-  items              BrandItem[]
+  owner               Account?             @relation("BrandResponsable", fields: [ownerId], references: [id])
+  createdBy           Account?             @relation("BrandCreador", fields: [createdById], references: [id])
+  application         Application?         @relation(fields: [applicationId], references: [id])
+  webhooks            BrandWebhook[]
+  shops               Shop[]
+  tasks               Task[]
+  formValues          FormValue[]
+  autoOpenPoolBrands  AutoOpenPoolBrand[]
+  autoFetchPoolBrands AutoFetchPoolBrand[]
+  autoTurnOffRules    AutoTurnOffRule[]
+  storeEmergencies    StoreEmergency[]
+  items               BrandItem[]
 
   @@index([ownerId])
   @@index([applicationId])
@@ -752,7 +753,8 @@ model AutoFetchPool {
   createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz
 
-  executions AutoFetchExecution[]
+  executions    AutoFetchExecution[]
+  brandSettings AutoFetchPoolBrand[]
 
   @@unique([kind, country])
   @@index([active, nextRunAt])
@@ -760,27 +762,48 @@ model AutoFetchPool {
 }
 
 model AutoFetchExecution {
-  id              String         @id @default(uuid()) @db.Uuid
-  poolId          String         @map("pool_id") @db.Uuid
-  status          AutoOpenStatus @default(pending)
-  trigger         String         @default("scheduled")
-  startedAt       DateTime?      @map("started_at") @db.Timestamptz
-  finishedAt      DateTime?      @map("finished_at") @db.Timestamptz
-  totalBrands     Int            @default(0) @map("total_brands")
-  brandsSucceeded Int            @default(0) @map("brands_succeeded")
-  totalShops      Int            @default(0) @map("total_shops")
-  totalItems      Int            @default(0) @map("total_items")
-  progressPercent Int            @default(0) @map("progress_percent")
-  currentBrand    String?        @map("current_brand")
-  errorMessage    String?        @map("error_message") @db.Text
-  logs            Json?
-  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  id                String         @id @default(uuid()) @db.Uuid
+  poolId            String         @map("pool_id") @db.Uuid
+  status            AutoOpenStatus @default(pending)
+  trigger           String         @default("scheduled")
+  startedAt         DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt        DateTime?      @map("finished_at") @db.Timestamptz
+  totalBrands       Int            @default(0) @map("total_brands")
+  brandsSucceeded   Int            @default(0) @map("brands_succeeded")
+  totalShops        Int            @default(0) @map("total_shops")
+  totalItems        Int            @default(0) @map("total_items")
+  progressPercent   Int            @default(0) @map("progress_percent")
+  currentBrand      String?        @map("current_brand")
+  errorMessage      String?        @map("error_message") @db.Text
+  requestedBrandIds String[]       @default([]) @map("requested_brand_ids")
+  cancelledBrandIds String[]       @default([]) @map("cancelled_brand_ids")
+  cancelRequested   Boolean        @default(false) @map("cancel_requested")
+  logs              Json?
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
   pool AutoFetchPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
 
   @@index([poolId, createdAt])
   @@index([status])
   @@map("auto_fetch_execution")
+}
+
+model AutoFetchPoolBrand {
+  id               String   @id @default(uuid()) @db.Uuid
+  poolId           String   @map("pool_id") @db.Uuid
+  brandId          String   @map("brand_id") @db.Uuid
+  active           Boolean  @default(true)
+  manuallyIncluded Boolean  @default(false) @map("manually_included")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  pool  AutoFetchPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  brand Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([poolId, brandId])
+  @@index([poolId, active])
+  @@index([brandId])
+  @@map("auto_fetch_pool_brand")
 }
 
 model AutoTurnOffRule {

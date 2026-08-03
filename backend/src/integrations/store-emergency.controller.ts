@@ -31,4 +31,9 @@ export class StoreEmergencyController {
   create(@Body() dto: CreateStoreEmergencyDto, @CurrentUser() user: JwtUser) {
     return this.service.create(dto, user.id);
   }
+
+  @Post(':id/restore')
+  restoreNow(@Param('id') id: string) {
+    return this.service.restoreNow(id);
+  }
 }

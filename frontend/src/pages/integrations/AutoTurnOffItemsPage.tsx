@@ -117,16 +117,12 @@ function progressStep(step: string | undefined, es: boolean) {
     processing_local_data: ['Procesando datos locales', 'Processing local data'],
     authenticating: ['Autenticando tienda', 'Authenticating store'],
     authenticating_local: ['Autenticando para datos locales', 'Authenticating for local data'],
-    authenticating_menu_retry: ['Autenticando reintento pendiente', 'Authenticating deferred retry'],
     waiting_shop_resolution: ['Pendiente al final: resolver tienda', 'Deferred: resolve store'],
-    waiting_menu_download: ['Pendiente al final: descargar menú', 'Deferred: download menu'],
-    downloading_menu: ['Descargando menú', 'Downloading menu'],
-    downloading_deferred_menu: ['Descargando menú pendiente', 'Downloading deferred menu'],
+    waiting_menu_download: ['UPC faltante en catálogo local', 'UPC missing from local catalog'],
     matching_upcs: ['Relacionando UPCs', 'Matching UPCs'],
     matching_local_upcs: ['Relacionando UPCs locales', 'Matching local UPCs'],
     updating_stock: ['Actualizando stock', 'Updating stock'],
     updating_local_stock: ['Apagando ítems locales', 'Turning off local items'],
-    updating_deferred_stock: ['Apagando ítems pendientes', 'Turning off deferred items'],
     shop_not_found: ['Tienda no encontrada', 'Store not found'],
     shop_failed: ['Falló una tienda', 'A store failed'],
     shop_partial_success: ['Tienda con éxito parcial', 'Store partially succeeded'],
@@ -403,7 +399,9 @@ export default function AutoTurnOffItemsPage() {
         </div>
 
         <div style={{ background: 'var(--orange-muted)', color: 'var(--text-secondary)', borderRadius: 8, padding: '10px 14px', fontSize: '0.8rem', marginBottom: 18 }}>
-          {copy.frequencyHelp}
+          {copy.frequencyHelp} {es
+            ? 'El apagado usa exclusivamente el catálogo local de la marca; si falta un UPC se reporta como fallido y no se descarga el menú.'
+            : 'Turn off uses only the local brand catalog; a missing UPC is reported as failed and no menu is downloaded.'}
         </div>
         {error && !poolModal && !ruleModal && <div className="error-banner" style={{ marginBottom: 14 }}>{error}</div>}
 

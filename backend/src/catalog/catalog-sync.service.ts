@@ -40,6 +40,8 @@ interface ApplicationShopDetails {
   expiresAt: number;
 }
 
+type ContinuationCheck = () => Promise<void> | void;
+
 function textValue(value: unknown): string {
   if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
   if (!value || typeof value !== 'object') return '';
@@ -101,7 +103,8 @@ export class CatalogSyncService {
     private readonly config: ConfigService,
   ) {}
 
-  async syncBrandStores(brandId: string) {
+  async syncBrandStores(brandId: string, ensureActive?: ContinuationCheck) {
+    await ensureActive?.();
     const brand = await this.prisma.brand.findUnique({
       where: { id: brandId },
       include: { application: { select: { appId: true, appSecret: true } } },
@@ -110,7 +113,8 @@ export class CatalogSyncService {
     if (!brand.application) throw new Error(`Brand ${brand.brandName} has no linked application`);
 
     const appSecret = this.decryptSecret(brand.application.appSecret);
-    const applicationShops = await this.fetchApplicationShopDetails(brand.application.appId, appSecret);
+    const applicationShops = await this.fetchApplicationShopDetails(brand.application.appId, appSecret, ensureActive);
+    await ensureActive?.();
     if (applicationShops.totalMappings > 0 && applicationShops.details.length === 0) {
       throw new Error('Could not fetch details for any shop in the application');
     }
@@ -133,6 +137,7 @@ export class CatalogSyncService {
       .filter(shop => shop.brandId && shop.brandId !== brand.brandId)
       .map(shop => shop.shopId);
     if (knownForeignIds.length > 0) {
+      await ensureActive?.();
       await this.prisma.shop.updateMany({
         where: { brandId: brand.id, shopId: { in: knownForeignIds }, deletedAt: null },
         data: { deletedAt: new Date() },
@@ -146,6 +151,7 @@ export class CatalogSyncService {
     const existingByShopId = new Map(existing.map(shop => [shop.shopId, shop]));
 
     for (let offset = 0; offset < shops.length; offset += 100) {
+      await ensureActive?.();
       const chunk = shops.slice(offset, offset + 100);
       await this.prisma.$transaction(chunk.map(shop => {
         const previous = existingByShopId.get(shop.shopId);
@@ -194,7 +200,8 @@ export class CatalogSyncService {
     };
   }
 
-  async syncShopMenu(shopDatabaseId: string) {
+  async syncShopMenu(shopDatabaseId: string, ensureActive?: ContinuationCheck) {
+    await ensureActive?.();
     const shop = await this.prisma.shop.findUnique({
       where: { id: shopDatabaseId },
       include: {
@@ -212,8 +219,9 @@ export class CatalogSyncService {
     try {
       const appSecret = this.decryptSecret(shop.brand.application.appSecret);
       const authToken = await getAuthToken(shop.brand.application.appId, appSecret, shop.appShopId);
-      const menu = await downloadMenu(authToken, async () => undefined);
-      const itemCount = await this.replaceShopMenu(shop.id, menu.items);
+      const menu = await downloadMenu(authToken, async () => ensureActive?.());
+      await ensureActive?.();
+      const itemCount = await this.replaceShopMenu(shop.id, menu.items, ensureActive);
       return {
         shopId: shop.shopId,
         appShopId: shop.appShopId,
@@ -232,7 +240,12 @@ export class CatalogSyncService {
     }
   }
 
-  async replaceShopMenu(shopDatabaseId: string, rawItems: Array<Record<string, unknown>>) {
+  async replaceShopMenu(
+    shopDatabaseId: string,
+    rawItems: Array<Record<string, unknown>>,
+    ensureActive?: ContinuationCheck,
+  ) {
+    await ensureActive?.();
     const shop = await this.prisma.shop.findUnique({
       where: { id: shopDatabaseId },
       select: { id: true, brandId: true, shopId: true, city: true },
@@ -242,6 +255,7 @@ export class CatalogSyncService {
     const now = new Date();
 
     for (let offset = 0; offset < items.length; offset += 100) {
+      await ensureActive?.();
       const chunk = items.slice(offset, offset + 100);
       await this.prisma.$transaction(chunk.map(item => this.prisma.brandItem.upsert({
         where: { brandId_appItemId: { brandId: shop.brandId, appItemId: item.appItemId } },
@@ -278,7 +292,9 @@ export class CatalogSyncService {
   async syncBrandMenus(
     brandId: string,
     onProgress?: (completed: number, total: number, shopId: string) => Promise<void> | void,
+    ensureActive?: ContinuationCheck,
   ) {
+    await ensureActive?.();
     const brand = await this.prisma.brand.findUnique({
       where: { id: brandId },
       select: {
@@ -307,11 +323,13 @@ export class CatalogSyncService {
         const index = cursor++;
         if (index >= sampledShops.length) return;
         const shop = sampledShops[index];
+        await ensureActive?.();
         try {
-          const result = await this.syncShopMenu(shop.id);
+          const result = await this.syncShopMenu(shop.id, ensureActive);
           succeeded++;
           totalItems += result.itemCount;
         } catch (error) {
+          await ensureActive?.();
           failures.push({ shopId: shop.shopId, error: (error as Error).message });
         }
         await onProgress?.(index + 1, sampledShops.length, shop.shopId);
@@ -320,6 +338,7 @@ export class CatalogSyncService {
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
     if (sampledShops.length > 0 && failures.length === 0) {
+      await ensureActive?.();
       await this.prisma.brandItem.deleteMany({
         where: { brandId: brand.id, lastSeenAt: { lt: syncStartedAt } },
       });
@@ -376,7 +395,12 @@ export class CatalogSyncService {
     return encryptionKey ? decrypt(encrypted, encryptionKey) : encrypted;
   }
 
-  private async fetchApplicationShopDetails(appId: string, appSecret: string): Promise<ApplicationShopDetails> {
+  private async fetchApplicationShopDetails(
+    appId: string,
+    appSecret: string,
+    ensureActive?: ContinuationCheck,
+  ): Promise<ApplicationShopDetails> {
+    await ensureActive?.();
     const cached = this.applicationShopCache.get(appId);
     if (cached && cached.expiresAt > Date.now()) return cached;
 
@@ -386,8 +410,10 @@ export class CatalogSyncService {
     let failures = 0;
 
     for (let offset = 0; offset < targets.length; offset += BATCH_SIZE) {
+      await ensureActive?.();
       const batch = targets.slice(offset, offset + BATCH_SIZE);
-      const results = await Promise.allSettled(batch.map(shop => this.fetchShopDetail(appId, appSecret, shop)));
+      const results = await Promise.allSettled(batch.map(shop => this.fetchShopDetail(appId, appSecret, shop, ensureActive)));
+      await ensureActive?.();
       for (const result of results) {
         if (result.status === 'fulfilled') details.push(result.value);
         else failures++;
@@ -409,10 +435,12 @@ export class CatalogSyncService {
     appId: string,
     appSecret: string,
     shop: { shopId: string; appShopId: string },
+    ensureActive?: ContinuationCheck,
   ): Promise<CatalogShopDetail> {
     let lastError = 'Unknown shop detail error';
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
+        await ensureActive?.();
         const authToken = await getAuthToken(appId, appSecret, shop.appShopId);
         const endpoint = 'GET /v1/shop/shop/detail';
         const response = await fetchWithEndpointContext(

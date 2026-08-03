@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
-import { AutoFetchKind, Country } from '@prisma/client';
+import { AutoFetchKind, Country, KaType } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateAutoFetchPoolDto } from './dto/update-auto-fetch-pool.dto';
@@ -39,20 +39,57 @@ export class AutoFetchService implements OnModuleInit {
   }
 
   async list(kind: AutoFetchKind) {
-    const pools = await this.prisma.autoFetchPool.findMany({
-      where: { kind },
-      include: { executions: { orderBy: { createdAt: 'desc' }, take: 5 } },
-      orderBy: { country: 'asc' },
+    const [pools, brands] = await Promise.all([
+      this.prisma.autoFetchPool.findMany({
+        where: { kind },
+        include: {
+          executions: { orderBy: { createdAt: 'desc' }, take: 5 },
+          brandSettings: true,
+        },
+        orderBy: { country: 'asc' },
+      }),
+      this.prisma.brand.findMany({
+        where: { kaType: { in: [KaType.KA, KaType.CKA] }, deletedAt: null, applicationId: { not: null } },
+        select: {
+          id: true,
+          brandId: true,
+          brandName: true,
+          country: true,
+          kaType: true,
+          _count: { select: { shops: { where: { deletedAt: null } }, items: true } },
+        },
+        orderBy: { brandName: 'asc' },
+      }),
+    ]);
+
+    return pools.map(pool => {
+      const settings = new Map(pool.brandSettings.map(setting => [setting.brandId, setting]));
+      const countryBrands = brands.filter(brand => brand.country === pool.country);
+      const kaBrands = countryBrands
+        .filter(brand => brand.kaType === KaType.KA)
+        .map(brand => ({
+          ...brand,
+          active: settings.get(brand.id)?.active ?? true,
+          manuallyIncluded: false,
+        }));
+      const ckaBrands = countryBrands
+        .filter(brand => brand.kaType === KaType.CKA && settings.get(brand.id)?.manuallyIncluded)
+        .map(brand => ({
+          ...brand,
+          active: settings.get(brand.id)?.active ?? true,
+          manuallyIncluded: true,
+        }));
+      const includedCkaIds = new Set(ckaBrands.map(brand => brand.id));
+      const ckaCandidates = countryBrands.filter(brand => brand.kaType === KaType.CKA && !includedCkaIds.has(brand.id));
+      return {
+        ...pool,
+        brandSettings: undefined,
+        brands: [...kaBrands, ...ckaBrands],
+        kaBrands,
+        ckaBrands,
+        ckaCandidates,
+      };
     });
-    const brands = await this.prisma.brand.findMany({
-      where: { kaType: 'KA', deletedAt: null, applicationId: { not: null } },
-      select: {
-        id: true, brandId: true, brandName: true, country: true,
-        _count: { select: { shops: { where: { deletedAt: null } }, items: true } },
-      },
-      orderBy: { brandName: 'asc' },
-    });
-    return pools.map(pool => ({ ...pool, brands: brands.filter(brand => brand.country === pool.country) }));
   }
 
   async update(id: string, dto: UpdateAutoFetchPoolDto) {
@@ -72,23 +109,100 @@ export class AutoFetchService implements OnModuleInit {
     });
   }
 
+  async addCkaBrand(poolId: string, brandId: string) {
+    const { pool, brand } = await this.getPoolAndBrand(poolId, brandId);
+    if (brand.kaType !== KaType.CKA) throw new BadRequestException('Only CKA brands are added manually');
+    return this.prisma.autoFetchPoolBrand.upsert({
+      where: { poolId_brandId: { poolId: pool.id, brandId: brand.id } },
+      create: { poolId: pool.id, brandId: brand.id, active: true, manuallyIncluded: true },
+      update: { active: true, manuallyIncluded: true },
+    });
+  }
+
+  async removeCkaBrand(poolId: string, brandId: string) {
+    await this.getPoolAndBrand(poolId, brandId);
+    const setting = await this.prisma.autoFetchPoolBrand.findUnique({
+      where: { poolId_brandId: { poolId, brandId } },
+    });
+    if (!setting?.manuallyIncluded) throw new BadRequestException('CKA brand is not included in this pool');
+    await this.prisma.autoFetchPoolBrand.delete({ where: { id: setting.id } });
+    return { removed: true };
+  }
+
+  async updateBrand(poolId: string, brandId: string, active: boolean) {
+    const { pool, brand } = await this.getPoolAndBrand(poolId, brandId);
+    const existing = await this.prisma.autoFetchPoolBrand.findUnique({
+      where: { poolId_brandId: { poolId, brandId } },
+    });
+    if (brand.kaType === KaType.CKA && !existing?.manuallyIncluded) {
+      throw new BadRequestException('Add the CKA brand to the pool before changing its status');
+    }
+    return this.prisma.autoFetchPoolBrand.upsert({
+      where: { poolId_brandId: { poolId, brandId } },
+      create: {
+        poolId: pool.id,
+        brandId: brand.id,
+        active,
+        manuallyIncluded: brand.kaType === KaType.CKA,
+      },
+      update: { active },
+    });
+  }
+
   async runNow(id: string) {
-    const pool = await this.findOne(id);
-    const active = await this.prisma.autoFetchExecution.findFirst({
-      where: { poolId: id, status: { in: ['pending', 'running'] } },
-      select: { id: true },
+    return this.createExecution(id, [], 'manual');
+  }
+
+  async runBrand(poolId: string, brandId: string) {
+    const { brand } = await this.getPoolAndBrand(poolId, brandId);
+    if (brand.kaType === KaType.CKA) {
+      const setting = await this.prisma.autoFetchPoolBrand.findUnique({
+        where: { poolId_brandId: { poolId, brandId } },
+      });
+      if (!setting?.manuallyIncluded) throw new BadRequestException('Add the CKA brand to this pool first');
+    }
+    return this.createExecution(poolId, [brandId], 'manual_brand');
+  }
+
+  async stopPool(poolId: string) {
+    await this.findOne(poolId);
+    const execution = await this.prisma.autoFetchExecution.findFirst({
+      where: { poolId, status: { in: ['pending', 'running'] } },
+      orderBy: { createdAt: 'desc' },
     });
-    if (active) throw new BadRequestException('This pool already has an execution pending or running');
-    const execution = await this.prisma.autoFetchExecution.create({
-      data: { poolId: id, trigger: 'manual' },
+    if (!execution) throw new BadRequestException('There is no active country execution to stop');
+    if (execution.status === 'pending') {
+      return this.prisma.autoFetchExecution.update({
+        where: { id: execution.id },
+        data: {
+          status: 'cancelled',
+          cancelRequested: true,
+          finishedAt: new Date(),
+          currentBrand: null,
+          errorMessage: 'Stopped manually at country level',
+        },
+      });
+    }
+    return this.prisma.autoFetchExecution.update({
+      where: { id: execution.id },
+      data: { cancelRequested: true, errorMessage: 'Country stop requested; finishing the current safe operation' },
     });
-    await this.queue.add(`fetch-${pool.kind}`, { executionId: execution.id }, {
-      jobId: execution.id,
-      attempts: 1,
-      removeOnComplete: 100,
-      removeOnFail: 100,
+  }
+
+  async stopBrand(poolId: string, brandId: string) {
+    await this.getPoolAndBrand(poolId, brandId);
+    const execution = await this.prisma.autoFetchExecution.findFirst({
+      where: { poolId, status: { in: ['pending', 'running'] } },
+      orderBy: { createdAt: 'desc' },
     });
-    return execution;
+    if (!execution) throw new BadRequestException('There is no active execution for this pool');
+    if (!execution.cancelledBrandIds.includes(brandId)) {
+      await this.prisma.autoFetchExecution.update({
+        where: { id: execution.id },
+        data: { cancelledBrandIds: { push: brandId } },
+      });
+    }
+    return { executionId: execution.id, brandId, stopRequested: true };
   }
 
   async executions(poolId: string, page = 1, limit = 20) {
@@ -111,5 +225,41 @@ export class AutoFetchService implements OnModuleInit {
     const pool = await this.prisma.autoFetchPool.findUnique({ where: { id } });
     if (!pool) throw new NotFoundException('Auto fetch pool not found');
     return pool;
+  }
+
+  private async getPoolAndBrand(poolId: string, brandId: string) {
+    const [pool, brand] = await Promise.all([
+      this.findOne(poolId),
+      this.prisma.brand.findUnique({
+        where: { id: brandId },
+        select: { id: true, brandName: true, country: true, kaType: true, applicationId: true, deletedAt: true },
+      }),
+    ]);
+    if (!brand || brand.deletedAt) throw new NotFoundException('Brand not found');
+    if (brand.country !== pool.country) throw new BadRequestException('Brand and pool must belong to the same country');
+    if (!brand.applicationId) throw new BadRequestException('Brand has no linked application credentials');
+    if (brand.kaType !== KaType.KA && brand.kaType !== KaType.CKA) {
+      throw new BadRequestException('Only KA and manually included CKA brands can use Auto Fetch');
+    }
+    return { pool, brand };
+  }
+
+  private async createExecution(poolId: string, requestedBrandIds: string[], trigger: string) {
+    const pool = await this.findOne(poolId);
+    const active = await this.prisma.autoFetchExecution.findFirst({
+      where: { poolId, status: { in: ['pending', 'running'] } },
+      select: { id: true },
+    });
+    if (active) throw new BadRequestException('This pool already has an execution pending or running');
+    const execution = await this.prisma.autoFetchExecution.create({
+      data: { poolId, trigger, requestedBrandIds },
+    });
+    await this.queue.add(`fetch-${pool.kind}`, { executionId: execution.id }, {
+      jobId: execution.id,
+      attempts: 1,
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    });
+    return execution;
   }
 }
