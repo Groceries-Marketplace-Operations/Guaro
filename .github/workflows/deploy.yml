@@ -19,6 +19,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 30m
           script: |
             set -e
             app_dir=""
@@ -44,4 +45,17 @@ jobs:
             git pull origin main
             docker compose -f docker-compose.prod.yml --env-file .env.prod build
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+            backend_ready=false
+            for attempt in $(seq 1 24); do
+              if docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T backend \
+                node -e "fetch('http://127.0.0.1:3000/auth/me').then(r => process.exit(r.status === 401 ? 0 : 1)).catch(() => process.exit(1))"; then
+                backend_ready=true
+                break
+              fi
+              sleep 5
+            done
+            if [ "$backend_ready" != "true" ]; then
+              docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 backend
+              exit 1
+            fi
             docker compose -f docker-compose.prod.yml ps
