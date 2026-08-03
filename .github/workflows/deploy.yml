@@ -21,7 +21,20 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-            cd /opt/guaro
+            app_dir=""
+            for candidate in /opt/guaro /root/Guaro /root/guaro /root/Guaro-1 /home/ubuntu/Guaro /home/ubuntu/guaro; do
+              if [ -d "$candidate/.git" ] && [ -f "$candidate/docker-compose.prod.yml" ]; then
+                app_dir="$candidate"
+                break
+              fi
+            done
+            if [ -z "$app_dir" ]; then
+              compose_file="$(find /opt /root /home -maxdepth 5 -type f -name docker-compose.prod.yml -print -quit 2>/dev/null || true)"
+              app_dir="${compose_file%/docker-compose.prod.yml}"
+            fi
+            test -n "$app_dir"
+            test -d "$app_dir/.git"
+            cd "$app_dir"
             umask 077
             mkdir -p backups
             backup_file="backups/pre-deploy-$(date +%Y%m%d-%H%M%S).dump"
