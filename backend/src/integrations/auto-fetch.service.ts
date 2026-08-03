@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { AutoFetchKind, Country, KaType } from '@prisma/client';
 import { Queue } from 'bullmq';
@@ -8,6 +8,8 @@ import { nextDailyRun, timezoneForCountry } from './auto-fetch-time.util';
 
 @Injectable()
 export class AutoFetchService implements OnModuleInit {
+  private readonly logger = new Logger(AutoFetchService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue('auto-fetch') private readonly queue: Queue,
@@ -36,6 +38,7 @@ export class AutoFetchService implements OnModuleInit {
         update: {},
       });
     }
+    await this.reconcileOrphanedExecutions();
   }
 
   async list(kind: AutoFetchKind) {
@@ -183,10 +186,16 @@ export class AutoFetchService implements OnModuleInit {
         },
       });
     }
-    return this.prisma.autoFetchExecution.update({
+    const stopped = await this.prisma.autoFetchExecution.update({
       where: { id: execution.id },
       data: { cancelRequested: true, errorMessage: 'Country stop requested; finishing the current safe operation' },
     });
+    if (await this.hasActiveWorker(execution.id)) return stopped;
+    return this.finishOrphanedExecution(
+      execution.id,
+      true,
+      'Stopped manually; the queue worker was no longer active',
+    );
   }
 
   async stopBrand(poolId: string, brandId: string) {
@@ -201,6 +210,13 @@ export class AutoFetchService implements OnModuleInit {
         where: { id: execution.id },
         data: { cancelledBrandIds: { push: brandId } },
       });
+    }
+    if (!(await this.hasActiveWorker(execution.id))) {
+      await this.finishOrphanedExecution(
+        execution.id,
+        true,
+        'Brand stop requested, but the queue worker was no longer active; execution cancelled',
+      );
     }
     return { executionId: execution.id, brandId, stopRequested: true };
   }
@@ -261,5 +277,47 @@ export class AutoFetchService implements OnModuleInit {
       removeOnFail: 100,
     });
     return execution;
+  }
+
+  private async hasActiveWorker(executionId: string) {
+    const job = await this.queue.getJob(executionId);
+    return job ? (await job.getState()) === 'active' : false;
+  }
+
+  private async finishOrphanedExecution(
+    executionId: string,
+    cancelled: boolean,
+    errorMessage: string,
+  ) {
+    await this.prisma.autoFetchExecution.updateMany({
+      where: { id: executionId, status: 'running' },
+      data: {
+        status: cancelled ? 'cancelled' : 'failed',
+        cancelRequested: cancelled,
+        finishedAt: new Date(),
+        progressPercent: 100,
+        currentBrand: null,
+        errorMessage,
+      },
+    });
+    return this.prisma.autoFetchExecution.findUnique({ where: { id: executionId } });
+  }
+
+  private async reconcileOrphanedExecutions() {
+    const running = await this.prisma.autoFetchExecution.findMany({
+      where: { status: 'running' },
+      select: { id: true, cancelRequested: true },
+    });
+    for (const execution of running) {
+      if (await this.hasActiveWorker(execution.id)) continue;
+      await this.finishOrphanedExecution(
+        execution.id,
+        execution.cancelRequested,
+        execution.cancelRequested
+          ? 'Stopped manually; orphaned execution reconciled during backend startup'
+          : 'Execution interrupted because its queue worker was no longer active',
+      );
+      this.logger.warn(`Reconciled orphaned auto fetch execution ${execution.id}`);
+    }
   }
 }

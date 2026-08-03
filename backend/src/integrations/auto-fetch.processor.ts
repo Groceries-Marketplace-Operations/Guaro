@@ -33,7 +33,10 @@ export class AutoFetchProcessor extends WorkerHost {
       where: { id: executionId, status: 'pending', cancelRequested: false },
       data: { status: 'running', startedAt: new Date(), progressPercent: 0, errorMessage: null },
     });
-    if (claimed.count === 0) return;
+    if (claimed.count === 0) {
+      await this.finishRecoveredJob(executionId);
+      return;
+    }
     const execution = await this.prisma.autoFetchExecution.findUnique({
       where: { id: executionId },
       include: { pool: { include: { brandSettings: true } } },
@@ -191,6 +194,26 @@ export class AutoFetchProcessor extends WorkerHost {
     });
     if (execution?.status !== 'running' || execution.cancelRequested) throw new CountryFetchStoppedError();
     if (execution.cancelledBrandIds.includes(brandId)) throw new BrandFetchStoppedError();
+  }
+
+  private async finishRecoveredJob(executionId: string) {
+    const execution = await this.prisma.autoFetchExecution.findUnique({
+      where: { id: executionId },
+      select: { status: true, cancelRequested: true },
+    });
+    if (execution?.status !== 'running') return;
+    await this.prisma.autoFetchExecution.updateMany({
+      where: { id: executionId, status: 'running' },
+      data: {
+        status: execution.cancelRequested ? 'cancelled' : 'failed',
+        finishedAt: new Date(),
+        progressPercent: 100,
+        currentBrand: null,
+        errorMessage: execution.cancelRequested
+          ? 'Stopped manually after the queue recovered an interrupted job'
+          : 'Queue recovered an interrupted job; run the fetch again',
+      },
+    });
   }
 
   @OnWorkerEvent('failed')
