@@ -13,6 +13,13 @@ export interface FailedItem {
   reason: string;
 }
 
+export interface SuccessfulItem {
+  appItemId: string;
+  upc?: string;
+  name?: string;
+  confirmation?: 'accepted' | 'confirmed';
+}
+
 export interface ShopResult {
   shopId: string;
   appShopId: string;
@@ -26,6 +33,7 @@ export interface ShopResult {
   requestedUpcs?: number;
   matchedUpcs?: number;
   missingUpcs?: string[];
+  successfulItems?: SuccessfulItem[];
   failedItems?: FailedItem[];
   error?: string;
 }
@@ -161,6 +169,7 @@ export async function callStockApi(
       success: true,
       itemsSucceeded: stockList.length,
       itemsFailed: 0,
+      successfulItems: stockList.map(item => ({ appItemId: item.app_item_id, confirmation: 'accepted' })),
       taskId: taskId ? String(taskId) : undefined,
     };
   }
@@ -194,6 +203,7 @@ export async function callStockApi(
     success: failedItems.length === 0 && successfulItems.length === stockList.length,
     itemsSucceeded: successfulItems.length,
     itemsFailed: failedItems.length,
+    successfulItems: successfulItems.map((appItemId: string) => ({ appItemId, confirmation: 'confirmed' })),
     failedItems: failedItems.length > 0 ? failedItems : undefined,
     error: failedItems.length > 0
       ? `${failedItems.length} item(s) failed: ${failedItems.slice(0, 5).map(item => `${item.appItemId}: ${item.reason}`).join('; ')}`

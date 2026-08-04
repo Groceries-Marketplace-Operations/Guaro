@@ -206,6 +206,7 @@ model Account {
   createdApps                    Application[]                @relation("AppCreador")
   createdSftpApps                SftpApplication[]            @relation("SftpAppCreator")
   createdStoreEmergencies        StoreEmergency[]             @relation("StoreEmergencyCreator")
+  createdForcedOpenOperations    ForcedOpenOperation[]        @relation("ForcedOpenOperationCreator")
   assignedSteps                  StepInstance[]
   stepCandidate                  StepDefinitionAccount[]
   ruleCandidate                  BrandAssignmentRuleAccount[]
@@ -427,18 +428,19 @@ model Brand {
   updatedAt       DateTime         @updatedAt @map("updated_at")
   deletedAt       DateTime?        @map("deleted_at")
 
-  owner               Account?             @relation("BrandResponsable", fields: [ownerId], references: [id])
-  createdBy           Account?             @relation("BrandCreador", fields: [createdById], references: [id])
-  application         Application?         @relation(fields: [applicationId], references: [id])
-  webhooks            BrandWebhook[]
-  shops               Shop[]
-  tasks               Task[]
-  formValues          FormValue[]
-  autoOpenPoolBrands  AutoOpenPoolBrand[]
-  autoFetchPoolBrands AutoFetchPoolBrand[]
-  autoTurnOffRules    AutoTurnOffRule[]
-  storeEmergencies    StoreEmergency[]
-  items               BrandItem[]
+  owner                Account?              @relation("BrandResponsable", fields: [ownerId], references: [id])
+  createdBy            Account?              @relation("BrandCreador", fields: [createdById], references: [id])
+  application          Application?          @relation(fields: [applicationId], references: [id])
+  webhooks             BrandWebhook[]
+  shops                Shop[]
+  tasks                Task[]
+  formValues           FormValue[]
+  autoOpenPoolBrands   AutoOpenPoolBrand[]
+  autoFetchPoolBrands  AutoFetchPoolBrand[]
+  autoTurnOffRules     AutoTurnOffRule[]
+  storeEmergencies     StoreEmergency[]
+  forcedOpenOperations ForcedOpenOperation[]
+  items                BrandItem[]
 
   @@index([ownerId])
   @@index([applicationId])
@@ -478,12 +480,13 @@ model Shop {
   menuSyncError  String?    @map("menu_sync_error") @db.Text
   menuItemCount  Int        @default(0) @map("menu_item_count")
 
-  brand       Brand                  @relation(fields: [brandId], references: [id])
-  createdBy   Account?               @relation("ShopCreador", fields: [createdById], references: [id])
-  schedules   Schedule[]
-  taskShops   TaskShop[]
-  formValues  FormValue[]
-  emergencies StoreEmergencyTarget[]
+  brand             Brand                  @relation(fields: [brandId], references: [id])
+  createdBy         Account?               @relation("ShopCreador", fields: [createdById], references: [id])
+  schedules         Schedule[]
+  taskShops         TaskShop[]
+  formValues        FormValue[]
+  emergencies       StoreEmergencyTarget[]
+  forcedOpenTargets ForcedOpenTarget[]
 
   @@unique([brandId, appShopId])
   @@index([brandId])
@@ -941,6 +944,50 @@ model StoreEmergencyTarget {
   @@index([emergencyId, offlineStatus])
   @@index([emergencyId, restoreStatus])
   @@map("store_emergency_target")
+}
+
+// -------------------- Integrations: forced store opening -------------------
+model ForcedOpenOperation {
+  id           String    @id @default(uuid()) @db.Uuid
+  brandId      String    @map("brand_id") @db.Uuid
+  mode         String // all_brand | shop_list
+  requestedIds String[]  @default([]) @map("requested_shop_ids")
+  status       String    @default("pending")
+  totalShops   Int       @default(0) @map("total_shops")
+  shopsOpened  Int       @default(0) @map("shops_opened")
+  shopsFailed  Int       @default(0) @map("shops_failed")
+  createdById  String    @map("created_by_id") @db.Uuid
+  startedAt    DateTime? @map("started_at") @db.Timestamptz
+  finishedAt   DateTime? @map("finished_at") @db.Timestamptz
+  errorMessage String?   @map("error_message") @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  brand     Brand              @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  createdBy Account            @relation("ForcedOpenOperationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  targets   ForcedOpenTarget[]
+
+  @@index([brandId, createdAt])
+  @@index([status, createdAt])
+  @@map("forced_open_operation")
+}
+
+model ForcedOpenTarget {
+  id          String    @id @default(uuid()) @db.Uuid
+  operationId String    @map("operation_id") @db.Uuid
+  shopId      String    @map("shop_id") @db.Uuid
+  status      String    @default("pending")
+  error       String?   @db.Text
+  openedAt    DateTime? @map("opened_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  operation ForcedOpenOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  shop      Shop                @relation(fields: [shopId], references: [id], onDelete: Restrict)
+
+  @@unique([operationId, shopId])
+  @@index([operationId, status])
+  @@map("forced_open_target")
 }
 
 // -------------------------- Auth / invitations -----------------------------

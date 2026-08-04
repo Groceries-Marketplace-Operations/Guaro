@@ -152,8 +152,8 @@ export default function Sidebar() {
       {(isSA || canSeeModule('integrations')) && (
         <div className="sidebar-section">
           <div className="sidebar-section-label">{t('nav.integrations')}</div>
-          <NavLink to="/integrations/auto-open" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconBriefcase /> {t('nav.autoOpenStores')}
+          <NavLink to="/integrations/forced-open" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconBriefcase /> {t('nav.forcedOpenStores')}
           </NavLink>
           <NavLink to="/integrations/auto-stores-fetch" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> Auto Stores Fetch

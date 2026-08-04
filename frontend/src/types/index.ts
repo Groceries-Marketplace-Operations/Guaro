@@ -277,6 +277,13 @@ export interface AssistantContext {
   }>;
   requiredFields: string[];
   templates: Array<{ name: string; url: string; type: string }>;
+  formatExamples: Array<{
+    title: string;
+    headers: string[];
+    rows: string[][];
+    rowLabels: string[];
+    notes: Array<{ es: string; en: string }>;
+  }>;
   greeting: string;
 }
 
@@ -407,6 +414,31 @@ export interface StoreEmergency {
   targets: StoreEmergencyTarget[];
 }
 
+export interface ForcedOpenTarget {
+  id: string;
+  status: string;
+  error?: string;
+  openedAt?: string;
+  shop: Pick<Shop, 'id' | 'shopId' | 'appShopId' | 'name' | 'city'>;
+}
+
+export interface ForcedOpenOperation {
+  id: string;
+  mode: 'all_brand' | 'shop_list';
+  requestedIds: string[];
+  status: string;
+  totalShops: number;
+  shopsOpened: number;
+  shopsFailed: number;
+  startedAt?: string;
+  finishedAt?: string;
+  errorMessage?: string;
+  createdAt: string;
+  brand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'>;
+  createdBy: Pick<Account, 'id' | 'name' | 'email'>;
+  targets?: ForcedOpenTarget[];
+}
+
 export interface AutoTurnOffShopResult {
   shopId: string;
   appShopId: string;
@@ -420,6 +452,7 @@ export interface AutoTurnOffShopResult {
   requestedUpcs?: number;
   matchedUpcs?: number;
   missingUpcs?: string[];
+  successfulItems?: Array<{ upc?: string; appItemId: string; name?: string; confirmation?: 'accepted' | 'confirmed' }>;
   failedItems?: Array<{ appItemId?: string; upc?: string; reason: string }>;
   error?: string;
 }

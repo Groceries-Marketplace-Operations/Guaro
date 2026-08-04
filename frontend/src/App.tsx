@@ -24,12 +24,12 @@ import InvitePage from './pages/InvitePage';
 import AuthCallback from './pages/AuthCallback';
 import AuthError from './pages/AuthError';
 import NotFound from './pages/NotFound';
-import IntegrationsPage from './pages/integrations/IntegrationsPage';
 import AutoTurnOffItemsPage from './pages/integrations/AutoTurnOffItemsPage';
 import AdminPanel from './pages/admin/AdminPanel';
 import AutoFetchPage from './pages/integrations/AutoFetchPage';
 import StoreEmergenciesPage from './pages/integrations/StoreEmergenciesPage';
 import SftpApplicationsPage from './pages/admin/SftpApplicationsPage';
+import ForcedOpenStoresPage from './pages/integrations/ForcedOpenStoresPage';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
 
@@ -61,7 +61,8 @@ export default function App() {
               <Route path="config" element={<Config />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="applications" element={<ApplicationsPage />} />
-              <Route path="integrations/auto-open" element={<IntegrationsPage />} />
+              <Route path="integrations/auto-open" element={<ForcedOpenStoresPage />} />
+              <Route path="integrations/forced-open" element={<ForcedOpenStoresPage />} />
               <Route path="integrations/auto-turn-off" element={<AutoTurnOffItemsPage />} />
               <Route path="integrations/auto-stores-fetch" element={<AutoFetchPage kind="stores" />} />
               <Route path="integrations/auto-menu-fetch" element={<AutoFetchPage kind="menu" />} />

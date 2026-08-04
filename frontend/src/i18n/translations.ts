@@ -74,6 +74,7 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'nav.integrations': 'Integrations',
     'nav.autoTurnOffItems': 'Auto Turn Off Items',
     'nav.autoOpenStores': 'Auto Open Stores',
+    'nav.forcedOpenStores': 'Forced Open Stores',
 
     'pages.integrations.subtitle': 'Automate store availability via DiDi Food API',
     'pages.integrations.newPool': 'New Pool',
@@ -823,6 +824,7 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'nav.integrations': 'Integraciones',
     'nav.autoTurnOffItems': 'Apagado automático de ítems',
     'nav.autoOpenStores': 'Auto Open Stores',
+    'nav.forcedOpenStores': 'Forced Open Stores',
 
     'pages.integrations.subtitle': 'Automatiza la disponibilidad de tiendas vía DiDi Food API',
     'pages.integrations.newPool': 'Nuevo pool',

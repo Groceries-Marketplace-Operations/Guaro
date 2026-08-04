@@ -160,12 +160,28 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
               </div>
             )}
             {context && (
-              <div className="assistant-message assistant-message-bot">
-                <p>{es
-                  ? `Hola, soy Naranja. Validaré “${context.taskTypeName}” contigo antes de crearla. Puedes preguntarme por la plantilla, columnas, permisos o errores.`
-                  : `Hi, I’m Naranja. I’ll validate “${context.taskTypeName}” with you before it is created. Ask me about the template, columns, permissions, or errors.`}
-                </p>
-              </div>
+              <>
+                <div className="assistant-message assistant-message-bot">
+                  <p>{es
+                    ? `Hola, soy Naranja. Validaré “${context.taskTypeName}” contigo antes de crearla. Puedes preguntarme por la plantilla, columnas, permisos o errores.`
+                    : `Hi, I’m Naranja. I’ll validate “${context.taskTypeName}” with you before it is created. Ask me about the template, columns, permissions, or errors.`}
+                  </p>
+                </div>
+                {context.formatExamples.map(example => (
+                  <div className="assistant-message assistant-message-bot assistant-format-example" key={example.title}>
+                    <strong>{es ? 'Ejemplo real del formato' : 'Real format example'}</strong>
+                    <div className="assistant-example-table-wrap">
+                      <table>
+                        <thead><tr>{example.headers.map(header => <th key={header}>{header}</th>)}</tr></thead>
+                        <tbody>{example.rows.map((row, rowIndex) => <tr key={example.rowLabels[rowIndex] ?? rowIndex}>
+                          {row.map((value, columnIndex) => <td key={`${rowIndex}-${columnIndex}`}>{value}</td>)}
+                        </tr>)}</tbody>
+                      </table>
+                    </div>
+                    <ul>{example.notes.map(note => <li key={note.en}>{es ? note.es : note.en}</li>)}</ul>
+                  </div>
+                ))}
+              </>
             )}
             {messages.map(message => (
               <div key={message.id} className={`assistant-message ${message.role === 'user' ? 'assistant-message-user' : 'assistant-message-bot'}`}>

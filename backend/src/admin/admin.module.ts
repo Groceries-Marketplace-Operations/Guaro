@@ -7,7 +7,7 @@ import { AdminService } from './admin.service';
 @Module({
   imports: [
     BullModule.registerQueue({ name: 'handlers' }),
-    BullModule.registerQueue({ name: 'auto-open' }),
+    BullModule.registerQueue({ name: 'forced-open' }),
     PrismaModule,
   ],
   controllers: [AdminController],

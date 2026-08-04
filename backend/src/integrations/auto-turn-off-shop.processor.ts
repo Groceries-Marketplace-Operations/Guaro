@@ -151,7 +151,7 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
         brandId: rule.brandId,
         upc: { in: rule.upcs },
       },
-      select: { upc: true, appItemId: true },
+      select: { upc: true, appItemId: true, name: true },
     });
     const cached = resolveAppItemIds(
       catalogItems.map(item => ({ upc: item.upc, app_item_id: item.appItemId })),
@@ -192,6 +192,16 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     }));
     const failedItems = [...(localResult.failedItems ?? []), ...missingFailures];
     const itemsFailed = localResult.itemsFailed + cached.missingUpcs.length;
+    const catalogByItemId = new Map(catalogItems.map(item => [item.appItemId, item]));
+    const successfulItems = (localResult.successfulItems ?? []).map(item => {
+      const catalogItem = catalogByItemId.get(item.appItemId);
+      return {
+        appItemId: item.appItemId,
+        upc: catalogItem?.upc ?? item.upc,
+        name: catalogItem?.name ?? item.name,
+        confirmation: item.confirmation,
+      };
+    });
     await this.finishShop(target.id, {
       shopId: target.shopId,
       appShopId: target.appShopId!,
@@ -201,6 +211,7 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
       itemsFailed,
       requestedUpcs: rule.upcs.length,
       matchedUpcs: cached.matchedUpcs,
+      successfulItems: successfulItems.length > 0 ? successfulItems : undefined,
       missingUpcs: cached.missingUpcs.length > 0 ? cached.missingUpcs : undefined,
       failedItems: failedItems.length > 0 ? failedItems : undefined,
       error: cached.missingUpcs.length > 0

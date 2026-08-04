@@ -9,15 +9,15 @@ export class AdminService {
   constructor(
     private prisma: PrismaService,
     @InjectQueue('handlers') private handlersQueue: Queue,
-    @InjectQueue('auto-open') private autoOpenQueue: Queue,
+    @InjectQueue('forced-open') private forcedOpenQueue: Queue,
   ) {}
 
   async getQueueStatus() {
-    const [handlersCounts, autoOpenCounts, handlersFailed, autoOpenFailed] = await Promise.all([
+    const [handlersCounts, forcedOpenCounts, handlersFailed, forcedOpenFailed] = await Promise.all([
       this.handlersQueue.getJobCounts(),
-      this.autoOpenQueue.getJobCounts(),
+      this.forcedOpenQueue.getJobCounts(),
       this.handlersQueue.getFailed(0, 10),
-      this.autoOpenQueue.getFailed(0, 5),
+      this.forcedOpenQueue.getFailed(0, 5),
     ]);
 
     return {
@@ -33,9 +33,9 @@ export class AdminService {
             attemptsMade: j.attemptsMade,
           })),
         },
-        autoOpen: {
-          counts: autoOpenCounts,
-          recentFailed: autoOpenFailed.map((j) => ({
+        forcedOpen: {
+          counts: forcedOpenCounts,
+          recentFailed: forcedOpenFailed.map((j) => ({
             id: j.id,
             name: j.name,
             failedReason: j.failedReason,

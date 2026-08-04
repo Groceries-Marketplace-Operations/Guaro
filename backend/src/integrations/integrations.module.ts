@@ -3,10 +3,6 @@ import { BullModule } from '@nestjs/bullmq';
 import { PrismaModule } from '../prisma/prisma.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
 import { ConfigModule } from '@nestjs/config';
-import { AutoOpenPoolsController } from './auto-open-pools.controller';
-import { AutoOpenPoolsService } from './auto-open-pools.service';
-import { AutoOpenProcessor } from './auto-open.processor';
-import { AutoOpenScheduler } from './auto-open.scheduler';
 import { AutoTurnOffController } from './auto-turn-off.controller';
 import { AutoTurnOffService } from './auto-turn-off.service';
 import { AutoTurnOffCoordinator } from './auto-turn-off.processor';
@@ -26,26 +22,26 @@ import { StoreEmergencyController } from './store-emergency.controller';
 import { StoreEmergencyService } from './store-emergency.service';
 import { StoreEmergencyProcessor } from './store-emergency.processor';
 import { StoreEmergencyScheduler } from './store-emergency.scheduler';
+import { ForcedOpenController } from './forced-open.controller';
+import { ForcedOpenService } from './forced-open.service';
+import { ForcedOpenProcessor } from './forced-open.processor';
 
 @Module({
   imports: [
-    BullModule.registerQueue({ name: 'auto-open' }),
     BullModule.registerQueue({ name: 'auto-turn-off-MX' }),
     BullModule.registerQueue({ name: 'auto-turn-off-CO' }),
     BullModule.registerQueue({ name: 'auto-turn-off-CR' }),
     BullModule.registerQueue({ name: 'auto-turn-off-shop' }),
     BullModule.registerQueue({ name: 'auto-fetch' }),
     BullModule.registerQueue({ name: 'store-emergency' }),
+    BullModule.registerQueue({ name: 'forced-open' }),
     PrismaModule,
     WebhooksModule,
     ConfigModule,
     CatalogModule,
   ],
-  controllers: [AutoOpenPoolsController, AutoTurnOffController, AutoFetchController, StoreEmergencyController],
+  controllers: [AutoTurnOffController, AutoFetchController, StoreEmergencyController, ForcedOpenController],
   providers: [
-    AutoOpenPoolsService,
-    AutoOpenProcessor,
-    AutoOpenScheduler,
     AutoTurnOffService,
     AutoTurnOffCoordinator,
     AutoTurnOffMexicoProcessor,
@@ -59,6 +55,8 @@ import { StoreEmergencyScheduler } from './store-emergency.scheduler';
     StoreEmergencyService,
     StoreEmergencyProcessor,
     StoreEmergencyScheduler,
+    ForcedOpenService,
+    ForcedOpenProcessor,
   ],
 })
 export class IntegrationsModule {}

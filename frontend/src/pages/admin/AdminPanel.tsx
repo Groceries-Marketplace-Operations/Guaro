@@ -192,9 +192,9 @@ export default function AdminPanel() {
                 recentFailed={queues.handlers.recentFailed as { id: string; name: string; failedReason?: string; data: unknown; timestamp: number; attemptsMade: number }[]}
               />
               <QueueCard
-                label="auto-open"
-                counts={queues.autoOpen.counts}
-                recentFailed={queues.autoOpen.recentFailed as { id: string; name: string; failedReason?: string; data: unknown; timestamp: number; attemptsMade: number }[]}
+                label="forced-open"
+                counts={queues.forcedOpen.counts}
+                recentFailed={queues.forcedOpen.recentFailed as { id: string; name: string; failedReason?: string; data: unknown; timestamp: number; attemptsMade: number }[]}
               />
               <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>
                 Auto-refreshes every 10 s.

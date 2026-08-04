@@ -727,6 +727,7 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
               {(result?.data ?? []).map(shop => {
                 const detail = shopResultDetail(shop, es);
                 const failedItems = shopFailedItems(shop, result?.requestedUpcs ?? []);
+                const successfulItems = shop.result?.successfulItems ?? [];
                 return (
                   <tr key={shop.id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={shopCell}>{shop.shopId}</td>
@@ -738,6 +739,28 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
                     <td style={{ ...shopCell, color: shop.itemsFailed > 0 ? 'var(--red)' : 'var(--text-muted)', textAlign: 'center' }}>{shop.itemsFailed}</td>
                     <td style={{ ...shopCell, maxWidth: 460 }}>
                       <div title={detail}>{detail}</div>
+                      {successfulItems.length > 0 && (
+                        <details style={{ marginTop: 6 }}>
+                          <summary style={{ color: '#027A48', cursor: 'pointer', fontWeight: 700 }}>
+                            {shop.result?.endpoint === 'setStock'
+                              ? (es ? 'Ver items enviados' : 'View submitted items')
+                              : (es ? 'Ver items apagados' : 'View turned-off items')} ({successfulItems.length})
+                          </summary>
+                          <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
+                            {successfulItems.map((item, index) => (
+                              <div key={`${shop.id}-${item.appItemId}-${index}`} style={{ background: '#ECFDF3', borderRadius: 5, padding: '6px 8px' }}>
+                                <strong>{item.name || (es ? 'Sin nombre' : 'Unnamed item')}</strong>
+                                <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                                  UPC: {item.upc || '—'} · app_item_id: {item.appItemId}
+                                </div>
+                                {item.confirmation === 'accepted' && <div style={{ color: '#A15C00', marginTop: 2 }}>
+                                  {es ? 'Solicitud aceptada por setStock; pendiente de confirmación asíncrona.' : 'Accepted by setStock; asynchronous confirmation is pending.'}
+                                </div>}
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
                       {failedItems.length > 0 && (
                         <details style={{ marginTop: 6 }}>
                           <summary style={{ color: 'var(--red)', cursor: 'pointer', fontWeight: 700 }}>

@@ -236,6 +236,12 @@ export const storeEmergenciesApi = {
   restoreNow: (id: string) => client.post(`/integrations/store-emergencies/${id}/restore`),
 };
 
+export const forcedOpenApi = {
+  list: (page = 1, limit = 20) => client.get('/integrations/forced-open', { params: { page, limit } }),
+  get: (id: string) => client.get(`/integrations/forced-open/${id}`),
+  create: (data: object) => client.post('/integrations/forced-open', data),
+};
+
 /* ── Admin (super_admin only) ────────────────────────────────── */
 export const adminApi = {
   queueStatus: () => client.get('/admin/queue-status'),
