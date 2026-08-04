@@ -169,7 +169,8 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
                 </div>
                 {context.formatExamples.map(example => (
                   <div className="assistant-message assistant-message-bot assistant-format-example" key={example.title}>
-                    <strong>{es ? 'Ejemplo real del formato' : 'Real format example'}</strong>
+                    <strong>{es ? 'Ejemplo y configuraciones válidas' : 'Example and valid configurations'}</strong>
+                    <span className="assistant-example-title">{example.title}</span>
                     <div className="assistant-example-table-wrap">
                       <table>
                         <thead><tr>{example.headers.map(header => <th key={header}>{header}</th>)}</tr></thead>

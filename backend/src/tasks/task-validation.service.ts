@@ -74,26 +74,90 @@ function formatExamples(
   handlerName: string | undefined,
   shops: Array<{ shopId: string; appShopId: string; name: string | null }>,
 ) {
-  if (handlerName !== 'schedule_update_permanent') return [];
   const first = shops[0];
   const second = shops[1];
-  return [{
-    title: 'Permanent Business Hours Update',
-    headers: expectedColumns(handlerName),
-    rows: [
-      [first?.shopId ?? '5764607795237028465', '08:00-22:00', '08:00-22:00', '08:00-22:00', '08:00-22:00', '08:00-23:00', '09:00-23:00', '09:00-21:00'],
-      [second?.appShopId ?? 'MX-CIRCLEK-001', '00:00-23:59', '00:00-23:59', '00:00-23:59', '00:00-23:59', '00:00-23:59', 'Closed', 'Closed'],
-    ],
-    rowLabels: [
-      first?.name ? `shop_id real: ${first.name}` : 'Ejemplo usando shop_id',
-      second?.name ? `app_shop_id real: ${second.name}` : 'Ejemplo usando app_shop_id',
-    ],
-    notes: [
-      { es: 'La primera columna acepta un shop_id o un app_shop_id por fila.', en: 'The first column accepts either a shop_id or an app_shop_id on each row.' },
-      { es: 'Usa HH:MM-HH:MM; para cerrar un día escribe Closed.', en: 'Use HH:MM-HH:MM; enter Closed when the store does not open that day.' },
-      { es: 'No cambies el orden de Monday a Sunday.', en: 'Keep the columns in order from Monday through Sunday.' },
-    ],
-  }];
+  const shopId = first?.shopId ?? '5764607795237028465';
+  const appShopId = second?.appShopId ?? 'MX-CIRCLEK-001';
+
+  if (handlerName === 'schedule_update_permanent') {
+    return [
+      {
+        title: 'Excel · Permanent Business Hours Update',
+        headers: expectedColumns(handlerName),
+        rows: [
+          [shopId, '08:00-22:00', '08:00-13:00,14:00-22:00', '00:00-24:00', 'Closed', '', '9:00 - 18:00', '18:00-24:00'],
+          [appShopId, '07:30-20:30', '07:30-20:30', '07:30-20:30', '07:30-20:30', '07:30-21:00', 'Closed', 'Closed'],
+        ],
+        rowLabels: [
+          first?.name ? `shop_id real: ${first.name}` : 'Ejemplo usando shop_id',
+          second?.name ? `app_shop_id real: ${second.name}` : 'Ejemplo usando app_shop_id',
+        ],
+        notes: [
+          { es: 'La primera columna acepta un shop_id o un app_shop_id por fila.', en: 'The first column accepts either a shop_id or an app_shop_id on each row.' },
+          { es: 'Cada fila debe conservar las siete columnas de Monday a Sunday.', en: 'Every row must keep all seven columns from Monday through Sunday.' },
+          { es: 'Debe existir al menos un día abierto; una fila con los siete días cerrados se rechaza.', en: 'At least one day must be open; a row with all seven days closed is rejected.' },
+        ],
+      },
+      {
+        title: 'Valid schedule configurations / Configuraciones válidas por día',
+        headers: ['Configuration / Configuración', 'Valid value / Valor válido', 'Result / Resultado'],
+        rows: [
+          ['Single / Un horario', '08:00-22:00', 'One range / Un rango'],
+          ['Split / Horario dividido', '08:00-13:00,14:00-22:00', 'Comma-separated ranges / Rangos separados por coma'],
+          ['24 hours / 24 horas', '00:00-24:00', 'Open all day / Abierto todo el día'],
+          ['Closed / Cerrado', 'Closed', 'Case-insensitive / No distingue mayúsculas'],
+          ['Blank / Vacío', '', 'Closed with warning / Cerrado con advertencia'],
+          ['Flexible / Formato flexible', '9:00 - 18:00', 'One/two-digit hour and spaces / Hora de uno/dos dígitos y espacios'],
+        ],
+        rowLabels: [],
+        notes: [
+          { es: 'Las horas de inicio válidas son 00:00–23:59; la hora final también admite 24:00.', en: 'Valid start times are 00:00–23:59; the end time may also be 24:00.' },
+          { es: 'Los minutos deben tener dos dígitos y estar entre 00 y 59.', en: 'Minutes require two digits and must be between 00 and 59.' },
+        ],
+      },
+    ];
+  }
+
+  if (handlerName === 'schedule_update_dates') {
+    return [
+      {
+        title: 'Excel · Specific Days Business Hours Update',
+        headers: ['Shop ID / App Shop ID', 'Date 1', 'Schedule 1', 'Date 2', 'Schedule 2', 'Date 3', 'Schedule 3'],
+        rows: [
+          [shopId, '2026-12-24', '08:00-18:00', '2026-12-25', 'Closed', '2026-12-31', '08:00-13:00,14:00-20:00'],
+          [appShopId, '2027-01-01', '00:00-24:00', '2027-01-06', '', '', ''],
+        ],
+        rowLabels: [
+          first?.name ? `shop_id real: ${first.name}` : 'Ejemplo usando shop_id',
+          second?.name ? `app_shop_id real: ${second.name}` : 'Ejemplo usando app_shop_id',
+        ],
+        notes: [
+          { es: 'La primera columna acepta un shop_id o un app_shop_id por fila.', en: 'The first column accepts either a shop_id or an app_shop_id on each row.' },
+          { es: 'Después agrega pares Date / Schedule. Puedes repetir tantos pares como necesites en la misma fila.', en: 'Then add Date / Schedule pairs. Repeat as many pairs as needed on the same row.' },
+          { es: 'La fecha puede ser una celda de fecha de Excel o texto YYYY-MM-DD.', en: 'The date may be an Excel date cell or YYYY-MM-DD text.' },
+        ],
+      },
+      {
+        title: 'Valid date configurations / Configuraciones válidas por fecha',
+        headers: ['Configuration / Configuración', 'Date / Fecha', 'Schedule / Horario', 'Result / Resultado'],
+        rows: [
+          ['Single / Un horario', '2026-12-24', '08:00-18:00', 'One range / Un rango'],
+          ['Split / Horario dividido', '2026-12-31', '08:00-13:00,14:00-20:00', 'Comma-separated ranges / Rangos separados por coma'],
+          ['24 hours / 24 horas', '2027-01-01', '00:00-24:00', 'Open all day / Abierto todo el día'],
+          ['Closed / Cerrado', '2026-12-25', 'Closed', 'Closed all day / Cerrado todo el día'],
+          ['Blank / Vacío', '2027-01-06', '', 'Closed with warning / Cerrado con advertencia'],
+          ['Multiple dates / Varios días', 'Date 1 … Date N', 'Schedule 1 … Schedule N', 'Repeatable pairs / Pares repetibles'],
+        ],
+        rowLabels: [],
+        notes: [
+          { es: 'Cada horario admite las mismas variantes que el horario permanente.', en: 'Each schedule accepts the same variants as permanent business hours.' },
+          { es: 'Un par completamente vacío al final de la fila se ignora.', en: 'A completely empty pair at the end of the row is ignored.' },
+        ],
+      },
+    ];
+  }
+
+  return [];
 }
 
 @Injectable()
@@ -131,7 +195,7 @@ export class TaskValidationService {
     const taskType = await this.assertTaskTypeAccess(taskTypeId, user);
     const handlerName = this.getFileHandler(taskType.stepDefinitions);
     const fileFields = taskType.formFields.filter(field => field.tipo === FormFieldTipo.file);
-    const sampleShops = handlerName === 'schedule_update_permanent'
+    const sampleShops = ['schedule_update_permanent', 'schedule_update_dates'].includes(handlerName ?? '')
       ? await this.prisma.shop.findMany({
           where: { deletedAt: null },
           select: { shopId: true, appShopId: true, name: true },
@@ -184,9 +248,13 @@ export class TaskValidationService {
         ? (spanish ? `Usa la plantilla configurada: ${context.templates.map(t => t.name).join(', ')}. Puedes abrirla desde la sección Plantillas.` : `Use the configured template: ${context.templates.map(t => t.name).join(', ')}. You can open it from Templates.`)
         : (spanish ? 'Esta tarea no tiene una plantilla configurada. Validaré los campos definidos directamente en el sistema.' : 'This task has no configured template. I will validate the fields defined directly in the system.');
     } else if (/columna|column|formato|format|excel|xlsx/.test(q) && rules) {
-      const example = context.formatExamples[0];
-      const exampleText = example
-        ? ` ${spanish ? 'Ejemplo' : 'Example'}: ${example.headers.join(' | ')}\n${example.rows[0].join(' | ')}`
+      const exampleText = context.formatExamples.length > 0
+        ? `\n${context.formatExamples.map(example => [
+            `${example.title}:`,
+            example.headers.join(' | '),
+            ...example.rows.map(row => row.map(value => value || (spanish ? '[vacío]' : '[blank]')).join(' | ')),
+            ...example.notes.map(note => `- ${spanish ? note.es : note.en}`),
+          ].join('\n')).join('\n\n')}`
         : '';
       answer = spanish
         ? `Acepto .xlsx de hasta ${rules.maxSizeMb} MB. Las columnas esperadas, en orden, son: ${rules.expectedColumns.join(', ')}.${exampleText}`
@@ -352,7 +420,7 @@ export class TaskValidationService {
       if (!issues.slice(before).some(issue => issue.severity !== 'warning')) validRows += 1;
     }
 
-    return this.sheetResult(headerOk, 'Expected: app_shop_id followed by one or more Date / Schedule pairs.', issues, validRows, totalRows);
+    return this.sheetResult(headerOk, 'Expected: Shop ID / App Shop ID followed by one or more Date / Schedule pairs.', issues, validRows, totalRows);
   }
 
   private validateStock(sheet: ExcelJS.Worksheet) {
