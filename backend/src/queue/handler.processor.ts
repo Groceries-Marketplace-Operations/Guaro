@@ -7,6 +7,10 @@ import { TaskEngineService } from '../tasks/task-engine.service';
 import { WebhookSenderService, WebhookPayload } from '../webhooks/webhook-sender.service';
 import { ConfigService } from '@nestjs/config';
 import { decrypt } from '../common/crypto.util';
+import {
+  TargetedPromotionReaderService,
+  TargetedPromotionRefreshResult,
+} from '../file-integrations/targeted-promotion-reader.service';
 
 // ── Job payload (what travels in the BullMQ queue) ───────────────────────────
 
@@ -106,7 +110,10 @@ export interface HandlerContext {
   forEachStorePromotionBatch(
     shopExternalId: string,
     callback: (promotions: StorePromotionExportRow[]) => Promise<void> | void,
+    sftpApplicationId?: string,
   ): Promise<number>;
+  /** Refresh one selected store directly from its brand SFTP account. */
+  refreshSelectedStorePromotions(shopExternalId: string): Promise<TargetedPromotionRefreshResult>;
   /** Read every current promotion linked to the task brand in bounded batches. */
   forEachBrandPromotionBatch(
     callback: (promotions: StorePromotionExportRow[]) => Promise<void> | void,
@@ -138,6 +145,7 @@ export class HandlerProcessor extends WorkerHost {
     private prisma: PrismaService,
     private config: ConfigService,
     private webhooks: WebhookSenderService,
+    private targetedPromotionReader: TargetedPromotionReaderService,
   ) {
     super();
   }
@@ -318,7 +326,7 @@ export class HandlerProcessor extends WorkerHost {
         }
         return total;
       },
-      forEachStorePromotionBatch: async (shopExternalId, callback) => {
+      forEachStorePromotionBatch: async (shopExternalId, callback, sftpApplicationId) => {
         if (!brand) throw new Error('Task has no brand linked');
         const batchSize = 1_000;
         let offset = 0;
@@ -327,6 +335,7 @@ export class HandlerProcessor extends WorkerHost {
           const promotions = await this.prisma.storePromotion.findMany({
             where: {
               shopExternalId,
+              ...(sftpApplicationId ? { sftpApplicationId } : {}),
               sftpApplication: { brandId: brand.id, active: true, deletedAt: null },
             },
             select: {
@@ -377,6 +386,10 @@ export class HandlerProcessor extends WorkerHost {
           if (promotions.length < batchSize) break;
         }
         return total;
+      },
+      refreshSelectedStorePromotions: async (shopExternalId) => {
+        if (!brand) throw new Error('Task has no brand linked');
+        return this.targetedPromotionReader.refreshSelectedStore(brand.id, shopExternalId);
       },
       forEachBrandPromotionBatch: async (callback) => {
         if (!brand) throw new Error('Task has no brand linked');

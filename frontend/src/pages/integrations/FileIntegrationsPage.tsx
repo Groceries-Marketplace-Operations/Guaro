@@ -28,7 +28,7 @@ function initialForm(kind: FileIntegrationKind): RuleForm {
     ? { name: '', kind, country: 'MX', sftpApplicationId: '', active: false, intervalMinutes: 1440,
       filePattern: '*', sourceScope: 'city_club', thresholdAmount: 3000, delimiter: '', priceColumn: 4, maxFilesPerRun: 250 }
     : { name: '', kind, country: '', sftpApplicationId: '', active: false, intervalMinutes: 1440,
-      filePattern: '*', sourceScope: 'all', thresholdAmount: 0, delimiter: '', priceColumn: 0, maxFilesPerRun: 100 };
+      filePattern: '*', sourceScope: 'all', thresholdAmount: 0, delimiter: '', priceColumn: 0, maxFilesPerRun: 20 };
 }
 
 function date(value?: string) {
@@ -147,7 +147,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
                   {isFilter && <span className="badge">&gt; {rule.thresholdAmount}</span>}
                 </div>
                 <div className="text-muted" style={{ marginTop: 8, fontSize: 12 }}>
-                  Cada {rule.intervalMinutes ?? '—'} min · Máx. {rule.maxFilesPerRun} archivos · Última: {date(rule.lastRunAt)} · Próxima: {date(rule.nextRunAt)}
+                  Cada {rule.intervalMinutes ?? '—'} min · Máx. {rule.maxFilesPerRun} {isFilter ? 'archivos' : 'tiendas'} · Última: {date(rule.lastRunAt)} · Próxima: {date(rule.nextRunAt)}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -213,7 +213,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
       </>}
       <div className="form-row">
         <div className="form-group"><label className="form-label">Recurrencia (minutos)</label><input className="form-input" type="number" min={5} value={form.intervalMinutes} onChange={event => setForm(value => ({ ...value, intervalMinutes: Number(event.target.value) }))} /></div>
-        <div className="form-group"><label className="form-label">Máximo de archivos por ejecución</label><input className="form-input" type="number" min={1} max={1000} value={form.maxFilesPerRun} onChange={event => setForm(value => ({ ...value, maxFilesPerRun: Number(event.target.value) }))} /></div>
+        <div className="form-group"><label className="form-label">Máximo de {isFilter ? 'archivos' : 'tiendas'} por ejecución</label><input className="form-input" type="number" min={1} max={isFilter ? 1000 : 20} value={form.maxFilesPerRun} onChange={event => setForm(value => ({ ...value, maxFilesPerRun: Number(event.target.value) }))} /></div>
       </div>
       <div className="form-group"><label className="form-label">Delimitador (vacío = autodetectar)</label><input className="form-input" placeholder="|, ;, , o \\t" value={form.delimiter} onChange={event => setForm(value => ({ ...value, delimiter: event.target.value }))} /></div>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={form.active} onChange={event => setForm(value => ({ ...value, active: event.target.checked }))} /> Ejecutar automáticamente</label>

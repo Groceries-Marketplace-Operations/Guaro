@@ -9,10 +9,13 @@ import { posix, resolve } from 'path';
 import SftpClient = require('ssh2-sftp-client');
 import { PrismaService } from '../prisma/prisma.service';
 import { detectDelimiter, looksLikeCityClub, parseAmount, wildcardToRegExp } from './file-integration.util';
-import { ParsedPromotionRow, parsePromotionLines, promotionShopIdFromFileName } from './promotion-file.util';
+import { parsePromotionLines, promotionShopIdFromFileName } from './promotion-file.util';
 import { SftpConnectionService } from './sftp-connection.service';
+import { StorePromotionStorageService } from './store-promotion-storage.service';
 
 class FileIntegrationCancelledError extends Error {}
+
+const PROMOTION_SHOPS_PER_RUN_LIMIT = 20;
 
 interface FileResult {
   fileName: string;
@@ -42,6 +45,7 @@ export class FileIntegrationProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sftp: SftpConnectionService,
+    private readonly promotionStorage: StorePromotionStorageService,
     private readonly config: ConfigService,
   ) { super(); }
 
@@ -80,7 +84,12 @@ export class FileIntegrationProcessor extends WorkerHost {
           ? allFiles.filter(file => file.modifyTime > rule.lastRemoteModifiedAt!.getTime())
           : allFiles;
         const candidates = rule.kind === FileIntegrationKind.complex_promotion_reader
-          ? await this.promotionCandidates(rule.sftpApplicationId, allFiles, newFiles, rule.maxFilesPerRun)
+          ? await this.promotionCandidates(
+              rule.sftpApplicationId,
+              allFiles,
+              newFiles,
+              Math.min(rule.maxFilesPerRun, PROMOTION_SHOPS_PER_RUN_LIMIT),
+            )
           : newFiles.slice(0, rule.maxFilesPerRun);
 
         await this.prisma.fileIntegrationExecution.update({
@@ -129,7 +138,7 @@ export class FileIntegrationProcessor extends WorkerHost {
               }
               if (groups.size === 0 && fileShopId) groups.set(fileShopId, []);
               for (const [shopExternalId, values] of groups) {
-                await this.replaceStoredPromotions(
+                await this.promotionStorage.replace(
                   rule.sftpApplicationId,
                   shopExternalId,
                   file.name,
@@ -271,50 +280,6 @@ export class FileIntegrationProcessor extends WorkerHost {
     return [...recognized, ...unrecognized]
       .sort((left, right) => left.modifyTime - right.modifyTime || left.name.localeCompare(right.name))
       .slice(0, limit);
-  }
-
-  private async replaceStoredPromotions(
-    sftpApplicationId: string,
-    shopExternalId: string,
-    sourceFile: string,
-    sourceModifiedAt: Date,
-    values: ParsedPromotionRow[],
-  ) {
-    const unique = [...new Map(values.map(value => [`${value.activityId}\u0000${value.sku}`, value])).values()];
-    const writes: Prisma.PrismaPromise<unknown>[] = [
-      this.prisma.storePromotion.deleteMany({ where: { sftpApplicationId, shopExternalId } }),
-    ];
-    if (unique.length > 0) {
-      writes.push(this.prisma.storePromotion.createMany({
-        data: unique.map(value => ({
-          sftpApplicationId,
-          shopExternalId,
-          activityId: value.activityId,
-          activityName: value.activityName,
-          startDate: value.startDate,
-          endDate: value.endDate,
-          activityType: value.activityType,
-          sku: value.sku,
-          discountAmount: value.discountAmount,
-          discountPercentage: value.discountPercentage,
-          buyNum: value.buyNum,
-          getNum: value.getNum,
-          bxgyX: value.bxgyX,
-          bxgyY: value.bxgyY,
-          actionType: value.actionType,
-          sourceFile,
-          sourceModifiedAt,
-          rawData: value.rawData as Prisma.InputJsonValue,
-        })),
-        skipDuplicates: true,
-      }));
-    }
-    writes.push(this.prisma.promotionShopSnapshot.upsert({
-        where: { sftpApplicationId_shopExternalId: { sftpApplicationId, shopExternalId } },
-        create: { sftpApplicationId, shopExternalId, sourceFile, sourceModifiedAt, rowCount: unique.length },
-        update: { sourceFile, sourceModifiedAt, rowCount: unique.length, fetchedAt: new Date() },
-      }));
-    await this.prisma.$transaction(writes);
   }
 
   private async replaceRemoteFile(

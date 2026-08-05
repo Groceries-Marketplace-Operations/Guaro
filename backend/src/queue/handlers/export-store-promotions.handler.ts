@@ -13,7 +13,13 @@ export async function exportStorePromotions(ctx: HandlerContext): Promise<unknow
     throw new Error(`Store ${selectedShop.shopId} does not belong to brand ${brand.brandName}`);
   }
 
-  ctx.addNote(`Exporting locally stored promotions for ${selectedShop.shopId} (${selectedShop.appShopId})...`);
+  ctx.addNote(`Consulting SFTP for selected store ${selectedShop.shopId} (App Shop ID ${selectedShop.appShopId})...`);
+  const refreshed = await ctx.refreshSelectedStorePromotions(selectedShop.appShopId);
+  ctx.addNote(
+    `SFTP source: ${refreshed.sourceAccount}/${refreshed.sourceFile}. `
+    + `${refreshed.rowsStored} row(s) stored; ${refreshed.invalidRows} invalid row(s).`,
+  );
+  ctx.addNote('Generating the export from the refreshed snapshot...');
   let storedPromotions = 0;
   const exported = await writeMenuExport({
     prefix: 'store-promotions',
@@ -64,18 +70,23 @@ export async function exportStorePromotions(ctx: HandlerContext): Promise<unknow
             promotion.fetchedAt.toISOString(),
           ]);
         }
-      });
+      }, refreshed.sftpApplicationId);
     },
   });
   if (storedPromotions === 0) {
-    ctx.addNote('No promotions are stored for this App Shop ID. Run the SFTP promotion reader first and verify the SFTP account is linked to the brand.');
+    ctx.addNote('The selected SFTP file contains no valid promotion rows for this store.');
   } else {
     ctx.addNote(`Export completed: ${storedPromotions} promotion item row(s).`);
   }
   logger.log(`Saved ${exported.filename} with ${storedPromotions} promotion row(s)`);
   return {
     fileKey: exported.filename,
-    source: 'local_store_promotions',
+    source: 'selected_store_sftp',
+    sourceAccount: refreshed.sourceAccount,
+    sourceFile: refreshed.sourceFile,
+    sourceModifiedAt: refreshed.sourceModifiedAt.toISOString(),
+    accountsChecked: refreshed.accountsChecked,
+    filesScanned: refreshed.filesScanned,
     shopId: selectedShop.shopId,
     appShopId: selectedShop.appShopId,
     totalPromotions: storedPromotions,

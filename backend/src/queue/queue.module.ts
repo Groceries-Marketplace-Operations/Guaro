@@ -9,6 +9,7 @@ import { HandlerProcessor } from './handler.processor';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksModule } from '../webhooks/webhooks.module';
+import { FileIntegrationsModule } from '../file-integrations/file-integrations.module';
 
 // Register all concrete handler implementations
 import './handlers/index';
@@ -36,6 +37,7 @@ import './handlers/index';
     PrismaModule,
     ConfigModule,
     WebhooksModule,
+    FileIntegrationsModule,
   ],
   providers: [HandlerProcessor],
 })

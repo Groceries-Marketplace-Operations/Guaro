@@ -7,6 +7,8 @@ import { basename, resolve, sep } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertFileIntegrationRuleDto } from './dto/upsert-file-integration-rule.dto';
 
+const PROMOTION_SHOPS_PER_RUN_LIMIT = 20;
+
 @Injectable()
 export class FileIntegrationsService {
   constructor(
@@ -23,7 +25,12 @@ export class FileIntegrationsService {
       },
       orderBy: { createdAt: 'desc' },
     });
-    return rules.map(rule => ({ ...rule, thresholdAmount: rule.thresholdAmount?.toString() ?? null,
+    return rules.map(rule => ({
+      ...rule,
+      maxFilesPerRun: rule.kind === FileIntegrationKind.complex_promotion_reader
+        ? Math.min(rule.maxFilesPerRun, PROMOTION_SHOPS_PER_RUN_LIMIT)
+        : rule.maxFilesPerRun,
+      thresholdAmount: rule.thresholdAmount?.toString() ?? null,
       executions: rule.executions.map(execution => this.serializeExecution(execution)) }));
   }
 
@@ -125,7 +132,9 @@ export class FileIntegrationsService {
       filePattern: dto.filePattern?.trim() || '*', sourceScope: dto.sourceScope?.trim() || 'all',
       thresholdAmount: dto.thresholdAmount === undefined ? null : new Prisma.Decimal(dto.thresholdAmount),
       delimiter: dto.delimiter?.trim() || null, priceColumn: dto.priceColumn ?? null,
-      maxFilesPerRun: dto.maxFilesPerRun ?? 250,
+      maxFilesPerRun: dto.kind === FileIntegrationKind.complex_promotion_reader
+        ? Math.min(dto.maxFilesPerRun ?? PROMOTION_SHOPS_PER_RUN_LIMIT, PROMOTION_SHOPS_PER_RUN_LIMIT)
+        : dto.maxFilesPerRun ?? 250,
     };
   }
 
