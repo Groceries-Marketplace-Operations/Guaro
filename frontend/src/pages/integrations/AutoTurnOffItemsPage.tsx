@@ -33,6 +33,7 @@ interface RuleForm {
   shopIds: string;
   upcs: string;
   stockEndpoint: StockEndpoint;
+  stockValue: number;
   scheduleMode: ScheduleMode;
   frequency: number;
   unit: FrequencyUnit;
@@ -51,7 +52,7 @@ function defaultStartsAt() {
 
 function newRuleForm(): RuleForm {
   return {
-    name: '', brandId: '', shopIds: '', upcs: '', stockEndpoint: 'setStock', frequency: 10,
+    name: '', brandId: '', shopIds: '', upcs: '', stockEndpoint: 'setStock', stockValue: 0, frequency: 10,
     scheduleMode: 'interval', unit: 'minutes', executionTimes: ['09:00'],
     startsAt: defaultStartsAt(), endsAt: '', active: true,
   };
@@ -171,7 +172,7 @@ export default function AutoTurnOffItemsPage() {
 
   const copy = es ? {
     title: 'Apagado automático de ítems',
-    subtitle: 'Ejecuta Stock API con stock 0 por regla, marca, tiendas y UPCs.',
+    subtitle: 'Ejecuta Stock API con un valor de stock configurable por regla, marca, tiendas y UPCs.',
     newPool: 'Nuevo pool', editPool: 'Editar pool', poolName: 'Nombre del pool', country: 'País',
     webhook: 'Webhook (opcional)', noWebhook: 'Sin webhook', active: 'Activo', inactive: 'Inactivo',
     noPools: 'No hay pools configurados.', rules: 'reglas', addRule: 'Agregar regla',
@@ -181,6 +182,7 @@ export default function AutoTurnOffItemsPage() {
     dailyTimes: 'Horas diarias', addTime: 'Agregar hora', removeTime: 'Quitar',
     dailyTimesHelp: 'Las horas se interpretan en la zona horaria del país del pool.',
     endpoint: 'Versión de Stock API', asyncEndpoint: 'setStock (asíncrono)', syncEndpoint: 'setstockSync (síncrono)',
+    stockValue: 'Valor de stock', stockValueHelp: 'Se enviará este entero a todos los UPCs de la regla. Usa 0 para apagarlos o un valor mayor para establecer disponibilidad.',
     shopHelp: 'Ingresa un shop_id de DiDi por línea o separado por coma. Debe tener 19 dígitos e iniciar con 57.',
     frequencyHelp: 'setStock requiere mínimo 10 minutos; setstockSync permite desde 1 minuto.',
     syncLimit: 'setstockSync permite como máximo 2,000 UPCs por regla.',
@@ -190,7 +192,7 @@ export default function AutoTurnOffItemsPage() {
     every: 'Cada', minutes: 'minutos', hours: 'horas', days: 'días',
     selectBrand: 'Selecciona una marca', selectAll: 'Seleccionar todas', clear: 'Limpiar',
     searchShop: 'Buscar tienda…', noShops: 'No hay tiendas para esta marca.',
-    upcHelp: 'Uno por línea o separados por coma. Todos se enviarán con stock 0.',
+    upcHelp: 'Uno por línea o separados por coma. Todos se enviarán con el valor de stock configurado.',
     save: 'Guardar', cancel: 'Cancelar', run: 'Ejecutar ahora', running: 'Encolando…',
     history: 'Historial', hide: 'Ocultar', edit: 'Editar', remove: 'Eliminar',
     next: 'Próxima', last: 'Última', never: 'Nunca', stores: 'tiendas', items: 'UPCs',
@@ -205,7 +207,7 @@ export default function AutoTurnOffItemsPage() {
     storedShops: 'tiendas almacenadas para esta marca', useAllShops: 'Usar todas', addStoredShop: 'Agregar tienda almacenada',
   } : {
     title: 'Auto Turn Off Items',
-    subtitle: 'Run Stock API with stock 0 by rule, brand, stores and UPCs.',
+    subtitle: 'Run Stock API with a configurable stock value by rule, brand, stores and UPCs.',
     newPool: 'New pool', editPool: 'Edit pool', poolName: 'Pool name', country: 'Country',
     webhook: 'Webhook (optional)', noWebhook: 'No webhook', active: 'Active', inactive: 'Inactive',
     noPools: 'No pools configured.', rules: 'rules', addRule: 'Add rule',
@@ -215,6 +217,7 @@ export default function AutoTurnOffItemsPage() {
     dailyTimes: 'Daily times', addTime: 'Add time', removeTime: 'Remove',
     dailyTimesHelp: 'Times use the timezone of the pool country.',
     endpoint: 'Stock API version', asyncEndpoint: 'setStock (asynchronous)', syncEndpoint: 'setstockSync (synchronous)',
+    stockValue: 'Stock value', stockValueHelp: 'This integer is sent for every UPC in the rule. Use 0 to turn items off or a greater value to set availability.',
     shopHelp: 'Enter one DiDi shop_id per line or comma-separated. It must contain 19 digits and start with 57.',
     frequencyHelp: 'setStock requires at least 10 minutes; setstockSync allows intervals from 1 minute.',
     syncLimit: 'setstockSync accepts a maximum of 2,000 UPCs per rule.',
@@ -224,7 +227,7 @@ export default function AutoTurnOffItemsPage() {
     every: 'Every', minutes: 'minutes', hours: 'hours', days: 'days',
     selectBrand: 'Select a brand', selectAll: 'Select all', clear: 'Clear',
     searchShop: 'Search store…', noShops: 'No stores found for this brand.',
-    upcHelp: 'One per line or comma-separated. Every item is sent with stock 0.',
+    upcHelp: 'One per line or comma-separated. Every item is sent with the configured stock value.',
     save: 'Save', cancel: 'Cancel', run: 'Run now', running: 'Queueing…',
     history: 'History', hide: 'Hide', edit: 'Edit', remove: 'Delete',
     next: 'Next', last: 'Last', never: 'Never', stores: 'stores', items: 'UPCs',
@@ -314,6 +317,7 @@ export default function AutoTurnOffItemsPage() {
       shopIds: rule.shopIds.join('\n'),
       upcs: rule.upcs.join('\n'),
       stockEndpoint: rule.stockEndpoint,
+      stockValue: rule.stockValue ?? 0,
       scheduleMode: rule.scheduleMode ?? 'interval',
       executionTimes: rule.executionTimes?.length ? [...rule.executionTimes] : ['09:00'],
       ...fromMinutes(rule.intervalMinutes),
@@ -362,6 +366,9 @@ export default function AutoTurnOffItemsPage() {
       return setError(es ? 'Las horas deben usar el formato HH:mm.' : 'Times must use HH:mm format.');
     }
     if (ruleForm.stockEndpoint === 'setstockSync' && upcs.length > 2000) return setError(copy.syncLimit);
+    if (!Number.isInteger(ruleForm.stockValue) || ruleForm.stockValue < 0 || ruleForm.stockValue > 2147483647) {
+      return setError(es ? 'El valor de stock debe ser un entero entre 0 y 2,147,483,647.' : 'Stock value must be an integer between 0 and 2,147,483,647.');
+    }
     if (ruleForm.endsAt && new Date(ruleForm.endsAt) <= new Date(ruleForm.startsAt)) {
       return setError(es ? 'La fecha de término debe ser posterior al inicio.' : 'End date must be later than start date.');
     }
@@ -369,7 +376,7 @@ export default function AutoTurnOffItemsPage() {
     try {
       const payload = {
         name: ruleForm.name.trim(), brandId: ruleForm.brandId, shopIds,
-        upcs, stockEndpoint: ruleForm.stockEndpoint, intervalMinutes,
+        upcs, stockEndpoint: ruleForm.stockEndpoint, stockValue: ruleForm.stockValue, intervalMinutes,
         scheduleMode: ruleForm.scheduleMode,
         executionTimes: ruleForm.scheduleMode === 'daily_times' ? executionTimes : undefined,
         startsAt: new Date(ruleForm.startsAt).toISOString(),
@@ -476,6 +483,7 @@ export default function AutoTurnOffItemsPage() {
                         <span style={tag}>{rule.shopIds.length} {copy.stores}</span>
                         <span style={tag}>{rule.upcs.length} {copy.items}</span>
                         <span style={tag}>{rule.stockEndpoint}</span>
+                        <span style={tag}>{copy.stockValue}: {rule.stockValue ?? 0}</span>
                         <span style={{ ...tag, color: 'var(--orange)' }}>{formatRuleSchedule(rule, es)}</span>
                         <span style={{ ...tag, color: !pool.active && !['running', 'pending'].includes(rule.executions?.[0]?.status ?? '') ? '#B54708' : rule.executions?.[0] ? statusColor[rule.executions[0].status] : rule.active ? '#027A48' : '#667085' }}>
                           {copy.status}: {!pool.active && !['running', 'pending'].includes(rule.executions?.[0]?.status ?? '') ? copy.pausedByPool : rule.executions?.[0] ? executionStatusLabel(rule.executions[0].status, es) : rule.active ? copy.scheduledStatus : copy.inactive}
@@ -585,6 +593,19 @@ export default function AutoTurnOffItemsPage() {
                 <option value="setStock">{copy.asyncEndpoint}</option>
                 <option value="setstockSync">{copy.syncEndpoint}</option>
               </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">{copy.stockValue}</label>
+              <input
+                className="form-input"
+                type="number"
+                min="0"
+                max="2147483647"
+                step="1"
+                value={ruleForm.stockValue}
+                onChange={event => setRuleForm({ ...ruleForm, stockValue: Number(event.target.value) })}
+              />
+              <small style={{ color: 'var(--text-muted)' }}>{copy.stockValueHelp}</small>
             </div>
             <div className="form-group"><label className="form-label">{copy.startsAt}</label><input className="form-input" type="datetime-local" value={ruleForm.startsAt} onChange={event => setRuleForm({ ...ruleForm, startsAt: event.target.value })} /></div>
             <div className="form-group"><label className="form-label">{copy.endsAt}</label><input className="form-input" type="datetime-local" value={ruleForm.endsAt} onChange={event => setRuleForm({ ...ruleForm, endsAt: event.target.value })} /><small style={{ color: 'var(--text-muted)' }}>{copy.endHelp}</small></div>

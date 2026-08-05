@@ -183,6 +183,10 @@ export function resolveAppItemIds(items: Array<Record<string, unknown>>, request
   };
 }
 
+export function buildStockList(appItemIds: string[], stockValue: number) {
+  return appItemIds.map(appItemId => ({ app_item_id: appItemId, stock: stockValue }));
+}
+
 export async function callStockApi(
   endpoint: StockEndpoint,
   authToken: string,

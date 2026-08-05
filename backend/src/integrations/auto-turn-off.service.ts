@@ -146,6 +146,7 @@ export class AutoTurnOffService {
         shopIds,
         resolvedShopIds: {},
         stockEndpoint: dto.stockEndpoint,
+        stockValue: dto.stockValue ?? 0,
         startsAt,
         endsAt,
         nextRunAt: nextAutoTurnOffOccurrence({
@@ -206,6 +207,7 @@ export class AutoTurnOffService {
         shopIds,
         resolvedShopIds: dto.shopIds !== undefined || dto.brandId !== undefined ? {} : undefined,
         stockEndpoint: dto.stockEndpoint,
+        stockValue: dto.stockValue,
         scheduleMode: dto.scheduleMode,
         executionTimes,
         startsAt: dto.startsAt ? startsAt : undefined,

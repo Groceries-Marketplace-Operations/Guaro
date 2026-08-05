@@ -982,6 +982,7 @@ model AutoTurnOffRule {
   shopIds         String[]  @map("shop_ids")
   resolvedShopIds Json?     @map("resolved_shop_ids")
   stockEndpoint   String    @default("setStock") @map("stock_endpoint")
+  stockValue      Int       @default(0) @map("stock_value")
   startsAt        DateTime  @map("starts_at") @db.Timestamptz
   endsAt          DateTime? @map("ends_at") @db.Timestamptz
   nextRunAt       DateTime  @map("next_run_at") @db.Timestamptz

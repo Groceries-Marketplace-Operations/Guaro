@@ -9,6 +9,7 @@ import { decrypt } from '../common/crypto.util';
 import { fetchShopIdMap, getAuthToken } from '../queue/handlers/didi-food.util';
 import {
   AutoTurnOffCancelledError,
+  buildStockList,
   callStockApi,
   resolveAppItemIds,
   ShopResult,
@@ -172,7 +173,7 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
         localResult = await callStockApi(
           endpoint,
           authToken,
-          cached.appItemIds.map(appItemId => ({ app_item_id: appItemId, stock: 0 })),
+          buildStockList(cached.appItemIds, rule.stockValue),
         );
       } catch (error) {
         const reason = (error as Error).message;

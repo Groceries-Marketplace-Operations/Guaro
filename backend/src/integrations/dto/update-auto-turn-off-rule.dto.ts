@@ -65,6 +65,12 @@ export class UpdateAutoTurnOffRuleDto {
   stockEndpoint?: 'setStock' | 'setstockSync';
 
   @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(2147483647)
+  stockValue?: number;
+
+  @IsOptional()
   @IsDateString()
   startsAt?: string;
 

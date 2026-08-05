@@ -299,6 +299,7 @@ export interface AutoTurnOffRule {
   upcs: string[];
   shopIds: string[];
   stockEndpoint: 'setStock' | 'setstockSync';
+  stockValue: number;
   startsAt: string;
   endsAt?: string;
   nextRunAt: string;
