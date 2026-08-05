@@ -74,9 +74,16 @@ export class FileIntegrationsService {
 
   async stop(id: string) {
     await this.findRule(id);
+    const now = new Date();
     const result = await this.prisma.fileIntegrationExecution.updateMany({
       where: { ruleId: id, status: { in: ['pending', 'running'] } },
-      data: { cancelRequested: true },
+      data: {
+        cancelRequested: true,
+        status: 'cancelled',
+        finishedAt: now,
+        currentFile: null,
+        errorMessage: 'Stopped manually',
+      },
     });
     if (!result.count) throw new BadRequestException('This rule has no active execution');
     return { stopped: true };

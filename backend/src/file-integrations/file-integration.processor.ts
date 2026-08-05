@@ -14,6 +14,7 @@ import { SftpConnectionService } from './sftp-connection.service';
 import { StorePromotionStorageService } from './store-promotion-storage.service';
 
 class FileIntegrationCancelledError extends Error {}
+class SftpOperationTimeoutError extends Error {}
 
 const PROMOTION_SHOPS_PER_RUN_LIMIT = 20;
 
@@ -76,7 +77,7 @@ export class FileIntegrationProcessor extends WorkerHost {
       await this.sftp.withClient(rule.sftpApplicationId, async (client, rootPath) => {
         await this.ensureActive(executionId);
         const matcher = wildcardToRegExp(rule.filePattern);
-        const allFiles = (await client.list(rootPath))
+        const allFiles = (await this.withSftpTimeout(client, client.list(rootPath), 'SFTP directory listing'))
           .filter(file => file.type === '-' && matcher.test(file.name))
           .sort((a, b) => a.modifyTime - b.modifyTime || a.name.localeCompare(b.name));
         filesScanned = allFiles.length;
@@ -90,7 +91,9 @@ export class FileIntegrationProcessor extends WorkerHost {
               newFiles,
               Math.min(rule.maxFilesPerRun, PROMOTION_SHOPS_PER_RUN_LIMIT),
             )
-          : newFiles.slice(0, rule.maxFilesPerRun);
+          : [...newFiles]
+              .sort((a, b) => b.modifyTime - a.modifyTime || b.name.localeCompare(a.name))
+              .slice(0, rule.maxFilesPerRun);
 
         await this.prisma.fileIntegrationExecution.update({
           where: { id: executionId }, data: { filesScanned },
@@ -110,7 +113,12 @@ export class FileIntegrationProcessor extends WorkerHost {
           };
           try {
             const remotePath = this.sftp.safeRemotePath(rootPath, file.name);
-            const value = await client.get(remotePath);
+            const value = await this.withSftpTimeout(
+              client,
+              client.get(remotePath),
+              `download of ${file.name}`,
+            );
+            await this.ensureActive(executionId);
             const buffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
             bytesRead += BigInt(buffer.length);
             const text = buffer.toString('utf8').replace(/^\uFEFF/, '');
@@ -186,6 +194,7 @@ export class FileIntegrationProcessor extends WorkerHost {
             base.afterFile = afterName;
             base.outputFile = afterName;
             if (base.rowsRemoved > 0) {
+              await this.ensureActive(executionId);
               const replacement = await this.replaceRemoteFile(
                 client,
                 rootPath,
@@ -206,6 +215,7 @@ export class FileIntegrationProcessor extends WorkerHost {
             rowsKept += base.rowsKept;
             rowsRemoved += base.rowsRemoved;
           } catch (error) {
+            if (error instanceof FileIntegrationCancelledError || error instanceof SftpOperationTimeoutError) throw error;
             base.error = this.safeError(error);
             results.push(base);
             this.logger.warn(`File integration ${executionId} failed for ${file.name}: ${base.error}`);
@@ -296,14 +306,21 @@ export class FileIntegrationProcessor extends WorkerHost {
     const backupDirectory = posix.join(rootPath, '.tequila-backup', executionId);
     const backupPath = posix.join(backupDirectory, fileName);
     const temporaryPath = posix.join(rootPath, `.${fileName}.${executionId}.tmp`);
-    await client.mkdir(backupDirectory, true);
-    await client.put(filtered, temporaryPath);
-    const verification = await client.get(temporaryPath);
+    await this.withSftpTimeout(client, client.mkdir(backupDirectory, true), `creation of ${backupDirectory}`);
+    await this.withSftpTimeout(client, client.put(filtered, temporaryPath), `upload of ${fileName}`);
+    const verification = await this.withSftpTimeout(
+      client,
+      client.get(temporaryPath),
+      `verification download of ${fileName}`,
+    );
     const verifiedBuffer = Buffer.isBuffer(verification) ? verification : Buffer.from(String(verification));
     if (this.sha256(filtered) !== this.sha256(verifiedBuffer)) {
       await client.delete(temporaryPath).catch(() => false);
       throw new Error('Remote temporary file verification failed; original file was not changed');
     }
+    await this.ensureActive(executionId);
+    // Do not interrupt the two renames: once the original moves to backup this
+    // critical section must either finish the replacement or restore it.
     await client.rename(remotePath, backupPath);
     try {
       await client.rename(temporaryPath, remotePath);
@@ -314,6 +331,23 @@ export class FileIntegrationProcessor extends WorkerHost {
     }
     const stat = await client.stat(remotePath);
     return { backupPath, modifiedAt: new Date(stat.modifyTime) };
+  }
+
+  private async withSftpTimeout<T>(client: SftpClient, operation: Promise<T>, label: string): Promise<T> {
+    const configured = Number(this.config.get('FILE_INTEGRATIONS_SFTP_OPERATION_TIMEOUT_MS', '60000'));
+    const timeoutMs = Number.isFinite(configured) ? Math.min(Math.max(configured, 10_000), 600_000) : 60_000;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        void client.end().catch(() => false);
+        reject(new SftpOperationTimeoutError(`${label} timed out after ${timeoutMs} ms`));
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([operation, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private sha256(value: Buffer) {

@@ -27,6 +27,8 @@ export class SftpConnectionService {
         username: application.username,
         password: decrypt(application.password, this.encryptionKey),
         readyTimeout: 30_000,
+        keepaliveInterval: 10_000,
+        keepaliveCountMax: 3,
         retries: 2,
         retry_minTimeout: 1500,
       });

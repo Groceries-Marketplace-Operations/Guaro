@@ -1,13 +1,25 @@
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FileIntegrationsService } from './file-integrations.service';
 
 @Injectable()
-export class FileIntegrationScheduler {
+export class FileIntegrationScheduler implements OnModuleInit {
   private readonly logger = new Logger(FileIntegrationScheduler.name);
 
   constructor(private readonly prisma: PrismaService, private readonly service: FileIntegrationsService) {}
+
+  async onModuleInit() {
+    await this.prisma.fileIntegrationExecution.updateMany({
+      where: { status: { in: ['pending', 'running'] }, cancelRequested: true },
+      data: {
+        status: 'cancelled',
+        finishedAt: new Date(),
+        currentFile: null,
+        errorMessage: 'Stopped manually',
+      },
+    });
+  }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async scheduleDueRules() {
