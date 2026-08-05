@@ -20,6 +20,7 @@ export interface CatalogMenuItem {
   name: string;
   upc: string | null;
   appItemId: string;
+  imageUrl: string | null;
 }
 
 interface CatalogShopDetail {
@@ -53,6 +54,21 @@ function textValue(value: unknown): string {
   return '';
 }
 
+function imageUrlValue(value: unknown): string | null {
+  const raw = textValue(value);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    // DiDi commonly returns HTTP image URLs. Normalize them so production
+    // pages served over HTTPS do not block the thumbnails as mixed content.
+    if (url.protocol === 'http:') url.protocol = 'https:';
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 export function inferShopCity(detail: Record<string, unknown>): string | null {
   const poi = detail.poi_name && typeof detail.poi_name === 'object'
     ? detail.poi_name as Record<string, unknown>
@@ -78,7 +94,14 @@ export function normalizeMenuItems(items: Array<Record<string, unknown>>): Catal
     if (!appItemId) continue;
     const name = textValue(item.name ?? item.item_name ?? item.app_item_name) || appItemId;
     const upc = textValue(item.upc ?? item.barcode ?? item.item_barcode) || null;
-    unique.set(appItemId, { appItemId, name, upc });
+    const imageUrl = imageUrlValue(item.head_img ?? item.image_url ?? item.imageUrl);
+    const previous = unique.get(appItemId);
+    unique.set(appItemId, {
+      appItemId,
+      name,
+      upc,
+      imageUrl: imageUrl ?? previous?.imageUrl ?? null,
+    });
   }
   return [...unique.values()];
 }
@@ -269,6 +292,7 @@ export class CatalogSyncService {
           name: item.name,
           upc: item.upc,
           appItemId: item.appItemId,
+          imageUrl: item.imageUrl,
           sourceShopId: shop.shopId,
           sourceCity: shop.city,
           lastSeenAt: now,
@@ -276,6 +300,7 @@ export class CatalogSyncService {
         update: {
           name: item.name,
           upc: item.upc,
+          imageUrl: item.imageUrl ?? undefined,
           sourceShopId: shop.shopId,
           sourceCity: shop.city,
           lastSeenAt: now,

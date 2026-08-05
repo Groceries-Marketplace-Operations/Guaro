@@ -123,9 +123,10 @@ export const tasksApi = {
     client.patch(`/tasks/${taskId}/steps/${stepId}/start`),
   assignStep: (taskId: string, stepId: string, accountId: string) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/assign`, { accountId }),
-  downloadStepExport: (taskId: string, stepId: string) =>
+  downloadStepExport: (taskId: string, stepId: string, format: 'xlsx' | 'json' = 'xlsx') =>
     client.get<{ fileKey: string; mimeType: string; contentBase64: string }>(
       `/tasks/${taskId}/steps/${stepId}/download`,
+      { params: { format } },
     ),
   assistantContext: (taskTypeId: string) =>
     client.get<import('../types').AssistantContext>(`/tasks/validation-assistant/${taskTypeId}/context`),
@@ -142,6 +143,24 @@ export const sftpApplicationsApi = {
   create: (data: object) => client.post('/sftp-applications', data),
   update: (id: string, data: object) => client.patch(`/sftp-applications/${id}`, data),
   delete: (id: string) => client.delete(`/sftp-applications/${id}`),
+  test: (id: string) => client.post(`/sftp-applications/${id}/test`),
+};
+
+export const fileIntegrationsApi = {
+  list: (kind: 'complex_promotion_reader' | 'price_filter') => client.get(`/integrations/file-integrations/rules/${kind}`),
+  create: (data: object) => client.post('/integrations/file-integrations/rules', data),
+  update: (id: string, data: object) => client.patch(`/integrations/file-integrations/rules/${id}`, data),
+  delete: (id: string) => client.delete(`/integrations/file-integrations/rules/${id}`),
+  run: (id: string) => client.post(`/integrations/file-integrations/rules/${id}/run`),
+  stop: (id: string) => client.post(`/integrations/file-integrations/rules/${id}/stop`),
+  executions: (id: string, page = 1) => client.get(`/integrations/file-integrations/rules/${id}/executions`, { params: { page } }),
+  download: (executionId: string, fileName: string) => client.get(`/integrations/file-integrations/executions/${executionId}/files/${encodeURIComponent(fileName)}`),
+};
+
+export const promotionApi = {
+  contract: () => client.get('/integrations/promotion-api/contract'),
+  execute: (data: object) => client.post('/integrations/promotion-api/execute', data),
+  executions: (page = 1) => client.get('/integrations/promotion-api/executions', { params: { page } }),
 };
 
 /* ── BPO Management ─────────────────────────────────────────── */

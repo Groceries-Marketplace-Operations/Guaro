@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
-import { encrypt } from '../common/crypto.util';
+import SftpClient = require('ssh2-sftp-client');
+import { decrypt, encrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSftpApplicationDto } from './dto/create-sftp-application.dto';
 import { UpdateSftpApplicationDto } from './dto/update-sftp-application.dto';
@@ -89,6 +90,33 @@ export class SftpApplicationsService {
       data: { deletedAt: new Date(), active: false },
       select: SAFE_SELECT,
     });
+  }
+
+  async testConnection(id: string) {
+    const application = await this.prisma.sftpApplication.findFirst({ where: { id, deletedAt: null } });
+    if (!application) throw new NotFoundException('SFTP application not found');
+    const started = Date.now();
+    const client = new SftpClient(`test-${id}`);
+    try {
+      await client.connect({
+        host: application.host,
+        port: application.port,
+        username: application.username,
+        password: decrypt(application.password, this.encryptionKey),
+        readyTimeout: 30_000,
+      });
+      const rootPath = application.rootPath?.trim() || '/upload';
+      const entries = await client.list(rootPath);
+      return {
+        connected: true,
+        rootPath,
+        entries: entries.length,
+        files: entries.filter(file => file.type === '-').length,
+        durationMs: Date.now() - started,
+      };
+    } finally {
+      await client.end().catch(() => false);
+    }
   }
 
   private async findOne(id: string) {

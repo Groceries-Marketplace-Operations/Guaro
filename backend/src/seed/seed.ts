@@ -54,6 +54,9 @@ async function main() {
     'schedule_update_dates',
     'library_menu_upload',
     'stock_update',
+    'export_shop_list',
+    'export_store_menu',
+    'export_brand_menu',
   ];
   for (const name of handlerNames) {
     await prisma.handler.upsert({ where: { name }, update: {}, create: { name } });

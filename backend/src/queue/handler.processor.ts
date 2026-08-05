@@ -26,7 +26,17 @@ export interface FormValueCtx {
   /** Resolved brand when tipo = select_brand */
   brand?: { id: string; brandId: string; brandName: string; country: string };
   /** Resolved shop when tipo = select_store */
-  shop?: { id: string; shopId: string; appShopId: string };
+  shop?: { id: string; shopId: string; appShopId: string; brandId: string };
+}
+
+export interface BrandItemExportRow {
+  name: string;
+  upc: string | null;
+  appItemId: string;
+  imageUrl: string | null;
+  sourceShopId: string | null;
+  sourceCity: string | null;
+  lastSeenAt: Date;
 }
 
 export interface BrandShopSyncInput {
@@ -65,6 +75,10 @@ export interface HandlerContext {
   sendAlert(payload: WebhookPayload): Promise<void>;
   /** Persist stores returned by a brand integration without exposing Prisma to handlers. */
   syncBrandShops(shops: BrandShopSyncInput[]): Promise<{ total: number; created: number; updated: number }>;
+  /** Read the local catalog in bounded batches without exposing Prisma to handlers. */
+  forEachBrandItemBatch(
+    callback: (items: BrandItemExportRow[]) => Promise<void> | void,
+  ): Promise<number>;
   /** True when this is the final BullMQ attempt — safe to clean up temp resources */
   isLastAttempt: boolean;
 }
@@ -146,7 +160,7 @@ export class HandlerProcessor extends WorkerHost {
           include: {
             formField: { select: { label: true, tipo: true } },
             brand: { select: { id: true, brandId: true, brandName: true, country: true } },
-            shop: { select: { id: true, shopId: true, appShopId: true } },
+            shop: { select: { id: true, shopId: true, appShopId: true, brandId: true } },
           },
         },
       },
@@ -173,7 +187,19 @@ export class HandlerProcessor extends WorkerHost {
             ? {
                 appId: rawBrand.application.appId,
                 appName: rawBrand.application.appName,
-                appSecret: encKey ? decrypt(rawBrand.application.appSecret, encKey) : '',
+                // Decrypt only when a remote integration actually reads the secret.
+                // Local-only handlers can operate on copied production data safely.
+                get appSecret() {
+                  if (!encKey) throw new Error('APP_SECRET_ENCRYPTION_KEY is not configured');
+                  try {
+                    return decrypt(rawBrand.application!.appSecret, encKey);
+                  } catch {
+                    throw new Error(
+                      `Application credential for ${rawBrand.application!.appName} could not be decrypted `
+                      + 'with the current APP_SECRET_ENCRYPTION_KEY',
+                    );
+                  }
+                },
               }
             : null,
         }
@@ -230,6 +256,35 @@ export class HandlerProcessor extends WorkerHost {
 
         const updated = unique.filter(shop => existingIds.has(shop.shopId)).length;
         return { total: unique.length, created: unique.length - updated, updated };
+      },
+      forEachBrandItemBatch: async (callback) => {
+        if (!brand) throw new Error('Task has no brand linked');
+        const batchSize = 1_000;
+        let offset = 0;
+        let total = 0;
+        while (true) {
+          const items = await this.prisma.brandItem.findMany({
+            where: { brandId: brand.id },
+            select: {
+              name: true,
+              upc: true,
+              appItemId: true,
+              imageUrl: true,
+              sourceShopId: true,
+              sourceCity: true,
+              lastSeenAt: true,
+            },
+            orderBy: [{ name: 'asc' }, { appItemId: 'asc' }, { id: 'asc' }],
+            skip: offset,
+            take: batchSize,
+          });
+          if (items.length === 0) break;
+          await callback(items);
+          total += items.length;
+          offset += items.length;
+          if (items.length < batchSize) break;
+        }
+        return total;
       },
       isLastAttempt,
     };

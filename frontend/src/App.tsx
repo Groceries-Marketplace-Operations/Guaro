@@ -30,6 +30,8 @@ import AutoFetchPage from './pages/integrations/AutoFetchPage';
 import StoreEmergenciesPage from './pages/integrations/StoreEmergenciesPage';
 import SftpApplicationsPage from './pages/admin/SftpApplicationsPage';
 import ForcedOpenStoresPage from './pages/integrations/ForcedOpenStoresPage';
+import FileIntegrationsPage from './pages/integrations/FileIntegrationsPage';
+import PromotionApiPage from './pages/integrations/PromotionApiPage';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
 
@@ -67,6 +69,9 @@ export default function App() {
               <Route path="integrations/auto-stores-fetch" element={<AutoFetchPage kind="stores" />} />
               <Route path="integrations/auto-menu-fetch" element={<AutoFetchPage kind="menu" />} />
               <Route path="integrations/emergencies" element={<StoreEmergenciesPage />} />
+              <Route path="integrations/complex-promotions-sftp" element={<FileIntegrationsPage kind="complex_promotion_reader" />} />
+              <Route path="integrations/custom" element={<FileIntegrationsPage kind="price_filter" />} />
+              <Route path="integrations/promotion-api" element={<PromotionApiPage />} />
               <Route path="sftp-applications" element={<SftpApplicationsPage />} />
               <Route path="admin" element={<AdminPanel />} />
               <Route path="*" element={<NotFound />} />

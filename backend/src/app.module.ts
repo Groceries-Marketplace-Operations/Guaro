@@ -21,6 +21,7 @@ import { IntegrationsModule } from './integrations/integrations.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { AdminModule } from './admin/admin.module';
 import { SftpApplicationsModule } from './sftp-applications/sftp-applications.module';
+import { FileIntegrationsModule } from './file-integrations/file-integrations.module';
 
 const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
 
@@ -47,6 +48,7 @@ const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
     CatalogModule,
     AdminModule,
     SftpApplicationsModule,
+    FileIntegrationsModule,
     ...devModules,
   ],
 })

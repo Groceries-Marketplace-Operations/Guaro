@@ -596,7 +596,7 @@ export default function NewTaskPage() {
           <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)} disabled={!filterBrandId}>
             <option value="">{t('pages.newTask.selectStore')}</option>
             {filteredShops.map(s => (
-              <option key={s.id} value={s.id}>{s.shopId}{s.city ? ` · ${s.city}` : ''}</option>
+              <option key={s.id} value={s.id}>{s.shopId}{s.name ? ` · ${s.name}` : ''}</option>
             ))}
           </select>
         </div>

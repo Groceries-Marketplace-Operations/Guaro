@@ -51,6 +51,14 @@ export default function SftpApplicationsPage() {
     mutationFn: (id: string) => sftpApplicationsApi.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sftp-applications'] }),
   });
+  const testConnection = useMutation({
+    mutationFn: (id: string) => sftpApplicationsApi.test(id),
+    onSuccess: response => window.alert(`Conexión correcta: ${response.data.files} archivo(s) en ${response.data.rootPath}; ${response.data.durationMs} ms`),
+    onError: (reason: unknown) => {
+      const message = (reason as { response?: { data?: { message?: string } } }).response?.data?.message;
+      window.alert(`La conexión falló: ${message ?? 'revisa host, puerto, usuario, contraseña y ruta'}`);
+    },
+  });
 
   if (!isAdmin) return <Navigate to="/" replace />;
 
@@ -76,12 +84,12 @@ export default function SftpApplicationsPage() {
       <div className="page-header">
         <div className="page-header-info">
           <h1>Aplicaciones SFTP</h1>
-          <p>Credenciales cifradas para futuras integraciones SFTP. Esta configuración aún no ejecuta conexiones.</p>
+          <p>Credenciales cifradas usadas por Promociones SFTP y Custom integrations.</p>
         </div>
         <button className="btn btn-primary" onClick={openCreate}>+ Nueva aplicación SFTP</button>
       </div>
       <div className="alert alert-info" style={{ marginBottom: 16 }}>
-        Las contraseñas se cifran y nunca se muestran nuevamente. Este apartado es únicamente de configuración por ahora.
+        Las contraseñas se cifran y nunca se muestran nuevamente. Usa Probar para validar acceso de lectura a la ruta configurada.
       </div>
       <input className="form-input" style={{ width: 320, marginBottom: 16 }} placeholder="Buscar por nombre, host o usuario…"
         value={q} onChange={event => { setQ(event.target.value); setPage(1); }} />
@@ -99,6 +107,7 @@ export default function SftpApplicationsPage() {
               <td className="td-mono">{item.rootPath || '—'}</td>
               <td><StatusBadge status={item.active ? 'active' : 'inactive'} /></td>
               <td style={{ whiteSpace: 'nowrap' }}>
+                <button className="btn btn-ghost btn-sm" disabled={testConnection.isPending} onClick={() => testConnection.mutate(item.id)}>Probar</button>
                 <button className="btn btn-ghost btn-sm" onClick={() => openEdit(item)}>Editar</button>
                 <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => {
                   if (window.confirm(`¿Eliminar ${item.name}?`)) remove.mutate(item.id);

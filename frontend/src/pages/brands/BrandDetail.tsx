@@ -23,6 +23,16 @@ function fmt(val?: string | null) {
   return val.replace(/_/g, ' ');
 }
 
+function safeExternalUrl(value?: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function apiErrorMessage(error: unknown, fallback: string) {
   const response = error as { response?: { data?: { message?: string | string[] } } };
   const message = response.response?.data?.message;
@@ -618,12 +628,22 @@ export default function BrandDetail() {
             </div>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Nombre</th><th>UPC</th><th>appItemId</th><th>Ciudad fuente</th><th>Tienda fuente</th><th>Actualizado</th></tr></thead>
+                <thead><tr><th>Imagen</th><th>Nombre</th><th>UPC</th><th>appItemId</th><th>Ciudad fuente</th><th>Tienda fuente</th><th>Actualizado</th></tr></thead>
                 <tbody>
-                  {loadingMenu && <tr><td colSpan={6} className="text-muted">Cargando menú…</td></tr>}
-                  {!loadingMenu && menuItems.length === 0 && <tr><td colSpan={6}><div className="empty-state"><p>No hay artículos almacenados para esta marca.</p></div></td></tr>}
-                  {menuItems.map(item => (
+                  {loadingMenu && <tr><td colSpan={7} className="text-muted">Cargando menú…</td></tr>}
+                  {!loadingMenu && menuItems.length === 0 && <tr><td colSpan={7}><div className="empty-state"><p>No hay artículos almacenados para esta marca.</p></div></td></tr>}
+                  {menuItems.map(item => {
+                    const imageUrl = safeExternalUrl(item.imageUrl);
+                    return (
                     <tr key={item.id}>
+                      <td>
+                        {imageUrl ? (
+                          <a href={imageUrl} target="_blank" rel="noopener noreferrer" title={imageUrl} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                            <img src={imageUrl} alt={item.name} loading="lazy" style={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 6, border: '1px solid var(--border)' }} />
+                            <span className="text-sm">Abrir</span>
+                          </a>
+                        ) : '—'}
+                      </td>
                       <td style={{ fontWeight: 600 }}>{item.name}</td>
                       <td className="td-mono">{item.upc ?? '—'}</td>
                       <td className="td-mono">{item.appItemId}</td>
@@ -631,7 +651,8 @@ export default function BrandDetail() {
                       <td className="td-mono">{item.sourceShopId ?? '—'}</td>
                       <td className="text-muted text-sm">{new Date(item.lastSeenAt).toLocaleString()}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
               <Paginator page={menuPage} total={menuResult?.total ?? 0} limit={50} onChange={setMenuPage} />

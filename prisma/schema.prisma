@@ -182,6 +182,16 @@ enum AutoFetchKind {
   menu
 }
 
+enum FileIntegrationKind {
+  complex_promotion_reader
+  price_filter
+}
+
+enum PromotionApiMode {
+  dry_run
+  live
+}
+
 // ---------------------------- Actors ---------------------------------------
 model Account {
   id             String        @id @default(uuid()) @db.Uuid
@@ -215,6 +225,9 @@ model Account {
   createdAutoTurnOffRules        AutoTurnOffRule[]            @relation("AutoTurnOffRuleCreator")
   updatedAutoTurnOffRules        AutoTurnOffRule[]            @relation("AutoTurnOffRuleUpdater")
   cancelledAutoTurnOffExecutions AutoTurnOffExecution[]       @relation("AutoTurnOffExecutionCanceller")
+  createdFileIntegrationRules    FileIntegrationRule[]        @relation("FileIntegrationRuleCreator")
+  createdFileIntegrationRuns     FileIntegrationExecution[]   @relation("FileIntegrationExecutionCreator")
+  createdPromotionApiRuns        PromotionApiExecution[]      @relation("PromotionApiExecutionCreator")
 
   @@index([sectionId])
   @@map("account")
@@ -406,6 +419,7 @@ model SftpApplication {
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
 
   createdBy Account? @relation("SftpAppCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  fileIntegrationRules FileIntegrationRule[]
 
   @@index([active])
   @@map("sftp_application")
@@ -441,6 +455,7 @@ model Brand {
   storeEmergencies     StoreEmergency[]
   forcedOpenOperations ForcedOpenOperation[]
   items                BrandItem[]
+  promotionApiExecutions PromotionApiExecution[]
 
   @@index([ownerId])
   @@index([applicationId])
@@ -487,6 +502,7 @@ model Shop {
   formValues        FormValue[]
   emergencies       StoreEmergencyTarget[]
   forcedOpenTargets ForcedOpenTarget[]
+  promotionApiExecutions PromotionApiExecution[]
 
   @@unique([brandId, appShopId])
   @@index([brandId])
@@ -499,6 +515,7 @@ model BrandItem {
   name         String
   upc          String?
   appItemId    String   @map("app_item_id")
+  imageUrl     String?  @map("image_url")
   sourceShopId String?  @map("source_shop_id")
   sourceCity   String?  @map("source_city")
   lastSeenAt   DateTime @default(now()) @map("last_seen_at") @db.Timestamptz
@@ -808,6 +825,94 @@ model AutoFetchPoolBrand {
   @@index([poolId, active])
   @@index([brandId])
   @@map("auto_fetch_pool_brand")
+}
+
+// -------------------- Integrations: SFTP files and promotions -------------
+model FileIntegrationRule {
+  id                String              @id @default(uuid()) @db.Uuid
+  name              String
+  kind              FileIntegrationKind
+  country           Country?
+  sftpApplicationId String              @map("sftp_application_id") @db.Uuid
+  active            Boolean             @default(false)
+  intervalMinutes   Int?                @map("interval_minutes")
+  nextRunAt         DateTime?           @map("next_run_at") @db.Timestamptz
+  lastRunAt         DateTime?           @map("last_run_at") @db.Timestamptz
+  lastRemoteModifiedAt DateTime?        @map("last_remote_modified_at") @db.Timestamptz
+  filePattern       String              @default("*") @map("file_pattern")
+  sourceScope       String              @default("all") @map("source_scope")
+  thresholdAmount   Decimal?            @map("threshold_amount") @db.Decimal(14, 2)
+  delimiter         String?
+  priceColumn       Int?                @map("price_column")
+  maxFilesPerRun    Int                 @default(250) @map("max_files_per_run")
+  createdById       String?             @map("created_by") @db.Uuid
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt         DateTime?           @map("deleted_at") @db.Timestamptz
+
+  sftpApplication SftpApplication           @relation(fields: [sftpApplicationId], references: [id])
+  createdBy       Account?                  @relation("FileIntegrationRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  executions      FileIntegrationExecution[]
+
+  @@index([kind, active, nextRunAt])
+  @@index([sftpApplicationId])
+  @@map("file_integration_rule")
+}
+
+model FileIntegrationExecution {
+  id              String         @id @default(uuid()) @db.Uuid
+  ruleId          String         @map("rule_id") @db.Uuid
+  status          AutoOpenStatus @default(pending)
+  trigger         String         @default("manual")
+  startedAt       DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt      DateTime?      @map("finished_at") @db.Timestamptz
+  durationMs      Int?           @map("duration_ms")
+  filesScanned    Int            @default(0) @map("files_scanned")
+  filesProcessed  Int            @default(0) @map("files_processed")
+  rowsRead        Int            @default(0) @map("rows_read")
+  rowsKept        Int            @default(0) @map("rows_kept")
+  rowsRemoved     Int            @default(0) @map("rows_removed")
+  bytesRead       BigInt         @default(0) @map("bytes_read")
+  currentFile     String?        @map("current_file")
+  cancelRequested Boolean        @default(false) @map("cancel_requested")
+  errorMessage    String?        @map("error_message") @db.Text
+  result          Json?
+  createdById     String?        @map("created_by") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  rule      FileIntegrationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  createdBy Account?             @relation("FileIntegrationExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([ruleId, createdAt])
+  @@index([status])
+  @@map("file_integration_execution")
+}
+
+model PromotionApiExecution {
+  id           String           @id @default(uuid()) @db.Uuid
+  brandId      String           @map("brand_id") @db.Uuid
+  shopId       String           @map("shop_id") @db.Uuid
+  mode         PromotionApiMode @default(dry_run)
+  status       AutoOpenStatus   @default(pending)
+  endpoint     String           @default("POST /v1/promo/promo/uploadGrocery")
+  payload      Json
+  response     Json?
+  remoteTaskId String?          @map("remote_task_id")
+  startedAt    DateTime?        @map("started_at") @db.Timestamptz
+  finishedAt   DateTime?        @map("finished_at") @db.Timestamptz
+  durationMs   Int?             @map("duration_ms")
+  errorMessage String?          @map("error_message") @db.Text
+  createdById  String?          @map("created_by") @db.Uuid
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  brand     Brand   @relation(fields: [brandId], references: [id])
+  shop      Shop    @relation(fields: [shopId], references: [id])
+  createdBy Account? @relation("PromotionApiExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([brandId, createdAt])
+  @@index([shopId])
+  @@index([status])
+  @@map("promotion_api_execution")
 }
 
 model AutoTurnOffRule {

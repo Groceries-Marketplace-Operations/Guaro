@@ -38,4 +38,9 @@ export class SftpApplicationsController {
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }
+
+  @Post(':id/test')
+  test(@Param('id') id: string) {
+    return this.service.testConnection(id);
+  }
 }

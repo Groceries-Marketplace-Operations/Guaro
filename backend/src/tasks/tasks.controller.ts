@@ -134,12 +134,17 @@ export class TasksController {
   async downloadExport(
     @Param('id') id: string,
     @Param('stepId') stepId: string,
+    @Query('format') format: string | undefined,
     @CurrentUser() u: JwtUser,
   ) {
-    const fileKey = await this.tasksService.getStepExport(
+    if (format !== undefined && format !== 'xlsx' && format !== 'json') {
+      throw new BadRequestException('Export format must be xlsx or json');
+    }
+    const { fileKey, mimeType } = await this.tasksService.getStepExport(
       id,
       stepId,
       { roles: u.roles, accountId: u.id, sectionId: u.sectionId },
+      format ?? 'xlsx',
     );
     const filepath = join(process.cwd(), 'uploads', 'exports', fileKey);
     let data: Buffer;
@@ -150,7 +155,7 @@ export class TasksController {
     }
     return {
       fileKey,
-      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      mimeType,
       contentBase64: data.toString('base64'),
     };
   }

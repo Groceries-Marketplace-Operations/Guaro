@@ -194,17 +194,25 @@ export class TasksService {
     taskId: string,
     stepId: string,
     viewer: { roles: AccountRole[]; accountId: string; sectionId: string | null },
-  ): Promise<string> {
+    format: 'xlsx' | 'json' = 'xlsx',
+  ): Promise<{ fileKey: string; mimeType: string }> {
     const task = await this.findOne(taskId, viewer);
     const step = task.stepInstances.find((item) => item.id === stepId);
     if (!step) throw new NotFoundException('Step not found in this task');
 
-    const fileKey = (step.result as { fileKey?: unknown } | null)?.fileKey;
+    const result = step.result as { fileKey?: unknown; jsonFileKey?: unknown } | null;
+    const fileKey = format === 'json' ? result?.jsonFileKey : result?.fileKey;
+    const validFilename = format === 'json'
+      ? /^store-menu-[a-zA-Z0-9_-]+\.json$/
+      : /^(?:shops|store-menu|brand-menu)-[a-zA-Z0-9_-]+\.xlsx$/;
     if (step.status !== 'done' || typeof fileKey !== 'string' ||
-        !/^shops-[a-zA-Z0-9_-]+\.xlsx$/.test(fileKey)) {
+        !validFilename.test(fileKey)) {
       throw new NotFoundException('Export file not found');
     }
-    return fileKey;
+    return {
+      fileKey,
+      mimeType: format === 'json' ? 'application/json' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
   }
   // ── Step actions ──────────────────────────────────────────────────────────
 

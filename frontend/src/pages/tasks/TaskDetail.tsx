@@ -152,6 +152,25 @@ export default function TaskDetail() {
     } finally { setSaving(false); }
   };
 
+  const handleDownload = async (stepId: string, format: 'xlsx' | 'json') => {
+    try {
+      const res = await tasksApi.downloadStepExport(id!, stepId, format);
+      const binary = atob(res.data.contentBase64);
+      const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+      const blob = new Blob([bytes], { type: res.data.mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.data.fileKey;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setErr(t('pages.taskDetail.errorDownloading'));
+    }
+  };
+
   if (isLoading) return (
     <>
       <Topbar breadcrumb={[{ label: t('nav.tasks'), href: '/tasks' }, { label: t('pages.taskDetail.loading') }]} />
@@ -299,27 +318,14 @@ export default function TaskDetail() {
                       {s.status === 'done' && (s.result as { fileKey?: string } | null)?.fileKey && (
                         <button
                           className="btn btn-sm btn-primary"
-                          onClick={async () => {
-                            const fileKey = (s.result as { fileKey: string }).fileKey;
-                            try {
-                              const res = await tasksApi.downloadStepExport(id!, s.id);
-                              const binary = atob(res.data.contentBase64);
-                              const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
-                              const blob = new Blob([bytes], { type: res.data.mimeType });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement('a');
-                              a.href = url;
-                              a.download = fileKey;
-                              document.body.appendChild(a);
-                              a.click();
-                              a.remove();
-                              setTimeout(() => URL.revokeObjectURL(url), 1000);
-                            } catch {
-                              setErr(t('pages.taskDetail.errorDownloading'));
-                            }
-                          }}
+                          onClick={() => handleDownload(s.id, 'xlsx')}
                         >
                           ↓ {t('pages.taskDetail.downloadFile')}
+                        </button>
+                      )}
+                      {s.status === 'done' && (s.result as { jsonFileKey?: string } | null)?.jsonFileKey && (
+                        <button className="btn btn-sm btn-ghost" onClick={() => handleDownload(s.id, 'json')}>
+                          JSON
                         </button>
                       )}
                       {canManualAssign && s.status === 'failed' && s.stepDefinition?.executionType !== 'automatic' && (

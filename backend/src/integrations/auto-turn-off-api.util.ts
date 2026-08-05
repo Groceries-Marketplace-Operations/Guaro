@@ -48,7 +48,17 @@ export class AutoTurnOffCancelledError extends Error {
 export async function downloadMenu(
   authToken: string,
   ensureActive: () => Promise<void>,
-): Promise<{ taskId: string; items: Array<Record<string, unknown>> }> {
+): Promise<{
+  taskId: string;
+  items: Array<Record<string, unknown>>;
+  /** Exact JSON document downloaded from DiDi, kept for complete exports. */
+  rawJson: string;
+  elapsedMs: number;
+  pollAttempts: number;
+}> {
+  const startedAt = Date.now();
+  const timeoutMs = 20 * 60_000;
+  const pollIntervalMs = 6000;
   await ensureActive();
   const createEndpoint = 'POST /v3/item/item/menu';
   const createResponse = await fetchWithEndpointContext(createEndpoint, `${DIDI_BASE}/v3/item/item/menu`, {
@@ -64,12 +74,17 @@ export async function downloadMenu(
   if (!taskId) throw new Error('Menu export did not return a taskID');
 
   let downloadUrl = '';
-  for (let attempt = 1; attempt <= 40; attempt++) {
+  let pollAttempts = 0;
+  let lastStatus: number | undefined;
+  while (Date.now() - startedAt < timeoutMs) {
     await ensureActive();
-    if (attempt > 1) {
-      await sleep(6000);
+    if (pollAttempts > 0) {
+      const remainingMs = timeoutMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) break;
+      await sleep(Math.min(pollIntervalMs, remainingMs));
       await ensureActive();
     }
+    pollAttempts += 1;
     const taskEndpoint = 'POST /v3/item/item/getGroceryMenuTaskInfo';
     const taskResponse = await fetchWithEndpointContext(
       taskEndpoint,
@@ -87,6 +102,7 @@ export async function downloadMenu(
     }
 
     const status = Number(taskBody.data?.status);
+    lastStatus = status;
     const operations = Array.isArray(taskBody.data?.operationList) ? taskBody.data.operationList : [];
     const completed = operations.find((operation: Record<string, unknown>) => operation.operationType === 'menuExportDone');
     const successList = completed && Array.isArray(completed.successList) ? completed.successList : [];
@@ -105,7 +121,23 @@ export async function downloadMenu(
       );
     }
   }
-  if (!downloadUrl) throw new Error('Menu export timed out after 4 minutes');
+  if (!downloadUrl) {
+    const statusLabel: Record<number, string> = {
+      0: 'waiting',
+      1: 'success',
+      2: 'failed',
+      3: 'waitRetry',
+      4: 'running',
+      5: 'partial success',
+    };
+    const lastStatusText = lastStatus === undefined
+      ? 'unknown'
+      : `${statusLabel[lastStatus] ?? 'unknown'} (${lastStatus})`;
+    throw new Error(
+      `Menu export task ${taskId} timed out after 20 minutes; `
+      + `last status: ${lastStatusText}; polls: ${pollAttempts}`,
+    );
+  }
 
   await ensureActive();
   const url = new URL(downloadUrl);
@@ -118,9 +150,16 @@ export async function downloadMenu(
   if (!menuResponse.ok) throw new Error(`${downloadEndpoint} failed: HTTP ${menuResponse.status}`);
   const contentLength = Number(menuResponse.headers.get('content-length') ?? 0);
   if (contentLength > 50 * 1024 * 1024) throw new Error('Menu JSON exceeds the 50 MB safety limit');
-  const menu = parseJsonKeepingIds(await menuResponse.text());
+  const rawJson = await menuResponse.text();
+  const menu = parseJsonKeepingIds(rawJson);
   if (!Array.isArray(menu.items)) throw new Error('Exported menu JSON does not contain an items array');
-  return { taskId, items: menu.items as Array<Record<string, unknown>> };
+  return {
+    taskId,
+    items: menu.items as Array<Record<string, unknown>>,
+    rawJson,
+    elapsedMs: Date.now() - startedAt,
+    pollAttempts,
+  };
 }
 
 export function resolveAppItemIds(items: Array<Record<string, unknown>>, requestedUpcs: string[]) {

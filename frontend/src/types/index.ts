@@ -369,6 +369,7 @@ export interface BrandItem {
   name: string;
   upc?: string;
   appItemId: string;
+  imageUrl?: string;
   sourceShopId?: string;
   sourceCity?: string;
   lastSeenAt: string;
@@ -384,6 +385,62 @@ export interface SftpApplication {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export type FileIntegrationKind = 'complex_promotion_reader' | 'price_filter';
+
+export interface FileIntegrationFileResult {
+  fileName: string;
+  size: number;
+  modifiedAt: string;
+  rowsRead: number;
+  rowsKept: number;
+  rowsRemoved: number;
+  invalidAmounts: number;
+  delimiter: string;
+  outputFile?: string;
+  skipped?: string;
+  error?: string;
+}
+
+export interface FileIntegrationExecution {
+  id: string;
+  status: string;
+  trigger: string;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  filesScanned: number;
+  filesProcessed: number;
+  rowsRead: number;
+  rowsKept: number;
+  rowsRemoved: number;
+  bytesRead: string;
+  currentFile?: string;
+  errorMessage?: string;
+  result?: { files?: FileIntegrationFileResult[]; newFiles?: number };
+  createdAt: string;
+}
+
+export interface FileIntegrationRule {
+  id: string;
+  name: string;
+  kind: FileIntegrationKind;
+  country?: string;
+  active: boolean;
+  intervalMinutes?: number;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  lastRemoteModifiedAt?: string;
+  filePattern: string;
+  sourceScope: string;
+  thresholdAmount?: string;
+  delimiter?: string;
+  priceColumn?: number;
+  maxFilesPerRun: number;
+  sftpApplicationId: string;
+  sftpApplication: Pick<SftpApplication, 'id' | 'name' | 'host' | 'port' | 'rootPath' | 'active'>;
+  executions: FileIntegrationExecution[];
 }
 
 export interface StoreEmergencyTarget {

@@ -167,6 +167,15 @@ export default function Sidebar() {
           <NavLink to="/integrations/emergencies" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> Emergencias
           </NavLink>
+          <NavLink to="/integrations/complex-promotions-sftp" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconLayers /> Promociones SFTP
+          </NavLink>
+          <NavLink to="/integrations/custom" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconSettings /> Custom integrations
+          </NavLink>
+          <NavLink to="/integrations/promotion-api" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconApp /> Promociones API
+          </NavLink>
         </div>
       )}
 
