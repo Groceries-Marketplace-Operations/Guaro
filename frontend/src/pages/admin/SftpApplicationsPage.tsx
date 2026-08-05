@@ -5,11 +5,11 @@ import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import Paginator from '../../components/ui/Paginator';
 import StatusBadge from '../../components/ui/StatusBadge';
-import { sftpApplicationsApi } from '../../api';
+import { brandsApi, sftpApplicationsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
-import type { Paginated, SftpApplication } from '../../types';
+import type { Brand, Paginated, SftpApplication } from '../../types';
 
-const EMPTY_FORM = { name: '', host: '', port: 22, username: '', password: '', rootPath: '', active: true };
+const EMPTY_FORM = { name: '', host: '', port: 22, username: '', password: '', rootPath: '', brandId: '', active: true };
 
 export default function SftpApplicationsPage() {
   const { account } = useAuth();
@@ -27,13 +27,19 @@ export default function SftpApplicationsPage() {
     queryFn: () => sftpApplicationsApi.list({ page, limit: 25, q: q || undefined }).then(response => response.data),
     enabled: !!isAdmin,
   });
+  const { data: brandsData } = useQuery<Paginated<Brand>>({
+    queryKey: ['brands', 'sftp-applications'],
+    queryFn: () => brandsApi.list({ page: 1, limit: 1000 }).then(response => response.data),
+    enabled: !!isAdmin,
+  });
   const save = useMutation({
     mutationFn: () => editing
       ? sftpApplicationsApi.update(editing.id, {
         ...form,
         password: form.password || undefined,
+        brandId: form.brandId || undefined,
       })
-      : sftpApplicationsApi.create(form),
+      : sftpApplicationsApi.create({ ...form, brandId: form.brandId || undefined }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sftp-applications'] });
       setOpen(false);
@@ -72,6 +78,7 @@ export default function SftpApplicationsPage() {
       username: item.username,
       password: '',
       rootPath: item.rootPath ?? '',
+      brandId: item.brandId ?? '',
       active: item.active,
     });
     setError('');
@@ -95,12 +102,13 @@ export default function SftpApplicationsPage() {
         value={q} onChange={event => { setQ(event.target.value); setPage(1); }} />
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Nombre</th><th>Host</th><th>Puerto</th><th>Usuario</th><th>Ruta raíz</th><th>Estado</th><th></th></tr></thead>
+          <thead><tr><th>Nombre</th><th>Marca</th><th>Host</th><th>Puerto</th><th>Usuario</th><th>Ruta raíz</th><th>Estado</th><th></th></tr></thead>
           <tbody>
-            {isLoading && <tr><td colSpan={7} className="text-muted">Cargando…</td></tr>}
-            {!isLoading && !data?.data.length && <tr><td colSpan={7}><div className="empty-state"><p>No hay aplicaciones SFTP.</p></div></td></tr>}
+            {isLoading && <tr><td colSpan={8} className="text-muted">Cargando…</td></tr>}
+            {!isLoading && !data?.data.length && <tr><td colSpan={8}><div className="empty-state"><p>No hay aplicaciones SFTP.</p></div></td></tr>}
             {data?.data.map(item => <tr key={item.id}>
               <td style={{ fontWeight: 650 }}>{item.name}</td>
+              <td>{item.brand?.brandName ?? 'Sin vincular'}</td>
               <td className="td-mono">{item.host}</td>
               <td>{item.port}</td>
               <td>{item.username}</td>
@@ -137,6 +145,10 @@ export default function SftpApplicationsPage() {
       </div>
       <div className="form-group"><label className="form-label">Contraseña {editing ? '(dejar vacía para conservarla)' : '*'}</label><input className="form-input" type="password" autoComplete="new-password" value={form.password} onChange={e => setForm(v => ({ ...v, password: e.target.value }))} /></div>
       <div className="form-group"><label className="form-label">Ruta raíz</label><input className="form-input" placeholder="/uploads" value={form.rootPath} onChange={e => setForm(v => ({ ...v, rootPath: e.target.value }))} /></div>
+      <div className="form-group"><label className="form-label">Marca asociada</label><select className="form-select" value={form.brandId} onChange={e => setForm(v => ({ ...v, brandId: e.target.value }))}>
+        <option value="">Sin vincular</option>
+        {brandsData?.data.map(brand => <option key={brand.id} value={brand.id}>{brand.brandName} · {brand.country}</option>)}
+      </select><p className="form-hint">Relaciona las promociones SFTP con las tiendas locales de la marca.</p></div>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="checkbox" checked={form.active} onChange={e => setForm(v => ({ ...v, active: e.target.checked }))} /> Activa</label>
     </Modal>}
   </>;

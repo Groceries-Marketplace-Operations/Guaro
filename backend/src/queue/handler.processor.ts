@@ -47,6 +47,26 @@ export interface BrandShopSyncInput {
   longitude?: string | number;
 }
 
+export interface StorePromotionExportRow {
+  sourceAccount: string;
+  shopExternalId: string;
+  activityId: string;
+  activityName: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  activityType: number | null;
+  sku: string;
+  discountAmount: string | null;
+  discountPercentage: string | null;
+  buyNum: string | null;
+  getNum: string | null;
+  bxgyX: string | null;
+  bxgyY: string | null;
+  actionType: number | null;
+  sourceFile: string;
+  fetchedAt: Date;
+}
+
 export interface HandlerContext {
   stepInstanceId: string;
   taskId: string;
@@ -78,6 +98,11 @@ export interface HandlerContext {
   /** Read the local catalog in bounded batches without exposing Prisma to handlers. */
   forEachBrandItemBatch(
     callback: (items: BrandItemExportRow[]) => Promise<void> | void,
+  ): Promise<number>;
+  /** Read the current promotion snapshot for one store in bounded batches. */
+  forEachStorePromotionBatch(
+    shopExternalId: string,
+    callback: (promotions: StorePromotionExportRow[]) => Promise<void> | void,
   ): Promise<number>;
   /** True when this is the final BullMQ attempt — safe to clean up temp resources */
   isLastAttempt: boolean;
@@ -283,6 +308,66 @@ export class HandlerProcessor extends WorkerHost {
           total += items.length;
           offset += items.length;
           if (items.length < batchSize) break;
+        }
+        return total;
+      },
+      forEachStorePromotionBatch: async (shopExternalId, callback) => {
+        if (!brand) throw new Error('Task has no brand linked');
+        const batchSize = 1_000;
+        let offset = 0;
+        let total = 0;
+        while (true) {
+          const promotions = await this.prisma.storePromotion.findMany({
+            where: {
+              shopExternalId,
+              sftpApplication: { brandId: brand.id, active: true, deletedAt: null },
+            },
+            select: {
+              shopExternalId: true,
+              activityId: true,
+              activityName: true,
+              startDate: true,
+              endDate: true,
+              activityType: true,
+              sku: true,
+              discountAmount: true,
+              discountPercentage: true,
+              buyNum: true,
+              getNum: true,
+              bxgyX: true,
+              bxgyY: true,
+              actionType: true,
+              sourceFile: true,
+              fetchedAt: true,
+              sftpApplication: { select: { name: true } },
+            },
+            orderBy: [{ activityId: 'asc' }, { sku: 'asc' }, { id: 'asc' }],
+            skip: offset,
+            take: batchSize,
+          });
+          if (promotions.length === 0) break;
+          await callback(promotions.map(value => ({
+            sourceAccount: value.sftpApplication.name,
+            shopExternalId: value.shopExternalId,
+            activityId: value.activityId,
+            activityName: value.activityName,
+            startDate: value.startDate,
+            endDate: value.endDate,
+            activityType: value.activityType,
+            sku: value.sku,
+            discountAmount: value.discountAmount,
+            discountPercentage: value.discountPercentage,
+            buyNum: value.buyNum,
+            getNum: value.getNum,
+            bxgyX: value.bxgyX,
+            bxgyY: value.bxgyY,
+            actionType: value.actionType,
+            sourceFile: value.sourceFile,
+            fetchedAt: value.fetchedAt,
+          })));
+          total += promotions.length;
+          offset += promotions.length;
+          if (promotions.length < batchSize) break;
         }
         return total;
       },

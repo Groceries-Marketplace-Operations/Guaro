@@ -412,6 +412,7 @@ model SftpApplication {
   username    String
   password    String // encrypted at rest; never expose
   rootPath    String?   @map("root_path")
+  brandId     String?   @map("brand_id") @db.Uuid
   active      Boolean   @default(true)
   createdById String?   @map("created_by") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -419,9 +420,13 @@ model SftpApplication {
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
 
   createdBy Account? @relation("SftpAppCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  brand Brand? @relation(fields: [brandId], references: [id], onDelete: SetNull)
   fileIntegrationRules FileIntegrationRule[]
+  storePromotions StorePromotion[]
+  promotionShopSnapshots PromotionShopSnapshot[]
 
   @@index([active])
+  @@index([brandId])
   @@map("sftp_application")
 }
 
@@ -455,6 +460,7 @@ model Brand {
   storeEmergencies     StoreEmergency[]
   forcedOpenOperations ForcedOpenOperation[]
   items                BrandItem[]
+  sftpApplications     SftpApplication[]
   promotionApiExecutions PromotionApiExecution[]
 
   @@index([ownerId])
@@ -886,6 +892,54 @@ model FileIntegrationExecution {
   @@index([ruleId, createdAt])
   @@index([status])
   @@map("file_integration_execution")
+}
+
+model StorePromotion {
+  id                    String   @id @default(uuid()) @db.Uuid
+  sftpApplicationId     String   @map("sftp_application_id") @db.Uuid
+  shopExternalId        String   @map("shop_external_id")
+  activityId            String   @map("activity_id")
+  activityName          String?  @map("activity_name")
+  startDate             String?  @map("start_date")
+  endDate               String?  @map("end_date")
+  activityType          Int?     @map("activity_type")
+  sku                   String
+  discountAmount        String?  @map("discount_amount")
+  discountPercentage    String?  @map("discount_percentage")
+  buyNum                String?  @map("buy_num")
+  getNum                String?  @map("get_num")
+  bxgyX                  String?  @map("bxgy_x")
+  bxgyY                  String?  @map("bxgy_y")
+  actionType            Int?     @map("action_type")
+  sourceFile            String   @map("source_file")
+  sourceModifiedAt      DateTime @map("source_modified_at") @db.Timestamptz
+  rawData               Json     @map("raw_data")
+  fetchedAt             DateTime @default(now()) @map("fetched_at") @db.Timestamptz
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  sftpApplication SftpApplication @relation(fields: [sftpApplicationId], references: [id], onDelete: Cascade)
+
+  @@unique([sftpApplicationId, shopExternalId, activityId, sku])
+  @@index([shopExternalId])
+  @@index([sftpApplicationId, shopExternalId])
+  @@map("store_promotion")
+}
+
+model PromotionShopSnapshot {
+  id                    String   @id @default(uuid()) @db.Uuid
+  sftpApplicationId     String   @map("sftp_application_id") @db.Uuid
+  shopExternalId        String   @map("shop_external_id")
+  sourceFile            String   @map("source_file")
+  sourceModifiedAt      DateTime @map("source_modified_at") @db.Timestamptz
+  rowCount              Int      @default(0) @map("row_count")
+  fetchedAt             DateTime @default(now()) @map("fetched_at") @db.Timestamptz
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  sftpApplication SftpApplication @relation(fields: [sftpApplicationId], references: [id], onDelete: Cascade)
+
+  @@unique([sftpApplicationId, shopExternalId])
+  @@index([sftpApplicationId, sourceModifiedAt])
+  @@map("promotion_shop_snapshot")
 }
 
 model PromotionApiExecution {

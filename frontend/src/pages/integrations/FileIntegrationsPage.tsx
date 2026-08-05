@@ -120,15 +120,15 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
         <div className="page-header-info">
           <h1>{title}</h1>
           <p>{isFilter
-            ? 'Filtra feeds SFTP de forma recurrente, conserva el archivo fuente y genera copias procesadas con métricas.'
-            : 'Lee archivos de promociones desde /upload sin modificarlos y registra formato, volumen, estado y duración.'}</p>
+            ? 'Elimina filas por monto y reemplaza el archivo SFTP original mediante respaldo, verificación y sustitución controlada.'
+            : 'Lee la promoción vigente más reciente por tienda, la almacena localmente y registra volumen, estado y duración.'}</p>
         </div>
         <button className="btn btn-primary" onClick={openCreate}>+ Nueva configuración</button>
       </div>
       <div className="alert alert-info" style={{ marginBottom: 18 }}>
         {isFilter
-          ? 'La fuente SFTP es solo lectura. Las filas que superan el monto se excluyen de una copia local descargable; nunca se elimina ni sobrescribe el archivo remoto.'
-          : 'Las credenciales permanecen cifradas y no aparecen en los resultados ni en los logs.'}
+          ? 'Antes de reemplazar, el sistema descarga el original, genera Antes/Después, verifica el temporal y mueve el original a /upload/.tequila-backup/<ejecución>/. Si cualquier validación falla, el original permanece o se restaura.'
+          : 'Funciona como Auto Menu Fetch para promociones: conserva una instantánea local por App Shop ID. Las credenciales permanecen cifradas.'}
       </div>
       {isLoading && <p className="text-muted">Cargando…</p>}
       {!isLoading && rules.length === 0 && <div className="empty-state"><p>No hay configuraciones.</p></div>}
@@ -165,6 +165,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
                 <span>{latest.filesProcessed}/{latest.filesScanned} archivos</span>
                 <span>{latest.rowsRead.toLocaleString()} filas</span>
                 {isFilter && <><span style={{ color: 'var(--red)' }}>{latest.rowsRemoved.toLocaleString()} eliminadas</span><span>{latest.rowsKept.toLocaleString()} conservadas</span></>}
+                {!isFilter && <span>{latest.rowsKept.toLocaleString()} promociones guardadas</span>}
                 <span>{duration(latest.durationMs)}</span>
                 <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(expanded === latest.id ? null : latest.id)}>{expanded === latest.id ? 'Ocultar detalle' : 'Ver detalle'}</button>
               </div>
@@ -174,8 +175,12 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
                 <thead><tr><th>Archivo</th><th>Filas</th><th>Conservadas</th><th>Eliminadas</th><th>Resultado</th></tr></thead>
                 <tbody>{(latest.result?.files ?? []).map(file => <tr key={file.fileName}>
                   <td className="td-mono">{file.fileName}</td><td>{file.rowsRead}</td><td>{file.rowsKept}</td><td>{file.rowsRemoved}</td>
-                  <td>{file.error ? <span style={{ color: 'var(--red)' }}>{file.error}</span> : file.skipped ?? (file.outputFile
-                    ? <button className="btn btn-ghost btn-sm" onClick={() => download(latest.id, file.outputFile!)}>Descargar copia</button> : 'Leído')}</td>
+                  <td>{file.error ? <span style={{ color: 'var(--red)' }}>{file.error}</span> : file.skipped ?? (isFilter && file.afterFile
+                    ? <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => download(latest.id, file.beforeFile!)}>Antes</button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => download(latest.id, file.afterFile!)}>Después</button>
+                      <span className="badge">{file.remoteReplaced ? 'Original reemplazado' : 'Sin cambios remotos'}</span>
+                    </span> : `${file.promotionsStored ?? file.rowsKept} promociones`)}</td>
                 </tr>)}</tbody>
               </table></div>}
             </div>}
@@ -203,7 +208,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
         </div>
         <div className="form-row">
           <div className="form-group"><label className="form-label">Alcance</label><select className="form-input" value={form.sourceScope} onChange={event => setForm(value => ({ ...value, sourceScope: event.target.value }))}><option value="city_club">Solo City Club</option><option value="all">Todos los archivos</option></select></div>
-          <div className="form-group"><label className="form-label">Columna del monto (inicia en 0)</label><input className="form-input" type="number" min={0} value={form.priceColumn} onChange={event => setForm(value => ({ ...value, priceColumn: Number(event.target.value) }))} /></div>
+          <div className="form-group"><label className="form-label">Columna del monto (inicia en 0)</label><input className="form-input" type="number" min={0} value={form.priceColumn} onChange={event => setForm(value => ({ ...value, priceColumn: Number(event.target.value) }))} /><p className="form-hint">En los archivos PVP actuales es la columna 4: la quinta posición separada por “|”.</p></div>
         </div>
       </>}
       <div className="form-row">

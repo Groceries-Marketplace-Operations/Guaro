@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, IsUUID, Max, Min, MinLength } from 'class-validator';
 
 export class CreateSftpApplicationDto {
   @IsString()
@@ -27,6 +27,10 @@ export class CreateSftpApplicationDto {
   @IsOptional()
   @IsString()
   rootPath?: string;
+
+  @IsOptional()
+  @IsUUID()
+  brandId?: string;
 
   @IsOptional()
   @IsBoolean()

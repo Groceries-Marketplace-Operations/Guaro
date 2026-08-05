@@ -382,6 +382,8 @@ export interface SftpApplication {
   port: number;
   username: string;
   rootPath?: string;
+  brandId?: string;
+  brand?: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'>;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -399,6 +401,12 @@ export interface FileIntegrationFileResult {
   invalidAmounts: number;
   delimiter: string;
   outputFile?: string;
+  beforeFile?: string;
+  afterFile?: string;
+  backupRemotePath?: string;
+  remoteReplaced?: boolean;
+  promotionsStored?: number;
+  invalidRows?: number;
   skipped?: string;
   error?: string;
 }

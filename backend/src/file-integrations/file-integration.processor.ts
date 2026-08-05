@@ -1,11 +1,15 @@
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { FileIntegrationKind, Prisma } from '@prisma/client';
 import { Job } from 'bullmq';
+import { createHash } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
-import { resolve } from 'path';
+import { posix, resolve } from 'path';
+import SftpClient = require('ssh2-sftp-client');
 import { PrismaService } from '../prisma/prisma.service';
 import { detectDelimiter, looksLikeCityClub, parseAmount, wildcardToRegExp } from './file-integration.util';
+import { ParsedPromotionRow, parsePromotionLines, promotionShopIdFromFileName } from './promotion-file.util';
 import { SftpConnectionService } from './sftp-connection.service';
 
 class FileIntegrationCancelledError extends Error {}
@@ -20,6 +24,12 @@ interface FileResult {
   invalidAmounts: number;
   delimiter: string;
   outputFile?: string;
+  beforeFile?: string;
+  afterFile?: string;
+  backupRemotePath?: string;
+  remoteReplaced?: boolean;
+  promotionsStored?: number;
+  invalidRows?: number;
   skipped?: string;
   error?: string;
 }
@@ -29,7 +39,11 @@ interface FileResult {
 export class FileIntegrationProcessor extends WorkerHost {
   private readonly logger = new Logger(FileIntegrationProcessor.name);
 
-  constructor(private readonly prisma: PrismaService, private readonly sftp: SftpConnectionService) { super(); }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly sftp: SftpConnectionService,
+    private readonly config: ConfigService,
+  ) { super(); }
 
   async process(job: Job<{ executionId: string }>) {
     const started = Date.now();
@@ -66,7 +80,7 @@ export class FileIntegrationProcessor extends WorkerHost {
           ? allFiles.filter(file => file.modifyTime > rule.lastRemoteModifiedAt!.getTime())
           : allFiles;
         const candidates = rule.kind === FileIntegrationKind.complex_promotion_reader
-          ? newFiles.slice(-Math.min(rule.maxFilesPerRun, 100))
+          ? await this.promotionCandidates(rule.sftpApplicationId, allFiles, newFiles, rule.maxFilesPerRun)
           : newFiles.slice(0, rule.maxFilesPerRun);
 
         await this.prisma.fileIntegrationExecution.update({
@@ -105,8 +119,28 @@ export class FileIntegrationProcessor extends WorkerHost {
             }
 
             if (rule.kind === FileIntegrationKind.complex_promotion_reader) {
-              base.rowsRead = lines.filter(Boolean).length;
-              base.rowsKept = base.rowsRead;
+              const parsed = parsePromotionLines(lines, delimiter);
+              const fileShopId = promotionShopIdFromFileName(file.name);
+              const groups = new Map<string, typeof parsed.rows>();
+              for (const row of parsed.rows) {
+                const group = groups.get(row.shopExternalId) ?? [];
+                group.push(row);
+                groups.set(row.shopExternalId, group);
+              }
+              if (groups.size === 0 && fileShopId) groups.set(fileShopId, []);
+              for (const [shopExternalId, values] of groups) {
+                await this.replaceStoredPromotions(
+                  rule.sftpApplicationId,
+                  shopExternalId,
+                  file.name,
+                  modifiedAt,
+                  values,
+                );
+              }
+              base.rowsRead = parsed.rows.length + parsed.invalidRows;
+              base.rowsKept = parsed.rows.length;
+              base.invalidRows = parsed.invalidRows;
+              base.promotionsStored = parsed.rows.length;
               results.push(base);
               filesProcessed++;
               rowsRead += base.rowsRead;
@@ -135,14 +169,33 @@ export class FileIntegrationProcessor extends WorkerHost {
               }
             }
             const output = `${kept.join('\n')}${hasTrailingNewline ? '\n' : ''}`;
-            await writeFile(resolve(outputDir, file.name), output, 'utf8');
-            base.outputFile = file.name;
+            const beforeName = `before__${file.name}`;
+            const afterName = `after__${file.name}`;
+            await writeFile(resolve(outputDir, beforeName), buffer);
+            await writeFile(resolve(outputDir, afterName), output, 'utf8');
+            base.beforeFile = beforeName;
+            base.afterFile = afterName;
+            base.outputFile = afterName;
+            if (base.rowsRemoved > 0) {
+              const replacement = await this.replaceRemoteFile(
+                client,
+                rootPath,
+                file.name,
+                Buffer.from(output, 'utf8'),
+                executionId,
+              );
+              base.remoteReplaced = true;
+              base.backupRemotePath = replacement.backupPath;
+              newestModifiedAt = this.maxDate(newestModifiedAt, replacement.modifiedAt);
+            } else {
+              base.remoteReplaced = false;
+              newestModifiedAt = this.maxDate(newestModifiedAt, modifiedAt);
+            }
             results.push(base);
             filesProcessed++;
             rowsRead += base.rowsRead;
             rowsKept += base.rowsKept;
             rowsRemoved += base.rowsRemoved;
-            newestModifiedAt = this.maxDate(newestModifiedAt, modifiedAt);
           } catch (error) {
             base.error = this.safeError(error);
             results.push(base);
@@ -186,6 +239,120 @@ export class FileIntegrationProcessor extends WorkerHost {
       });
       if (!cancelled) throw error;
     }
+  }
+
+  private async promotionCandidates<T extends { name: string; modifyTime: number }>(
+    sftpApplicationId: string,
+    allFiles: T[],
+    unrecognizedFallback: T[],
+    limit: number,
+  ) {
+    const latestByShop = new Map<string, T>();
+    for (const file of allFiles) {
+      const shopId = promotionShopIdFromFileName(file.name);
+      if (!shopId) continue;
+      const current = latestByShop.get(shopId);
+      if (!current || file.modifyTime > current.modifyTime || (file.modifyTime === current.modifyTime && file.name > current.name)) {
+        latestByShop.set(shopId, file);
+      }
+    }
+    const snapshots = await this.prisma.promotionShopSnapshot.findMany({
+      where: { sftpApplicationId },
+      select: { shopExternalId: true, sourceFile: true, sourceModifiedAt: true },
+    });
+    const snapshotByShop = new Map(snapshots.map(value => [value.shopExternalId, value]));
+    const recognized = [...latestByShop.entries()]
+      .filter(([shopId, file]) => {
+        const snapshot = snapshotByShop.get(shopId);
+        return !snapshot || snapshot.sourceFile !== file.name || snapshot.sourceModifiedAt.getTime() < file.modifyTime;
+      })
+      .map(([, file]) => file);
+    const unrecognized = unrecognizedFallback.filter(file => !promotionShopIdFromFileName(file.name));
+    return [...recognized, ...unrecognized]
+      .sort((left, right) => left.modifyTime - right.modifyTime || left.name.localeCompare(right.name))
+      .slice(0, limit);
+  }
+
+  private async replaceStoredPromotions(
+    sftpApplicationId: string,
+    shopExternalId: string,
+    sourceFile: string,
+    sourceModifiedAt: Date,
+    values: ParsedPromotionRow[],
+  ) {
+    const unique = [...new Map(values.map(value => [`${value.activityId}\u0000${value.sku}`, value])).values()];
+    const writes: Prisma.PrismaPromise<unknown>[] = [
+      this.prisma.storePromotion.deleteMany({ where: { sftpApplicationId, shopExternalId } }),
+    ];
+    if (unique.length > 0) {
+      writes.push(this.prisma.storePromotion.createMany({
+        data: unique.map(value => ({
+          sftpApplicationId,
+          shopExternalId,
+          activityId: value.activityId,
+          activityName: value.activityName,
+          startDate: value.startDate,
+          endDate: value.endDate,
+          activityType: value.activityType,
+          sku: value.sku,
+          discountAmount: value.discountAmount,
+          discountPercentage: value.discountPercentage,
+          buyNum: value.buyNum,
+          getNum: value.getNum,
+          bxgyX: value.bxgyX,
+          bxgyY: value.bxgyY,
+          actionType: value.actionType,
+          sourceFile,
+          sourceModifiedAt,
+          rawData: value.rawData as Prisma.InputJsonValue,
+        })),
+        skipDuplicates: true,
+      }));
+    }
+    writes.push(this.prisma.promotionShopSnapshot.upsert({
+        where: { sftpApplicationId_shopExternalId: { sftpApplicationId, shopExternalId } },
+        create: { sftpApplicationId, shopExternalId, sourceFile, sourceModifiedAt, rowCount: unique.length },
+        update: { sourceFile, sourceModifiedAt, rowCount: unique.length, fetchedAt: new Date() },
+      }));
+    await this.prisma.$transaction(writes);
+  }
+
+  private async replaceRemoteFile(
+    client: SftpClient,
+    rootPath: string,
+    fileName: string,
+    filtered: Buffer,
+    executionId: string,
+  ) {
+    if (this.config.get('FILE_INTEGRATIONS_REMOTE_WRITE_ENABLED', 'false') !== 'true') {
+      throw new Error('Remote replacement is disabled in this environment');
+    }
+    const remotePath = this.sftp.safeRemotePath(rootPath, fileName);
+    const backupDirectory = posix.join(rootPath, '.tequila-backup', executionId);
+    const backupPath = posix.join(backupDirectory, fileName);
+    const temporaryPath = posix.join(rootPath, `.${fileName}.${executionId}.tmp`);
+    await client.mkdir(backupDirectory, true);
+    await client.put(filtered, temporaryPath);
+    const verification = await client.get(temporaryPath);
+    const verifiedBuffer = Buffer.isBuffer(verification) ? verification : Buffer.from(String(verification));
+    if (this.sha256(filtered) !== this.sha256(verifiedBuffer)) {
+      await client.delete(temporaryPath).catch(() => false);
+      throw new Error('Remote temporary file verification failed; original file was not changed');
+    }
+    await client.rename(remotePath, backupPath);
+    try {
+      await client.rename(temporaryPath, remotePath);
+    } catch (error) {
+      await client.rename(backupPath, remotePath).catch(() => false);
+      await client.delete(temporaryPath).catch(() => false);
+      throw error;
+    }
+    const stat = await client.stat(remotePath);
+    return { backupPath, modifiedAt: new Date(stat.modifyTime) };
+  }
+
+  private sha256(value: Buffer) {
+    return createHash('sha256').update(value).digest('hex');
   }
 
   private async ensureActive(id: string) {
