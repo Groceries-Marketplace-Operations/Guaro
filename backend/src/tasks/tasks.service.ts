@@ -204,7 +204,7 @@ export class TasksService {
     const fileKey = format === 'json' ? result?.jsonFileKey : result?.fileKey;
     const validFilename = format === 'json'
       ? /^store-menu-[a-zA-Z0-9_-]+\.json$/
-      : /^(?:shops|store-menu|brand-menu)-[a-zA-Z0-9_-]+\.xlsx$/;
+      : /^(?:shops|store-menu|brand-menu|store-promotions|brand-promotions)-[a-zA-Z0-9_-]+\.xlsx$/;
     if (step.status !== 'done' || typeof fileKey !== 'string' ||
         !validFilename.test(fileKey)) {
       throw new NotFoundException('Export file not found');

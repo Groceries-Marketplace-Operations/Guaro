@@ -9,7 +9,7 @@ import { brandsApi, shopsApi, tasksApi, taskTypesApi, applicationsApi, accountsA
 import type { AppConfigOption } from '../../types';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
-import type { Brand, BrandItem, Shop, Task, TaskType, Paginated, Application, Country } from '../../types';
+import type { Brand, BrandItem, BrandPromotion, Shop, Task, TaskType, Paginated, Application, Country } from '../../types';
 
 const COUNTRY_EMOJI: Record<string, string> = { MX: '🇲🇽', CO: '🇨🇴', CR: '🇨🇷' };
 
@@ -37,6 +37,16 @@ function apiErrorMessage(error: unknown, fallback: string) {
   const response = error as { response?: { data?: { message?: string | string[] } } };
   const message = response.response?.data?.message;
   return Array.isArray(message) ? message.join(', ') : message ?? fallback;
+}
+
+function promotionMechanics(promotion: BrandPromotion) {
+  const values = [
+    promotion.discountAmount ? `Monto: ${promotion.discountAmount}` : '',
+    promotion.discountPercentage ? `%: ${promotion.discountPercentage}` : '',
+    promotion.buyNum || promotion.getNum ? `Compra ${promotion.buyNum ?? '—'} / recibe ${promotion.getNum ?? '—'}` : '',
+    promotion.bxgyX || promotion.bxgyY ? `BXGY ${promotion.bxgyX ?? '—'} / ${promotion.bxgyY ?? '—'}` : '',
+  ].filter(Boolean);
+  return values.join(' · ') || '—';
 }
 
 interface ShopBatchRow {
@@ -133,9 +143,13 @@ export default function BrandDetail() {
   const isAdmin = roles.some(r => r === 'admin' || r === 'super_admin');
   const isBpo   = roles.some(r => r === 'bpo') && !isAdmin;
 
-  const [tab, setTab] = useState<'shops' | 'menu' | 'tasks'>('shops');
+  const [tab, setTab] = useState<'shops' | 'menu' | 'promotions' | 'tasks'>('shops');
   const [menuPage, setMenuPage] = useState(1);
   const [menuSearch, setMenuSearch] = useState('');
+  const [promotionPage, setPromotionPage] = useState(1);
+  const [promotionSearch, setPromotionSearch] = useState('');
+  const [promotionShopId, setPromotionShopId] = useState('');
+  const [promotionActivityType, setPromotionActivityType] = useState('');
   const [openTask, setOpenTask] = useState(false);
   const [taskTypeId, setTaskTypeId] = useState('');
   const [savingTask, setSavingTask] = useState(false);
@@ -191,11 +205,25 @@ export default function BrandDetail() {
   });
   const menuItems = menuResult?.data ?? [];
 
+  const { data: promotionResult, isLoading: loadingPromotions } = useQuery<Paginated<BrandPromotion> & { storesWithPromotions: number; lastFetchedAt?: string }>({
+    queryKey: ['brand-promotions', id, promotionPage, promotionSearch, promotionShopId, promotionActivityType],
+    queryFn: () => brandsApi.promotions(id!, {
+      page: promotionPage,
+      limit: 50,
+      q: promotionSearch || undefined,
+      shopExternalId: promotionShopId || undefined,
+      activityType: promotionActivityType || undefined,
+    }).then(r => r.data),
+    enabled: tab === 'promotions',
+  });
+  const promotions = promotionResult?.data ?? [];
+
   const { data: typesResult } = useQuery<Paginated<TaskType>>({
     queryKey: ['task-types'],
     queryFn: () => taskTypesApi.list({ page: 1, limit: 200 }).then(r => r.data as Paginated<TaskType>),
   });
   const types = (typesResult?.data ?? []).filter(type => type.active);
+  const brandPromotionTaskType = types.find(type => type.name === 'Download Brand Promotions Information');
 
   const { data: bposResult } = useQuery<{ data: { id: string; name: string; email: string }[] }>({
     queryKey: ['accounts', { role: 'bpo' }],
@@ -493,6 +521,9 @@ export default function BrandDetail() {
           <div className={`tab ${tab === 'menu' ? 'active' : ''}`} onClick={() => setTab('menu')}>
             Menu ({menuResult?.total ?? '—'})
           </div>
+          <div className={`tab ${tab === 'promotions' ? 'active' : ''}`} onClick={() => setTab('promotions')}>
+            Promotions ({promotionResult?.total ?? '—'})
+          </div>
         </div>
 
         {tab === 'shops' && (
@@ -656,6 +687,95 @@ export default function BrandDetail() {
                 </tbody>
               </table>
               <Paginator page={menuPage} total={menuResult?.total ?? 0} limit={50} onChange={setMenuPage} />
+            </div>
+          </>
+        )}
+        {tab === 'promotions' && (
+          <>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+              <input
+                className="form-input"
+                style={{ maxWidth: 360, margin: 0 }}
+                value={promotionSearch}
+                onChange={event => { setPromotionSearch(event.target.value); setPromotionPage(1); }}
+                placeholder="Buscar tienda, actividad, UPC/SKU o archivo…"
+              />
+              <select
+                className="form-select"
+                style={{ width: 280, margin: 0 }}
+                value={promotionShopId}
+                onChange={event => { setPromotionShopId(event.target.value); setPromotionPage(1); }}
+              >
+                <option value="">Todas las tiendas</option>
+                {shops.map(shop => (
+                  <option key={shop.id} value={shop.appShopId}>
+                    {shop.shopId} · {shop.name ?? shop.appShopId}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="form-input"
+                style={{ width: 180, margin: 0 }}
+                type="number"
+                min="0"
+                value={promotionActivityType}
+                onChange={event => { setPromotionActivityType(event.target.value); setPromotionPage(1); }}
+                placeholder="Tipo de actividad"
+              />
+              <span className="text-muted text-sm">
+                {promotionResult?.storesWithPromotions ?? 0} tiendas con promociones
+                {promotionResult?.lastFetchedAt ? ` · Última lectura ${new Date(promotionResult.lastFetchedAt).toLocaleString()}` : ''}
+              </span>
+              <button
+                className="btn btn-primary"
+                style={{ marginLeft: 'auto' }}
+                disabled={!brandPromotionTaskType}
+                title={brandPromotionTaskType ? 'Crear tarea de exportación' : 'El tipo de tarea todavía no está disponible'}
+                onClick={() => {
+                  if (!brandPromotionTaskType) return;
+                  setTaskTypeId(brandPromotionTaskType.id);
+                  setTaskErr('');
+                  setOpenTask(true);
+                }}
+              >
+                Descargar promociones
+              </button>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tienda</th><th>Actividad</th><th>UPC / SKU</th><th>Vigencia</th><th>Tipo</th>
+                    <th>Mecánica</th><th>Acción</th><th>Cuenta SFTP</th><th>Actualizado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loadingPromotions && <tr><td colSpan={9} className="text-muted">Cargando promociones…</td></tr>}
+                  {!loadingPromotions && promotions.length === 0 && (
+                    <tr><td colSpan={9}><div className="empty-state"><p>No hay promociones almacenadas para esta marca.</p></div></td></tr>
+                  )}
+                  {promotions.map(promotion => (
+                    <tr key={promotion.id} title={`Archivo: ${promotion.sourceFile}`}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{promotion.shop?.name ?? promotion.shop?.shopId ?? promotion.shopExternalId}</div>
+                        <div className="td-mono text-muted text-sm">{promotion.shop?.shopId ?? 'Sin Shop ID'} · {promotion.shopExternalId}</div>
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{promotion.activityName ?? '—'}</div>
+                        <div className="td-mono text-muted text-sm">{promotion.activityId}</div>
+                      </td>
+                      <td className="td-mono">{promotion.sku}</td>
+                      <td className="text-sm">{promotion.startDate ?? '—'}<br />{promotion.endDate ?? '—'}</td>
+                      <td>{promotion.activityType ?? '—'}</td>
+                      <td className="text-sm" style={{ maxWidth: 300 }}>{promotionMechanics(promotion)}</td>
+                      <td>{promotion.actionType ?? '—'}</td>
+                      <td>{promotion.sourceAccount}</td>
+                      <td className="text-muted text-sm">{new Date(promotion.fetchedAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <Paginator page={promotionPage} total={promotionResult?.total ?? 0} limit={50} onChange={setPromotionPage} />
             </div>
           </>
         )}

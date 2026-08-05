@@ -12,7 +12,7 @@ export interface MenuExportColumn {
 }
 
 interface WriteMenuExportOptions {
-  prefix: 'store-menu' | 'brand-menu' | 'store-promotions';
+  prefix: 'store-menu' | 'brand-menu' | 'store-promotions' | 'brand-promotions';
   sheetName: string;
   columns: MenuExportColumn[];
   populate: (addRow: (values: MenuExportCell[]) => void) => Promise<void>;

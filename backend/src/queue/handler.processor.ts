@@ -50,6 +50,9 @@ export interface BrandShopSyncInput {
 export interface StorePromotionExportRow {
   sourceAccount: string;
   shopExternalId: string;
+  shopId?: string | null;
+  shopName?: string | null;
+  shopCity?: string | null;
   activityId: string;
   activityName: string | null;
   startDate: string | null;
@@ -102,6 +105,10 @@ export interface HandlerContext {
   /** Read the current promotion snapshot for one store in bounded batches. */
   forEachStorePromotionBatch(
     shopExternalId: string,
+    callback: (promotions: StorePromotionExportRow[]) => Promise<void> | void,
+  ): Promise<number>;
+  /** Read every current promotion linked to the task brand in bounded batches. */
+  forEachBrandPromotionBatch(
     callback: (promotions: StorePromotionExportRow[]) => Promise<void> | void,
   ): Promise<number>;
   /** True when this is the final BullMQ attempt — safe to clean up temp resources */
@@ -365,6 +372,77 @@ export class HandlerProcessor extends WorkerHost {
             sourceFile: value.sourceFile,
             fetchedAt: value.fetchedAt,
           })));
+          total += promotions.length;
+          offset += promotions.length;
+          if (promotions.length < batchSize) break;
+        }
+        return total;
+      },
+      forEachBrandPromotionBatch: async (callback) => {
+        if (!brand) throw new Error('Task has no brand linked');
+        const batchSize = 1_000;
+        let offset = 0;
+        let total = 0;
+        while (true) {
+          const promotions = await this.prisma.storePromotion.findMany({
+            where: {
+              sftpApplication: { brandId: brand.id, active: true, deletedAt: null },
+            },
+            select: {
+              shopExternalId: true,
+              activityId: true,
+              activityName: true,
+              startDate: true,
+              endDate: true,
+              activityType: true,
+              sku: true,
+              discountAmount: true,
+              discountPercentage: true,
+              buyNum: true,
+              getNum: true,
+              bxgyX: true,
+              bxgyY: true,
+              actionType: true,
+              sourceFile: true,
+              fetchedAt: true,
+              sftpApplication: { select: { name: true } },
+            },
+            orderBy: [{ shopExternalId: 'asc' }, { activityId: 'asc' }, { sku: 'asc' }, { id: 'asc' }],
+            skip: offset,
+            take: batchSize,
+          });
+          if (promotions.length === 0) break;
+          const appShopIds = [...new Set(promotions.map(value => value.shopExternalId))];
+          const shops = await this.prisma.shop.findMany({
+            where: { brandId: brand.id, deletedAt: null, appShopId: { in: appShopIds } },
+            select: { shopId: true, appShopId: true, name: true, city: true },
+          });
+          const shopByAppId = new Map(shops.map(shop => [shop.appShopId, shop]));
+          await callback(promotions.map(value => {
+            const shop = shopByAppId.get(value.shopExternalId);
+            return {
+              sourceAccount: value.sftpApplication.name,
+              shopExternalId: value.shopExternalId,
+              shopId: shop?.shopId ?? null,
+              shopName: shop?.name ?? null,
+              shopCity: shop?.city ?? null,
+              activityId: value.activityId,
+              activityName: value.activityName,
+              startDate: value.startDate,
+              endDate: value.endDate,
+              activityType: value.activityType,
+              sku: value.sku,
+              discountAmount: value.discountAmount,
+              discountPercentage: value.discountPercentage,
+              buyNum: value.buyNum,
+              getNum: value.getNum,
+              bxgyX: value.bxgyX,
+              bxgyY: value.bxgyY,
+              actionType: value.actionType,
+              sourceFile: value.sourceFile,
+              fetchedAt: value.fetchedAt,
+            };
+          }));
           total += promotions.length;
           offset += promotions.length;
           if (promotions.length < batchSize) break;

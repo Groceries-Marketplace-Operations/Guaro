@@ -15,3 +15,4 @@ export * from './export-shop-list.handler';
 export * from './export-store-menu.handler';
 export * from './export-brand-menu.handler';
 export * from './export-store-promotions.handler';
+export * from './export-brand-promotions.handler';

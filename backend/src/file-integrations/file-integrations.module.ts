@@ -7,10 +7,12 @@ import { FileIntegrationsService } from './file-integrations.service';
 import { PromotionApiController } from './promotion-api.controller';
 import { PromotionApiService } from './promotion-api.service';
 import { SftpConnectionService } from './sftp-connection.service';
+import { BrandPromotionsController } from './brand-promotions.controller';
+import { BrandPromotionsService } from './brand-promotions.service';
 
 @Module({
   imports: [BullModule.registerQueue({ name: 'file-integrations' })],
-  controllers: [FileIntegrationsController, PromotionApiController],
-  providers: [FileIntegrationsService, FileIntegrationProcessor, FileIntegrationScheduler, SftpConnectionService, PromotionApiService],
+  controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController],
+  providers: [FileIntegrationsService, FileIntegrationProcessor, FileIntegrationScheduler, SftpConnectionService, PromotionApiService, BrandPromotionsService],
 })
 export class FileIntegrationsModule {}

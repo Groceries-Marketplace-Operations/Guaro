@@ -375,6 +375,28 @@ export interface BrandItem {
   lastSeenAt: string;
 }
 
+export interface BrandPromotion {
+  id: string;
+  shopExternalId: string;
+  activityId: string;
+  activityName?: string;
+  startDate?: string;
+  endDate?: string;
+  activityType?: number;
+  sku: string;
+  discountAmount?: string;
+  discountPercentage?: string;
+  buyNum?: string;
+  getNum?: string;
+  bxgyX?: string;
+  bxgyY?: string;
+  actionType?: number;
+  sourceFile: string;
+  sourceAccount: string;
+  fetchedAt: string;
+  shop?: { id: string; shopId: string; appShopId: string; name?: string; city?: string };
+}
+
 export interface SftpApplication {
   id: string;
   name: string;
