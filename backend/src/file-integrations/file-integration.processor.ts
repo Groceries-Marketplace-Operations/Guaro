@@ -17,6 +17,14 @@ class FileIntegrationCancelledError extends Error {}
 class SftpOperationTimeoutError extends Error {}
 
 const PROMOTION_SHOPS_PER_RUN_LIMIT = 20;
+const FILE_STATE_RETENTION_DAYS = 7;
+const FILE_MAX_ATTEMPTS = 3;
+
+interface RemoteFileMetadata {
+  name: string;
+  size: number;
+  modifyTime: number;
+}
 
 interface FileResult {
   fileName: string;
@@ -72,6 +80,7 @@ export class FileIntegrationProcessor extends WorkerHost {
     let rowsRemoved = 0;
     let bytesRead = BigInt(0);
     let newestModifiedAt = rule.lastRemoteModifiedAt;
+    let priceScanAt: Date | null = null;
 
     try {
       await this.sftp.withClient(rule.sftpApplicationId, async (client, rootPath) => {
@@ -84,6 +93,10 @@ export class FileIntegrationProcessor extends WorkerHost {
         const newFiles = rule.lastRemoteModifiedAt
           ? allFiles.filter(file => file.modifyTime > rule.lastRemoteModifiedAt!.getTime())
           : allFiles;
+        const pricePlan = rule.kind === FileIntegrationKind.price_filter
+          ? await this.priceFilterCandidates(rule.id, rule.fileStateInitializedAt, allFiles, rule.maxFilesPerRun)
+          : null;
+        priceScanAt = pricePlan?.scanAt ?? null;
         const candidates = rule.kind === FileIntegrationKind.complex_promotion_reader
           ? await this.promotionCandidates(
               rule.sftpApplicationId,
@@ -91,9 +104,7 @@ export class FileIntegrationProcessor extends WorkerHost {
               newFiles,
               Math.min(rule.maxFilesPerRun, PROMOTION_SHOPS_PER_RUN_LIMIT),
             )
-          : [...newFiles]
-              .sort((a, b) => b.modifyTime - a.modifyTime || b.name.localeCompare(a.name))
-              .slice(0, rule.maxFilesPerRun);
+          : pricePlan!.files;
 
         await this.prisma.fileIntegrationExecution.update({
           where: { id: executionId }, data: { filesScanned },
@@ -103,6 +114,22 @@ export class FileIntegrationProcessor extends WorkerHost {
 
         for (const file of candidates) {
           await this.ensureActive(executionId);
+          if (rule.kind === FileIntegrationKind.price_filter) {
+            const claimedFile = await this.prisma.fileIntegrationFileState.updateMany({
+              where: {
+                ruleId: rule.id,
+                fileName: file.name,
+                OR: [{ status: 'pending' }, { status: 'failed', attempts: { lt: FILE_MAX_ATTEMPTS } }],
+              },
+              data: {
+                status: 'running',
+                attempts: { increment: 1 },
+                processingAt: new Date(),
+                lastError: null,
+              },
+            });
+            if (!claimedFile.count) continue;
+          }
           await this.prisma.fileIntegrationExecution.update({
             where: { id: executionId }, data: { currentFile: file.name },
           });
@@ -132,6 +159,9 @@ export class FileIntegrationProcessor extends WorkerHost {
               base.skipped = 'File does not belong to City Club';
               results.push(base);
               newestModifiedAt = this.maxDate(newestModifiedAt, modifiedAt);
+              if (rule.kind === FileIntegrationKind.price_filter) {
+                await this.markFileDone(rule.id, file.name, modifiedAt, file.size);
+              }
               continue;
             }
 
@@ -205,9 +235,11 @@ export class FileIntegrationProcessor extends WorkerHost {
               base.remoteReplaced = true;
               base.backupRemotePath = replacement.backupPath;
               newestModifiedAt = this.maxDate(newestModifiedAt, replacement.modifiedAt);
+              await this.markFileDone(rule.id, file.name, replacement.modifiedAt, replacement.size);
             } else {
               base.remoteReplaced = false;
               newestModifiedAt = this.maxDate(newestModifiedAt, modifiedAt);
+              await this.markFileDone(rule.id, file.name, modifiedAt, file.size);
             }
             results.push(base);
             filesProcessed++;
@@ -218,6 +250,9 @@ export class FileIntegrationProcessor extends WorkerHost {
             if (error instanceof FileIntegrationCancelledError || error instanceof SftpOperationTimeoutError) throw error;
             base.error = this.safeError(error);
             results.push(base);
+            if (rule.kind === FileIntegrationKind.price_filter) {
+              await this.markFileFailed(rule.id, file.name, base.error);
+            }
             this.logger.warn(`File integration ${executionId} failed for ${file.name}: ${base.error}`);
           }
           await this.prisma.fileIntegrationExecution.update({
@@ -230,6 +265,11 @@ export class FileIntegrationProcessor extends WorkerHost {
       const failed = results.filter(value => value.error).length;
       const status = failed === 0 ? 'done' : filesProcessed > 0 ? 'partial_success' : 'failed';
       const finishedAt = new Date();
+      const remainingPending = rule.kind === FileIntegrationKind.price_filter && priceScanAt
+        ? await this.prisma.fileIntegrationFileState.count({
+            where: { ruleId: rule.id, status: 'pending', lastSeenAt: priceScanAt },
+          })
+        : 0;
       await this.prisma.$transaction([
         this.prisma.fileIntegrationExecution.update({
           where: { id: executionId },
@@ -237,16 +277,37 @@ export class FileIntegrationProcessor extends WorkerHost {
             status, finishedAt, durationMs: Date.now() - started, filesScanned, filesProcessed,
             rowsRead, rowsKept, rowsRemoved, bytesRead, currentFile: null,
             errorMessage: failed ? `${failed} file(s) failed; see execution details` : null,
-            result: { files: results, newFiles: results.length, outputDirectory: rule.kind === 'price_filter' ? executionId : null } as unknown as Prisma.InputJsonValue,
+            result: {
+              files: results,
+              newFiles: results.length,
+              pendingFiles: remainingPending,
+              outputDirectory: rule.kind === 'price_filter' ? executionId : null,
+            } as unknown as Prisma.InputJsonValue,
           },
         }),
         this.prisma.fileIntegrationRule.update({
           where: { id: rule.id },
-          data: { lastRunAt: finishedAt, lastRemoteModifiedAt: newestModifiedAt },
+          data: {
+            lastRunAt: finishedAt,
+            lastRemoteModifiedAt: newestModifiedAt,
+            nextRunAt: remainingPending > 0 && rule.active
+              ? new Date(finishedAt.getTime() + 60_000)
+              : undefined,
+          },
         }),
       ]);
     } catch (error) {
       const cancelled = error instanceof FileIntegrationCancelledError;
+      if (rule.kind === FileIntegrationKind.price_filter) {
+        await this.prisma.fileIntegrationFileState.updateMany({
+          where: { ruleId: rule.id, status: 'running' },
+          data: {
+            status: cancelled ? 'pending' : 'failed',
+            processingAt: null,
+            lastError: cancelled ? null : this.safeError(error),
+          },
+        });
+      }
       await this.prisma.fileIntegrationExecution.updateMany({
         where: { id: executionId, status: 'running' },
         data: {
@@ -258,6 +319,145 @@ export class FileIntegrationProcessor extends WorkerHost {
       });
       if (!cancelled) throw error;
     }
+  }
+
+  private async priceFilterCandidates(
+    ruleId: string,
+    initializedAt: Date | null,
+    allFiles: RemoteFileMetadata[],
+    limit: number,
+  ) {
+    const scanAt = new Date();
+    const existing = await this.prisma.fileIntegrationFileState.findMany({
+      where: { ruleId },
+      select: { fileName: true, sourceModifiedAt: true, fileSize: true, status: true },
+    });
+    const existingByName = new Map(existing.map(value => [value.fileName, value]));
+    const historicallyProcessed = initializedAt
+      ? new Set<string>()
+      : await this.historicallyProcessedFileNames(ruleId);
+    const newFiles = allFiles.filter(file => !existingByName.has(file.name));
+
+    for (let offset = 0; offset < newFiles.length; offset += 1_000) {
+      await this.prisma.fileIntegrationFileState.createMany({
+        data: newFiles.slice(offset, offset + 1_000).map(file => {
+          const done = historicallyProcessed.has(file.name);
+          return {
+            ruleId,
+            fileName: file.name,
+            sourceModifiedAt: new Date(file.modifyTime),
+            fileSize: BigInt(file.size),
+            status: done ? 'done' : 'pending',
+            attempts: done ? 1 : 0,
+            firstSeenAt: scanAt,
+            lastSeenAt: scanAt,
+            processedAt: done ? scanAt : null,
+          };
+        }),
+        skipDuplicates: true,
+      });
+    }
+
+    for (let offset = 0; offset < allFiles.length; offset += 1_000) {
+      await this.prisma.fileIntegrationFileState.updateMany({
+        where: { ruleId, fileName: { in: allFiles.slice(offset, offset + 1_000).map(file => file.name) } },
+        data: { lastSeenAt: scanAt },
+      });
+    }
+
+    const changedFiles = allFiles.filter(file => {
+      const current = existingByName.get(file.name);
+      return current && (
+        current.sourceModifiedAt.getTime() !== file.modifyTime
+        || current.fileSize !== BigInt(file.size)
+      );
+    });
+    for (let offset = 0; offset < changedFiles.length; offset += 500) {
+      await this.prisma.$transaction(changedFiles.slice(offset, offset + 500).map(file => (
+        this.prisma.fileIntegrationFileState.update({
+          where: { ruleId_fileName: { ruleId, fileName: file.name } },
+          data: {
+            sourceModifiedAt: new Date(file.modifyTime),
+            fileSize: BigInt(file.size),
+            status: 'pending',
+            attempts: 0,
+            lastError: null,
+            processingAt: null,
+            processedAt: null,
+            lastSeenAt: scanAt,
+          },
+        })
+      )));
+    }
+
+    if (!initializedAt) {
+      await this.prisma.fileIntegrationRule.update({
+        where: { id: ruleId },
+        data: { fileStateInitializedAt: scanAt },
+      });
+    }
+    const retentionCutoff = new Date(scanAt.getTime() - FILE_STATE_RETENTION_DAYS * 86_400_000);
+    await this.prisma.fileIntegrationFileState.deleteMany({
+      where: { ruleId, status: 'done', lastSeenAt: { lt: retentionCutoff } },
+    });
+
+    const states = await this.prisma.fileIntegrationFileState.findMany({
+      where: {
+        ruleId,
+        lastSeenAt: scanAt,
+        OR: [
+          { status: 'pending' },
+          { status: 'failed', attempts: { lt: FILE_MAX_ATTEMPTS } },
+        ],
+      },
+      orderBy: [{ sourceModifiedAt: 'asc' }, { fileName: 'asc' }],
+      take: limit,
+      select: { fileName: true },
+    });
+    const remoteByName = new Map(allFiles.map(file => [file.name, file]));
+    return {
+      scanAt,
+      files: states.flatMap(state => {
+        const file = remoteByName.get(state.fileName);
+        return file ? [file] : [];
+      }),
+    };
+  }
+
+  private async historicallyProcessedFileNames(ruleId: string) {
+    const executions = await this.prisma.fileIntegrationExecution.findMany({
+      where: { ruleId, result: { not: Prisma.JsonNull } },
+      select: { result: true },
+    });
+    const names = new Set<string>();
+    for (const execution of executions) {
+      const result = execution.result as { files?: Array<{ fileName?: unknown; error?: unknown }> } | null;
+      for (const file of result?.files ?? []) {
+        if (typeof file.fileName === 'string' && !file.error) names.add(file.fileName);
+      }
+    }
+    return names;
+  }
+
+  private async markFileDone(ruleId: string, fileName: string, modifiedAt: Date, size: number) {
+    await this.prisma.fileIntegrationFileState.updateMany({
+      where: { ruleId, fileName },
+      data: {
+        sourceModifiedAt: modifiedAt,
+        fileSize: BigInt(size),
+        status: 'done',
+        lastError: null,
+        processingAt: null,
+        processedAt: new Date(),
+      },
+    });
+  }
+
+  private async markFileFailed(ruleId: string, fileName: string, error: string) {
+    await this.prisma.fileIntegrationFileState.updateMany({
+      where: { ruleId, fileName },
+      data: { status: 'failed', lastError: error, processingAt: null },
+    });
   }
 
   private async promotionCandidates<T extends { name: string; modifyTime: number }>(
@@ -330,7 +530,7 @@ export class FileIntegrationProcessor extends WorkerHost {
       throw error;
     }
     const stat = await client.stat(remotePath);
-    return { backupPath, modifiedAt: new Date(stat.modifyTime) };
+    return { backupPath, modifiedAt: new Date(stat.modifyTime), size: Number(stat.size) };
   }
 
   private async withSftpTimeout<T>(client: SftpClient, operation: Promise<T>, label: string): Promise<T> {

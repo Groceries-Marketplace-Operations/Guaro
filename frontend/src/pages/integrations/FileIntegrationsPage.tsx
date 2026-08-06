@@ -26,7 +26,7 @@ const runningStatuses = new Set(['pending', 'running']);
 function initialForm(kind: FileIntegrationKind): RuleForm {
   return kind === 'price_filter'
     ? { name: '', kind, country: 'MX', sftpApplicationId: '', active: false, intervalMinutes: 1440,
-      filePattern: '*', sourceScope: 'city_club', thresholdAmount: 3000, delimiter: '', priceColumn: 4, maxFilesPerRun: 250 }
+      filePattern: '*', sourceScope: 'city_club', thresholdAmount: 3000, delimiter: '', priceColumn: 4, maxFilesPerRun: 700 }
     : { name: '', kind, country: '', sftpApplicationId: '', active: false, intervalMinutes: 1440,
       filePattern: '*', sourceScope: 'all', thresholdAmount: 0, delimiter: '', priceColumn: 0, maxFilesPerRun: 20 };
 }
@@ -127,7 +127,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
       </div>
       <div className="alert alert-info" style={{ marginBottom: 18 }}>
         {isFilter
-          ? 'Antes de reemplazar, el sistema descarga el original, genera Antes/Después, verifica el temporal y mueve el original a /upload/.tequila-backup/<ejecución>/. Si cualquier validación falla, el original permanece o se restaura.'
+          ? 'El sistema registra un solo estado por archivo, procesa primero los más antiguos y conserva pendientes o fallidos para la siguiente ejecución. Antes de reemplazar, genera Antes/Después, verifica el temporal y mueve el original a /upload/.tequila-backup/<ejecución>/.'
           : 'Funciona como Auto Menu Fetch para promociones: conserva una instantánea local por App Shop ID. Las credenciales permanecen cifradas.'}
       </div>
       {isLoading && <p className="text-muted">Cargando…</p>}
@@ -149,6 +149,13 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
                 <div className="text-muted" style={{ marginTop: 8, fontSize: 12 }}>
                   Cada {rule.intervalMinutes ?? '—'} min · Máx. {rule.maxFilesPerRun} {isFilter ? 'archivos' : 'tiendas'} · Última: {date(rule.lastRunAt)} · Próxima: {date(rule.nextRunAt)}
                 </div>
+                {isFilter && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 9, fontSize: 12 }}>
+                  <span className="badge">Inventario: {rule.fileState?.total ?? 0}</span>
+                  <span className="badge" style={{ color: '#B54708' }}>Pendientes: {rule.fileState?.pending ?? 0}</span>
+                  <span className="badge" style={{ color: 'var(--orange)' }}>Procesando: {rule.fileState?.running ?? 0}</span>
+                  <span className="badge" style={{ color: '#027A48' }}>Procesados: {rule.fileState?.done ?? 0}</span>
+                  <span className="badge" style={{ color: 'var(--red)' }}>Fallidos: {rule.fileState?.failed ?? 0}</span>
+                </div>}
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button className="btn btn-primary btn-sm" disabled={!!running || action.isPending} onClick={() => action.mutate({ id: rule.id, verb: 'run' })}>Ejecutar</button>
@@ -163,6 +170,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
               <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
                 <StatusBadge status={latest.status} />
                 <span>{latest.filesProcessed}/{latest.filesScanned} archivos</span>
+                {isFilter && latest.result?.pendingFiles !== undefined && <span>{latest.result.pendingFiles} pendientes al terminar</span>}
                 <span>{latest.rowsRead.toLocaleString()} filas</span>
                 {isFilter && <><span style={{ color: 'var(--red)' }}>{latest.rowsRemoved.toLocaleString()} eliminadas</span><span>{latest.rowsKept.toLocaleString()} conservadas</span></>}
                 {!isFilter && <span>{latest.rowsKept.toLocaleString()} promociones guardadas</span>}

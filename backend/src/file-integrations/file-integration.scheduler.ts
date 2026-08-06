@@ -19,6 +19,10 @@ export class FileIntegrationScheduler implements OnModuleInit {
         errorMessage: 'Stopped manually',
       },
     });
+    await this.prisma.fileIntegrationFileState.updateMany({
+      where: { status: 'running' },
+      data: { status: 'pending', processingAt: null, lastError: 'Recovered after service restart' },
+    });
   }
 
   @Cron(CronExpression.EVERY_MINUTE)

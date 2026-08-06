@@ -851,6 +851,7 @@ model FileIntegrationRule {
   delimiter         String?
   priceColumn       Int?                @map("price_column")
   maxFilesPerRun    Int                 @default(250) @map("max_files_per_run")
+  fileStateInitializedAt DateTime?      @map("file_state_initialized_at") @db.Timestamptz
   createdById       String?             @map("created_by") @db.Uuid
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz
@@ -859,10 +860,35 @@ model FileIntegrationRule {
   sftpApplication SftpApplication           @relation(fields: [sftpApplicationId], references: [id])
   createdBy       Account?                  @relation("FileIntegrationRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
   executions      FileIntegrationExecution[]
+  fileStates      FileIntegrationFileState[]
 
   @@index([kind, active, nextRunAt])
   @@index([sftpApplicationId])
   @@map("file_integration_rule")
+}
+
+model FileIntegrationFileState {
+  id               String    @id @default(uuid()) @db.Uuid
+  ruleId           String    @map("rule_id") @db.Uuid
+  fileName         String    @map("file_name")
+  sourceModifiedAt DateTime  @map("source_modified_at") @db.Timestamptz
+  fileSize         BigInt    @default(0) @map("file_size")
+  status           String    @default("pending")
+  attempts         Int       @default(0)
+  lastError        String?   @map("last_error") @db.Text
+  firstSeenAt      DateTime  @default(now()) @map("first_seen_at") @db.Timestamptz
+  lastSeenAt       DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz
+  processingAt     DateTime? @map("processing_at") @db.Timestamptz
+  processedAt      DateTime? @map("processed_at") @db.Timestamptz
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  rule FileIntegrationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, fileName])
+  @@index([ruleId, status, sourceModifiedAt])
+  @@index([ruleId, lastSeenAt])
+  @@map("file_integration_file_state")
 }
 
 model FileIntegrationExecution {

@@ -25,12 +25,22 @@ export class FileIntegrationsService {
       },
       orderBy: { createdAt: 'desc' },
     });
+    const stateCounts = rules.length > 0 ? await this.prisma.fileIntegrationFileState.groupBy({
+      by: ['ruleId', 'status'],
+      where: { ruleId: { in: rules.map(rule => rule.id) } },
+      _count: { _all: true },
+    }) : [];
     return rules.map(rule => ({
       ...rule,
       maxFilesPerRun: rule.kind === FileIntegrationKind.complex_promotion_reader
         ? Math.min(rule.maxFilesPerRun, PROMOTION_SHOPS_PER_RUN_LIMIT)
         : rule.maxFilesPerRun,
       thresholdAmount: rule.thresholdAmount?.toString() ?? null,
+      fileState: stateCounts.filter(value => value.ruleId === rule.id).reduce((summary, value) => ({
+        ...summary,
+        total: summary.total + value._count._all,
+        [value.status]: value._count._all,
+      }), { total: 0, pending: 0, running: 0, done: 0, failed: 0 }),
       executions: rule.executions.map(execution => this.serializeExecution(execution)) }));
   }
 
@@ -42,9 +52,26 @@ export class FileIntegrationsService {
   }
 
   async update(id: string, dto: UpsertFileIntegrationRuleDto) {
-    await this.findRule(id);
+    const current = await this.findRule(id);
     const data = await this.normalize(dto);
-    return this.prisma.fileIntegrationRule.update({ where: { id }, data });
+    const fileSelectionChanged = current.sftpApplicationId !== data.sftpApplicationId
+      || current.filePattern !== data.filePattern
+      || current.sourceScope !== data.sourceScope
+      || current.delimiter !== data.delimiter
+      || current.priceColumn !== data.priceColumn
+      || current.thresholdAmount?.toString() !== data.thresholdAmount?.toString();
+    return this.prisma.$transaction(async tx => {
+      if (fileSelectionChanged) {
+        await tx.fileIntegrationFileState.deleteMany({ where: { ruleId: id } });
+      }
+      return tx.fileIntegrationRule.update({
+        where: { id },
+        data: {
+          ...data,
+          fileStateInitializedAt: fileSelectionChanged ? null : undefined,
+        },
+      });
+    });
   }
 
   async remove(id: string) {
@@ -65,6 +92,12 @@ export class FileIntegrationsService {
       where: { ruleId: id, status: { in: ['pending', 'running'] } },
     });
     if (active) throw new BadRequestException('This rule already has a pending or running execution');
+    if (rule.kind === FileIntegrationKind.price_filter) {
+      await this.prisma.fileIntegrationFileState.updateMany({
+        where: { ruleId: id, status: 'failed' },
+        data: { status: 'pending', attempts: 0, lastError: null, processingAt: null },
+      });
+    }
     const execution = await this.prisma.fileIntegrationExecution.create({
       data: { ruleId: id, trigger: 'manual', createdById },
     });

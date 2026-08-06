@@ -449,7 +449,7 @@ export interface FileIntegrationExecution {
   bytesRead: string;
   currentFile?: string;
   errorMessage?: string;
-  result?: { files?: FileIntegrationFileResult[]; newFiles?: number };
+  result?: { files?: FileIntegrationFileResult[]; newFiles?: number; pendingFiles?: number };
   createdAt: string;
 }
 
@@ -469,6 +469,7 @@ export interface FileIntegrationRule {
   delimiter?: string;
   priceColumn?: number;
   maxFilesPerRun: number;
+  fileState: { total: number; pending: number; running: number; done: number; failed: number };
   sftpApplicationId: string;
   sftpApplication: Pick<SftpApplication, 'id' | 'name' | 'host' | 'port' | 'rootPath' | 'active'>;
   executions: FileIntegrationExecution[];
