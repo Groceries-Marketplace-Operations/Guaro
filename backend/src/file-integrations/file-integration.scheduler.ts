@@ -10,6 +10,10 @@ export class FileIntegrationScheduler implements OnModuleInit {
   constructor(private readonly prisma: PrismaService, private readonly service: FileIntegrationsService) {}
 
   async onModuleInit() {
+    const interrupted = await this.prisma.fileIntegrationExecution.findMany({
+      where: { status: { in: ['pending', 'running'] }, cancelRequested: false },
+      select: { id: true, ruleId: true },
+    });
     await this.prisma.fileIntegrationExecution.updateMany({
       where: { status: { in: ['pending', 'running'] }, cancelRequested: true },
       data: {
@@ -19,6 +23,29 @@ export class FileIntegrationScheduler implements OnModuleInit {
         errorMessage: 'Stopped manually',
       },
     });
+    if (interrupted.length > 0) {
+      const now = new Date();
+      await this.prisma.$transaction([
+        this.prisma.fileIntegrationExecution.updateMany({
+          where: { id: { in: interrupted.map(value => value.id) }, status: { in: ['pending', 'running'] } },
+          data: {
+            status: 'cancelled',
+            finishedAt: now,
+            currentFile: null,
+            errorMessage: 'Interrupted by service restart; automatically rescheduled',
+          },
+        }),
+        this.prisma.fileIntegrationRule.updateMany({
+          where: {
+            id: { in: [...new Set(interrupted.map(value => value.ruleId))] },
+            active: true,
+            deletedAt: null,
+          },
+          data: { nextRunAt: now },
+        }),
+      ]);
+      this.logger.warn(`Recovered ${interrupted.length} interrupted file integration execution(s)`);
+    }
     await this.prisma.fileIntegrationFileState.updateMany({
       where: { status: 'running' },
       data: { status: 'pending', processingAt: null, lastError: 'Recovered after service restart' },
