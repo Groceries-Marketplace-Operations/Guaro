@@ -183,10 +183,12 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
                 <thead><tr><th>Archivo</th><th>Filas</th><th>Conservadas</th><th>Eliminadas</th><th>Resultado</th></tr></thead>
                 <tbody>{(latest.result?.files ?? []).map(file => <tr key={file.fileName}>
                   <td className="td-mono">{file.fileName}</td><td>{file.rowsRead}</td><td>{file.rowsKept}</td><td>{file.rowsRemoved}</td>
-                  <td>{file.error ? <span style={{ color: 'var(--red)' }}>{file.error}</span> : file.skipped ?? (isFilter && file.afterFile
+                  <td>{file.error ? <span style={{ color: 'var(--red)' }}>{file.error}</span> : file.skipped ?? (isFilter
                     ? <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <button className="btn btn-ghost btn-sm" onClick={() => download(latest.id, file.beforeFile!)}>Antes</button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => download(latest.id, file.afterFile!)}>Después</button>
+                      {file.beforeFile && file.afterFile && <>
+                        <button className="btn btn-ghost btn-sm" onClick={() => download(latest.id, file.beforeFile!)}>Antes</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => download(latest.id, file.afterFile!)}>Después</button>
+                      </>}
                       <span className="badge">{file.remoteReplaced ? 'Original reemplazado' : 'Sin cambios remotos'}</span>
                     </span> : `${file.promotionsStored ?? file.rowsKept} promociones`)}</td>
                 </tr>)}</tbody>

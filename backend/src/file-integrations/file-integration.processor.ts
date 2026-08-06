@@ -71,6 +71,8 @@ export class FileIntegrationProcessor extends WorkerHost {
     });
     if (!execution) return;
     const { rule } = execution;
+    const storeArtifacts = rule.kind === FileIntegrationKind.price_filter
+      && this.config.get('FILE_INTEGRATIONS_STORE_ARTIFACTS', 'false').toLowerCase() === 'true';
 
     const results: FileResult[] = [];
     let filesScanned = 0;
@@ -110,7 +112,7 @@ export class FileIntegrationProcessor extends WorkerHost {
           where: { id: executionId }, data: { filesScanned },
         });
         const outputDir = resolve(process.cwd(), 'uploads', 'integrations', executionId);
-        if (rule.kind === FileIntegrationKind.price_filter) await mkdir(outputDir, { recursive: true });
+        if (storeArtifacts) await mkdir(outputDir, { recursive: true });
 
         for (const file of candidates) {
           await this.ensureActive(executionId);
@@ -216,13 +218,15 @@ export class FileIntegrationProcessor extends WorkerHost {
               }
             }
             const output = `${kept.join('\n')}${hasTrailingNewline ? '\n' : ''}`;
-            const beforeName = `before__${file.name}`;
-            const afterName = `after__${file.name}`;
-            await writeFile(resolve(outputDir, beforeName), buffer);
-            await writeFile(resolve(outputDir, afterName), output, 'utf8');
-            base.beforeFile = beforeName;
-            base.afterFile = afterName;
-            base.outputFile = afterName;
+            if (storeArtifacts) {
+              const beforeName = `before__${file.name}`;
+              const afterName = `after__${file.name}`;
+              await writeFile(resolve(outputDir, beforeName), buffer);
+              await writeFile(resolve(outputDir, afterName), output, 'utf8');
+              base.beforeFile = beforeName;
+              base.afterFile = afterName;
+              base.outputFile = afterName;
+            }
             if (base.rowsRemoved > 0) {
               await this.ensureActive(executionId);
               const replacement = await this.replaceRemoteFile(
@@ -281,7 +285,7 @@ export class FileIntegrationProcessor extends WorkerHost {
               files: results,
               newFiles: results.length,
               pendingFiles: remainingPending,
-              outputDirectory: rule.kind === 'price_filter' ? executionId : null,
+              outputDirectory: storeArtifacts ? executionId : null,
             } as unknown as Prisma.InputJsonValue,
           },
         }),
