@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { ExecutionType, StepFailureReason, StepStatus, TaskStatus } from '@prisma/client';
 import { readdirSync, statSync, unlinkSync, existsSync } from 'fs';
+import type { Dirent } from 'fs';
+import { readdir, rm, stat, unlink } from 'fs/promises';
 import { join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from '../tasks/task-engine.service';
@@ -9,6 +11,12 @@ import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 
 const ERROR_LOGS_DIR = join(process.cwd(), 'uploads', 'errors');
 const ERROR_LOG_TTL_MS = 15 * 24 * 60 * 60 * 1000; // 15 days
+const TEMP_UPLOADS_DIR = join(process.cwd(), 'uploads', 'temp');
+const EXPORTS_DIR = join(process.cwd(), 'uploads', 'exports');
+const INTEGRATION_ARTIFACTS_DIR = join(process.cwd(), 'uploads', 'integrations');
+const TEMP_UPLOAD_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+const EXPORT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const INTEGRATION_ARTIFACT_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -184,6 +192,71 @@ export class SchedulerService {
       } catch { /* skip locked/missing files */ }
     }
     if (removed > 0) this.logger.log(`Purged ${removed} error log(s) older than 15 days`);
+  }
+
+  // Keep generated artifacts bounded. Active file-integration executions are never removed.
+  @Cron('17 * * * *')
+  async purgeTemporaryArtifacts(nowOverride?: Date) {
+    const now = nowOverride?.getTime() ?? Date.now();
+    const activeExecutions = await this.prisma.fileIntegrationExecution.findMany({
+      where: { status: { in: ['pending', 'running'] } },
+      select: { id: true },
+    });
+    const activeIds = new Set(activeExecutions.map(value => value.id));
+
+    const [temporaryFiles, exportedFiles, integrationDirectories] = await Promise.all([
+      this.purgeFilesOlderThan(TEMP_UPLOADS_DIR, now - TEMP_UPLOAD_TTL_MS),
+      this.purgeFilesOlderThan(EXPORTS_DIR, now - EXPORT_TTL_MS),
+      this.purgeIntegrationArtifacts(now - INTEGRATION_ARTIFACT_TTL_MS, activeIds),
+    ]);
+    const removed = temporaryFiles + exportedFiles + integrationDirectories;
+    if (removed > 0) {
+      this.logger.log(
+        `Purged temporary artifacts: ${temporaryFiles} upload(s), ${exportedFiles} export(s), ${integrationDirectories} integration execution(s)`,
+      );
+    }
+  }
+
+  private async purgeFilesOlderThan(directory: string, cutoff: number) {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+      return 0;
+    }
+    let removed = 0;
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const filePath = join(directory, entry.name);
+      try {
+        if ((await stat(filePath)).mtimeMs < cutoff) {
+          await unlink(filePath);
+          removed++;
+        }
+      } catch { /* skip locked/missing files */ }
+    }
+    return removed;
+  }
+
+  private async purgeIntegrationArtifacts(cutoff: number, activeIds: Set<string>) {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(INTEGRATION_ARTIFACTS_DIR, { withFileTypes: true });
+    } catch {
+      return 0;
+    }
+    let removed = 0;
+    for (const entry of entries) {
+      if (!entry.isDirectory() || activeIds.has(entry.name)) continue;
+      const directory = join(INTEGRATION_ARTIFACTS_DIR, entry.name);
+      try {
+        if ((await stat(directory)).mtimeMs < cutoff) {
+          await rm(directory, { recursive: true, force: true });
+          removed++;
+        }
+      } catch { /* skip active/locked directories */ }
+    }
+    return removed;
   }
 
   // Automatic steps running for more than 2h

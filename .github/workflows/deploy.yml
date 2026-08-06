@@ -42,12 +42,23 @@ jobs:
             test -n "$app_dir"
             test -d "$app_dir/.git"
             cd "$app_dir"
+            disk_used_percent="$(df -P "$app_dir" | awk 'NR == 2 { gsub("%", "", $5); print $5 }')"
+            if [ "${disk_used_percent:-0}" -ge 80 ]; then
+              echo "Disk usage is ${disk_used_percent}%; pruning unused Docker artifacts before deployment"
+              docker builder prune -af
+              docker image prune -af
+            fi
             umask 077
             mkdir -p backups
             backup_file="backups/pre-deploy-$(date +%Y%m%d-%H%M%S).dump"
             docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
               sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" -Fc' > "$backup_file"
             test -s "$backup_file"
+            find backups -maxdepth 1 -type f -name 'pre-deploy-*.dump' -printf '%T@ %p\n' \
+              | sort -nr \
+              | tail -n +6 \
+              | cut -d' ' -f2- \
+              | xargs -r rm -f --
             git pull origin main
             docker compose -f docker-compose.prod.yml --env-file .env.prod build
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
@@ -64,4 +75,7 @@ jobs:
               docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 backend
               exit 1
             fi
+            docker image prune -af
+            docker builder prune -af
+            journalctl --vacuum-size=300M || true
             docker compose -f docker-compose.prod.yml ps
