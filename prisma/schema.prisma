@@ -77,6 +77,7 @@ enum FormFieldTipo {
   select_country // dropdown populated from AppConfig category=country
   select_biz_category // dropdown populated from AppConfig category=biz_category
   file // Excel upload (.xlsx/.xls); stored as temp filename, deleted after handler runs
+  image // JPG/PNG/GIF upload used by automatic store-information tasks
 }
 
 enum WebhookEvent {

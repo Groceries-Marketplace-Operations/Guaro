@@ -14,13 +14,22 @@ const ITEMS_PER_CATEGORY = 4000;
 
 interface MenuItem {
   upc: string;
+  appItemId: string;
+  name: string;
+  categoryId: string;
   price: number;
   discount: number;
+}
+
+interface MenuCategory {
+  id: string;
+  name: string;
 }
 
 interface ShopMenu {
   appShopId: string;
   items: MenuItem[];
+  categories: MenuCategory[];
 }
 
 // ── Price helpers ─────────────────────────────────────────────────────────────
@@ -60,54 +69,88 @@ function toApiPrice(price: number, country: string): number {
 async function readExcel(filePath: string): Promise<ShopMenu[]> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(filePath);
-  const sheet = workbook.worksheets[0];
+  const itemSheet = workbook.getWorksheet('Items') ?? workbook.worksheets[0];
+  const categorySheet = workbook.getWorksheet('Categories');
   const shopMap = new Map<string, MenuItem[]>();
 
-  sheet.eachRow((row: ExcelJS.Row, rowNum: number) => {
+  if (categorySheet) {
+    const categories: MenuCategory[] = [];
+    categorySheet.eachRow((row: ExcelJS.Row, rowNum: number) => {
+      if (rowNum === 1) return;
+      const id = String(row.getCell(1).value ?? '').trim();
+      const name = String(row.getCell(2).value ?? '').trim();
+      if (id && name) categories.push({ id, name });
+    });
+    if (!categories.length) throw new Error('Categories sheet must contain at least one category');
+    if (categories.length > 30) throw new Error('DiDi supports a maximum of 30 categories per menu');
+    const categoryIds = new Set(categories.map(category => category.id));
+
+    itemSheet.eachRow((row: ExcelJS.Row, rowNum: number) => {
+      if (rowNum === 1) return;
+      const shopId = String(row.getCell(1).value ?? '').trim();
+      const appItemId = String(row.getCell(2).value ?? '').trim();
+      const upc = String(row.getCell(3).value ?? '').trim();
+      const name = String(row.getCell(4).value ?? '').trim();
+      const categoryId = String(row.getCell(5).value ?? '').trim();
+      if (!shopId && !appItemId && !upc && !name && !categoryId) return;
+      if (!shopId || !appItemId || !upc || !name || !categoryId) {
+        throw new Error(`Items row ${rowNum}: app_shop_id, app_item_id, UPC, item_name and category_id are required`);
+      }
+      if (!categoryIds.has(categoryId)) throw new Error(`Items row ${rowNum}: category_id "${categoryId}" is not listed in Categories`);
+      const price = parseFloat(String(row.getCell(6).value ?? '').replace(',', '.'));
+      const discount = parseFloat(String(row.getCell(7).value ?? '0').replace(',', '.')) || 0;
+      if (!Number.isFinite(price) || price < 0) throw new Error(`Items row ${rowNum}: price must be zero or greater`);
+      if (!shopMap.has(shopId)) shopMap.set(shopId, []);
+      shopMap.get(shopId)!.push({ upc, appItemId, name, categoryId, price, discount });
+    });
+
+    return Array.from(shopMap.entries()).map(([appShopId, items]) => ({ appShopId, items, categories }));
+  }
+
+  // Backwards-compatible legacy worksheet: app_shop_id, UPC, Price, Discount.
+  itemSheet.eachRow((row: ExcelJS.Row, rowNum: number) => {
     if (rowNum === 1) return;
     const shopId = String(row.getCell(1).value ?? '').trim();
-    const upc    = String(row.getCell(2).value ?? '').trim();
+    const upc = String(row.getCell(2).value ?? '').trim();
     if (!shopId || !upc) return;
 
     const price    = parseFloat(String(row.getCell(3).value ?? '0').replace(',', '.')) || 0;
     const discount = parseFloat(String(row.getCell(4).value ?? '0').replace(',', '.')) || 0;
 
     if (!shopMap.has(shopId)) shopMap.set(shopId, []);
-    shopMap.get(shopId)!.push({ upc, price, discount });
+    shopMap.get(shopId)!.push({ upc, appItemId: upc, name: `Producto ${upc}`, categoryId: 'category_0', price, discount });
   });
 
-  return Array.from(shopMap.entries()).map(([appShopId, items]) => ({ appShopId, items }));
+  return Array.from(shopMap.entries()).map(([appShopId, items]) => ({
+    appShopId, items, categories: [{ id: 'category_0', name: 'Despensa' }],
+  }));
 }
 
 // ── Payload builder ───────────────────────────────────────────────────────────
 
-function buildMenuPayload(authToken: string, items: MenuItem[], country: string) {
+function buildMenuPayload(authToken: string, items: MenuItem[], categoriesInput: MenuCategory[], country: string) {
   const ts = Date.now();
-  const categoryIds: string[] = [];
-  const categories: object[] = [];
   const apiItems: Record<string, unknown>[] = [];
-
-  // Split items into categories of max ITEMS_PER_CATEGORY each
-  for (let i = 0; i * ITEMS_PER_CATEGORY < items.length; i++) {
-    const slice = items.slice(i * ITEMS_PER_CATEGORY, (i + 1) * ITEMS_PER_CATEGORY);
-    const catId = `category_${i}`;
-    categoryIds.push(catId);
-    categories.push({
-      app_category_id: catId,
-      category_name: 'Despensa',
-      app_item_ids: slice.map(it => it.upc),
-    });
+  if (items.length > 3000) throw new Error(`DiDi supports a maximum of 3000 items per store; received ${items.length}`);
+  const categoryIds = categoriesInput.map(category => category.id);
+  const categories = categoriesInput.map(category => ({
+    app_category_id: category.id,
+    category_name: category.name,
+    app_item_ids: items.filter(item => item.categoryId === category.id).map(item => item.appItemId),
+  })).filter(category => category.app_item_ids.length > 0);
+  if (categories.some(category => category.app_item_ids.length > ITEMS_PER_CATEGORY)) {
+    throw new Error(`A category exceeds the ${ITEMS_PER_CATEGORY} item safety limit`);
   }
 
   for (const it of items) {
     const price    = toApiPrice(it.price, country);
     const discount = it.discount > 0 ? toApiPrice(it.discount, country) : undefined;
     const entry: Record<string, unknown> = {
-      item_name: `Producto ${it.upc}`,
+      item_name: it.name,
       upc: it.upc,
       price,
       status: 1,
-      app_item_id: it.upc,
+      app_item_id: it.appItemId,
     };
     if (discount !== undefined) entry.activity_price = discount;
     apiItems.push(entry);
@@ -124,8 +167,8 @@ function buildMenuPayload(authToken: string, items: MenuItem[], country: string)
 
 // ── DiDi API call ─────────────────────────────────────────────────────────────
 
-async function uploadMenuForShop(token: string, items: MenuItem[], country: string): Promise<string> {
-  const payload = buildMenuPayload(token, items, country);
+async function uploadMenuForShop(token: string, items: MenuItem[], categories: MenuCategory[], country: string): Promise<string> {
+  const payload = buildMenuPayload(token, items, categories, country);
   const res = await fetch(`${DIDI_BASE}/v3/item/item/uploadGrocery`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -193,7 +236,7 @@ async function menuUpload(ctx: HandlerContext): Promise<unknown> {
     for (const shop of batch) {
       try {
         const token  = await getAuthToken(appId, appSecret, shop.appShopId);
-        const taskId = await uploadMenuForShop(token, shop.items, brand.country);
+        const taskId = await uploadMenuForShop(token, shop.items, shop.categories, brand.country);
         successful.push({ appShopId: shop.appShopId, taskId, items: shop.items.length });
         ctx.addNote(`✓ ${shop.appShopId}: taskID=${taskId} (${shop.items.length} items)`);
         logger.log(`✓ ${shop.appShopId}: taskID=${taskId}`);
@@ -225,3 +268,4 @@ async function menuUpload(ctx: HandlerContext): Promise<unknown> {
 }
 
 registerHandler('library_menu_upload', menuUpload);
+registerHandler('scheduled_targeted_menu_upload', menuUpload);

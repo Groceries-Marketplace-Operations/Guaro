@@ -90,13 +90,8 @@ export default function Login() {
         </p>
       </div>
 
-      <div className="login-aside">
-        <div className="login-aside-grid">
-          {Array.from({ length: 64 }).map((_, i) => <span key={i} />)}
-        </div>
-        <div className="login-oranges" aria-hidden="true">
-          {Array.from({ length: 12 }).map((_, i) => <span className="floating-orange" key={i} />)}
-        </div>
+      <div className="login-aside" style={{ backgroundImage: `url(${import.meta.env.BASE_URL}tequila-login-hero.png)` }}>
+        <div className="login-aside-scrim" aria-hidden="true" />
         <div className="login-aside-logo">
           <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 80, height: 80, objectFit: 'contain', borderRadius: 16, marginBottom: 16 }} />
           <strong>Tequila 1.0</strong>

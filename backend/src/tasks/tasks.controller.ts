@@ -1,7 +1,10 @@
-import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Response } from 'express';
+import * as ExcelJS from 'exceljs';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { readFile, unlink } from 'fs/promises';
+import { mkdirSync } from 'fs';
 import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
 import { AccountRole, TaskStatus } from '@prisma/client';
@@ -37,6 +40,32 @@ export class TasksController {
     @Query('brandId') brandId?: string,
   ) {
     return this.tasksService.findAll(u.roles, u.id, u.sectionId, { page, limit, q, status, brandId });
+  }
+
+  @Get('templates/grocery-menu.xlsx')
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  async groceryMenuTemplate(@Res() response: Response) {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Tequila 1.0';
+    const categories = workbook.addWorksheet('Categories');
+    categories.addRow(['app_category_id', 'category_name']);
+    categories.addRow(['beverages', 'Beverages']);
+    categories.addRow(['snacks', 'Snacks']);
+    const items = workbook.addWorksheet('Items');
+    items.addRow(['app_shop_id', 'app_item_id', 'UPC', 'item_name', 'category_id', 'price', 'discount']);
+    items.addRow(['STORE_001', 'ITEM_001', '750100000001', 'Sparkling Water 600 ml', 'beverages', 25, 0]);
+    items.addRow(['STORE_001', 'ITEM_002', '750100000002', 'Potato Chips 45 g', 'snacks', 32, 28]);
+    for (const sheet of [categories, items]) {
+      sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF6900' } };
+      sheet.views = [{ state: 'frozen', ySplit: 1 }];
+      sheet.columns.forEach(column => { column.width = 22; });
+      sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: sheet.columnCount } };
+    }
+    const buffer = await workbook.xlsx.writeBuffer();
+    response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    response.setHeader('Content-Disposition', 'attachment; filename="tequila-grocery-menu-template.xlsx"');
+    response.send(Buffer.from(buffer));
   }
 
   @Get(':id')
@@ -185,5 +214,37 @@ export class TasksController {
       throw new BadRequestException('Task type and file field are required');
     }
     return this.taskValidation.validateUpload(taskTypeId, formFieldId, file, u);
+  }
+
+  @Post('upload-image')
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  @UseInterceptors(FileInterceptor('file', {
+    storage: diskStorage({
+      destination: (_, __, cb) => {
+        const destination = join(process.cwd(), 'uploads', 'task-assets');
+        mkdirSync(destination, { recursive: true });
+        cb(null, destination);
+      },
+      filename: (_, file, cb) => cb(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`),
+    }),
+    fileFilter: (_, file, cb) => {
+      const ok = /\.(jpe?g|png|gif)$/i.test(file.originalname)
+        && ['image/jpeg', 'image/png', 'image/gif'].includes(file.mimetype);
+      cb(ok ? null : new BadRequestException('Only JPG, PNG or GIF images are allowed'), ok);
+    },
+    limits: { fileSize: 10 * 1024 * 1024 },
+  }))
+  async uploadImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('taskTypeId') taskTypeId: string,
+    @Body('formFieldId') formFieldId: string,
+    @CurrentUser() u: JwtUser,
+  ) {
+    if (!file) throw new BadRequestException('No image uploaded');
+    if (!taskTypeId || !formFieldId) {
+      await unlink(file.path).catch(() => undefined);
+      throw new BadRequestException('Task type and image field are required');
+    }
+    return this.taskValidation.validateImageUpload(taskTypeId, formFieldId, file, u);
   }
 }

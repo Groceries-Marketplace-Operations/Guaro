@@ -137,6 +137,10 @@ export const tasksApi = {
     client.post<import('../types').FileValidationResult>('/tasks/upload-excel', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
+  uploadImage: (formData: FormData) =>
+    client.post<import('../types').FileValidationResult>('/tasks/upload-image', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
 };
 
 export const sftpApplicationsApi = {

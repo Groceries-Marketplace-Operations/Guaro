@@ -1,0 +1,2 @@
+ALTER TYPE "FormFieldTipo" ADD VALUE IF NOT EXISTS 'image';
+

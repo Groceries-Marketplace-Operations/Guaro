@@ -424,8 +424,14 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
 }
 .login-aside {
   flex: 1; background: var(--sidebar-bg);
+  background-position: center; background-size: cover; background-repeat: no-repeat;
   display: flex; align-items: center; justify-content: center;
   position: relative; overflow: hidden;
+}
+.login-aside-scrim {
+  position: absolute; inset: 0; z-index: 1;
+  background: linear-gradient(110deg, rgba(7, 10, 12, 0.18), rgba(7, 10, 12, 0.42)),
+              radial-gradient(circle at 65% 58%, transparent 0 22%, rgba(4, 6, 8, 0.26) 74%);
 }
 .login-aside-grid {
   position: absolute; inset: 0;
@@ -445,7 +451,7 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
   display: flex; align-items: center; justify-content: center;
   font-size: 2.6rem; font-weight: 900; color: #fff; letter-spacing: -2px;
 }
-.login-aside-logo p { color: #555; font-size: 0.78rem; letter-spacing: 0.5px; text-align: center; line-height: 1.5; }
+.login-aside-logo p { color: rgba(255,255,255,0.64); font-size: 0.78rem; letter-spacing: 0.5px; text-align: center; line-height: 1.5; }
 
 .login-oranges { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .floating-orange {

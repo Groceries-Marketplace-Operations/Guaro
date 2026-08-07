@@ -286,6 +286,7 @@ export class HandlerProcessor extends WorkerHost {
             update: {
               appShopId: shop.appShopId,
               brandId: brand.id,
+              status: 'integrated',
               deletedAt: null,
               ...(shop.city !== undefined && { city: shop.city || null }),
               ...(shop.latitude !== undefined && shop.latitude !== '' && { latitude: String(shop.latitude) }),

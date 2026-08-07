@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AccountRole, FormFieldTipo } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
 import { unlink } from 'fs/promises';
@@ -28,6 +28,7 @@ const KNOWN_FILE_HANDLERS = new Set([
   'schedule_update_dates',
   'stock_update',
   'library_menu_upload',
+  'scheduled_targeted_menu_upload',
 ]);
 
 const MAX_DETAIL_ITEMS = 20;
@@ -328,7 +329,9 @@ export class TaskValidationService {
     checks.push({ id: 'workbook', label: 'Excel workbook', status: 'passed', message: `Worksheet “${sheet.name}” is readable.` });
 
     const handlerName = this.getFileHandler(taskType.stepDefinitions);
-    const result = this.validateSheet(sheet, handlerName);
+    const result = handlerName === 'library_menu_upload' || handlerName === 'scheduled_targeted_menu_upload'
+      ? this.validateMenuWorkbook(workbook)
+      : this.validateSheet(sheet, handlerName);
     checks.push(...result.checks);
     const response = this.finishValidation(file.originalname, checks, result.validRows, result.totalRows);
 
@@ -338,6 +341,38 @@ export class TaskValidationService {
     }
 
     return { ...response, tempPath: file.filename };
+  }
+
+  async validateImageUpload(taskTypeId: string, formFieldId: string, file: Express.Multer.File, user: JwtUser) {
+    let taskType: Awaited<ReturnType<TaskValidationService['assertTaskTypeAccess']>>;
+    try {
+      taskType = await this.assertTaskTypeAccess(taskTypeId, user);
+    } catch (error) {
+      await unlink(file.path).catch(() => undefined);
+      throw error;
+    }
+    const field = taskType.formFields.find(item => item.id === formFieldId);
+    if (!field || field.tipo !== ('image' as FormFieldTipo)) {
+      await unlink(file.path).catch(() => undefined);
+      throw new ForbiddenException('This image field does not belong to the selected task type');
+    }
+    const extension = extname(file.originalname).toLowerCase();
+    const supported = ['.jpg', '.jpeg', '.png', '.gif'];
+    if (!supported.includes(extension)) {
+      await unlink(file.path).catch(() => undefined);
+      throw new BadRequestException('Only JPG, PNG or GIF images are supported');
+    }
+    return {
+      originalName: file.originalname,
+      tempPath: file.filename,
+      canProceed: true,
+      summary: 'Image validated and ready. DiDi requires a secure URL and a file smaller than 10 MB.',
+      checks: [
+        { id: 'access', label: 'Access permission', status: 'passed' as const, message: `Authorized as ${user.email}` },
+        { id: 'image-type', label: 'Image format', status: 'passed' as const, message: `${extension.toUpperCase()} accepted; ${Math.ceil(file.size / 1024)} KB` },
+      ],
+      stats: { validRows: 1, totalRows: 1 },
+    };
   }
 
   private getFileHandler(steps: { handler: { name: string } | null }[]): string | undefined {
@@ -429,6 +464,88 @@ export class TaskValidationService {
 
   private validateMenu(sheet: ExcelJS.Worksheet) {
     return this.validateItemRows(sheet, true);
+  }
+
+  private validateMenuWorkbook(workbook: ExcelJS.Workbook) {
+    const categoriesSheet = workbook.getWorksheet('Categories');
+    const itemsSheet = workbook.getWorksheet('Items');
+    if (!categoriesSheet || !itemsSheet) {
+      return this.validateMenu(workbook.worksheets[0]);
+    }
+
+    const checks: AssistantCheck[] = [];
+    const categoryHeaders = ['appcategoryid', 'categoryname'];
+    const itemHeaders = ['appshopid', 'appitemid', 'upc', 'itemname', 'categoryid', 'price', 'discount'];
+    const categoriesHeaderOk = categoryHeaders.every((header, index) =>
+      normalizeHeader(categoriesSheet.getRow(1).getCell(index + 1).value) === header,
+    );
+    const itemsHeaderOk = itemHeaders.every((header, index) =>
+      normalizeHeader(itemsSheet.getRow(1).getCell(index + 1).value) === header,
+    );
+    checks.push({
+      id: 'menu-sheets', label: 'Menu worksheets',
+      status: categoriesHeaderOk && itemsHeaderOk ? 'passed' : 'failed',
+      message: categoriesHeaderOk && itemsHeaderOk
+        ? 'Categories and Items worksheets have the expected columns.'
+        : 'Expected Categories(app_category_id, category_name) and Items(app_shop_id, app_item_id, UPC, item_name, category_id, price, discount).',
+    });
+
+    const categories = new Map<string, string>();
+    const categoryIssues: string[] = [];
+    for (let rowNumber = 2; rowNumber <= categoriesSheet.actualRowCount; rowNumber += 1) {
+      const id = cellText(categoriesSheet.getRow(rowNumber).getCell(1));
+      const name = cellText(categoriesSheet.getRow(rowNumber).getCell(2));
+      if (!id && !name) continue;
+      if (!id || !name) categoryIssues.push(`Row ${rowNumber}: category ID and name are required.`);
+      else if (categories.has(id)) categoryIssues.push(`Row ${rowNumber}: duplicate category ID ${id}.`);
+      else categories.set(id, name);
+    }
+    if (categories.size > 30) categoryIssues.push(`The menu has ${categories.size} categories; DiDi supports at most 30.`);
+    checks.push({
+      id: 'menu-categories', label: 'Available categories',
+      status: categories.size > 0 && categoryIssues.length === 0 ? 'passed' : 'failed',
+      message: categories.size > 0 ? `${categories.size} available category(ies) found.` : 'No categories were provided.',
+      details: [
+        ...[...categories].slice(0, MAX_DETAIL_ITEMS).map(([id, name]) => `${id} — ${name}`),
+        ...categoryIssues.slice(0, MAX_DETAIL_ITEMS),
+      ],
+    });
+
+    const itemIssues: string[] = [];
+    const shopCounts = new Map<string, number>();
+    let totalRows = 0;
+    let validRows = 0;
+    for (let rowNumber = 2; rowNumber <= itemsSheet.actualRowCount; rowNumber += 1) {
+      const row = itemsSheet.getRow(rowNumber);
+      if (isBlankRow(row)) continue;
+      totalRows += 1;
+      const values = Array.from({ length: 7 }, (_, index) => cellText(row.getCell(index + 1)));
+      const [shopId, appItemId, upc, itemName, categoryId, rawPrice, rawDiscount] = values;
+      const before = itemIssues.length;
+      if (!shopId || !appItemId || !upc || !itemName || !categoryId) {
+        itemIssues.push(`Row ${rowNumber}: shop, item ID, UPC, item name and category are required.`);
+      }
+      if (categoryId && !categories.has(categoryId)) itemIssues.push(`Row ${rowNumber}: category ${categoryId} is not available.`);
+      const price = Number(rawPrice.replace(',', '.'));
+      const discount = rawDiscount ? Number(rawDiscount.replace(',', '.')) : 0;
+      if (!rawPrice || !Number.isFinite(price) || price < 0) itemIssues.push(`Row ${rowNumber}: price must be zero or greater.`);
+      if (!Number.isFinite(discount) || discount < 0) itemIssues.push(`Row ${rowNumber}: discount must be zero or greater.`);
+      if (itemIssues.length === before) {
+        validRows += 1;
+        shopCounts.set(shopId, (shopCounts.get(shopId) ?? 0) + 1);
+      }
+    }
+    const oversized = [...shopCounts].filter(([, count]) => count > 3000);
+    oversized.forEach(([shopId, count]) => itemIssues.push(`${shopId}: ${count} items exceeds the 3000 item maximum.`));
+    checks.push({
+      id: 'menu-items', label: 'Store menu items',
+      status: totalRows > 0 && itemIssues.length === 0 ? 'passed' : 'failed',
+      message: totalRows > 0
+        ? `${validRows}/${totalRows} rows are valid across ${shopCounts.size} target store(s).`
+        : 'The Items worksheet has no data rows.',
+      details: itemIssues.slice(0, MAX_DETAIL_ITEMS),
+    });
+    return { checks, validRows, totalRows };
   }
 
   private validateItemRows(sheet: ExcelJS.Worksheet, menu: boolean) {

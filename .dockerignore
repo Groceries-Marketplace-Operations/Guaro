@@ -1,0 +1,12 @@
+.git
+.github
+**/node_modules
+**/dist
+backend/uploads
+backups
+docs
+examples
+*.log
+*.dump
+*.sql.gz
+.DS_Store

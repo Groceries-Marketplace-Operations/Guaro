@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import ValidationAssistant from '../../components/tasks/ValidationAssistant';
@@ -226,6 +226,7 @@ function MultiBrandCombobox({ value, onChange }: MultiBrandComboboxProps) {
 
 export default function NewTaskPage() {
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
   const t = useT();
   const { min: schedMin, max: schedMax } = useMemo(() => getSchedulingBounds(), []);
 
@@ -245,6 +246,14 @@ export default function NewTaskPage() {
     queryFn: () => taskTypesApi.list({ page: 1, limit: 200 }).then(r => r.data as { data: TaskType[] }),
   });
   const taskTypes: TaskType[] = useMemo(() => taskTypesResult?.data ?? [], [taskTypesResult?.data]);
+
+  useEffect(() => {
+    if (selectedTTId || taskTypes.length === 0) return;
+    const requested = searchParams.get('taskType');
+    if (!requested) return;
+    const match = taskTypes.find(type => type.id === requested || type.name === requested);
+    if (match) setSelectedTTId(match.id);
+  }, [searchParams, selectedTTId, taskTypes]);
 
   const { data: selectedTT = null } = useQuery<TaskType>({
     queryKey: ['task-type', selectedTTId],
@@ -365,7 +374,7 @@ export default function NewTaskPage() {
           }
         } else if (f.tipo === 'select_store') {
           if (val) fvPayload.push({ formFieldId: f.id, shopId: val as string });
-        } else if (f.tipo === 'file') {
+        } else if (f.tipo === 'file' || f.tipo === 'image') {
           const fv = val as FileFieldValue | undefined;
           if (fv?.tempPath) fvPayload.push({ formFieldId: f.id, value: fv.tempPath });
         } else if (f.multiple && Array.isArray(val)) {
@@ -394,7 +403,7 @@ export default function NewTaskPage() {
     }
   };
 
-  const handleFileUpload = async (fieldId: string, file: File) => {
+  const handleFileUpload = async (fieldId: string, file: File, kind: 'file' | 'image' = 'file') => {
     setFileUploading(p => ({ ...p, [fieldId]: true }));
     setFileUploadErrors(p => { const n = { ...p }; delete n[fieldId]; return n; });
     try {
@@ -402,7 +411,7 @@ export default function NewTaskPage() {
       fd.append('file', file);
       fd.append('taskTypeId', selectedTTId ?? '');
       fd.append('formFieldId', fieldId);
-      const res = await tasksApi.uploadExcel(fd);
+      const res = kind === 'image' ? await tasksApi.uploadImage(fd) : await tasksApi.uploadExcel(fd);
       setLatestFileValidation(res.data);
       if (res.data.canProceed && res.data.tempPath) {
         setField(fieldId, { name: res.data.originalName, tempPath: res.data.tempPath } as FileFieldValue);
@@ -603,21 +612,24 @@ export default function NewTaskPage() {
       );
     }
 
-    if (f.tipo === 'file') {
+    if (f.tipo === 'file' || f.tipo === 'image') {
       const fileVal = val as FileFieldValue | undefined;
       const uploading = fileUploading[f.id] ?? false;
+      const image = f.tipo === 'image';
       return (
         <div className="form-group" key={f.id}>
           {label}
-          <p className="form-hint" style={{ marginBottom: 6 }}>{t('pages.newTask.excelHint')}</p>
+          <p className="form-hint" style={{ marginBottom: 6 }}>
+            {image ? 'JPG, PNG or GIF. Maximum 10 MB; 2880 × 2304 px is recommended.' : t('pages.newTask.excelHint')}
+          </p>
           <input
             type="file"
-            accept=".xlsx"
+            accept={image ? '.jpg,.jpeg,.png,.gif,image/jpeg,image/png,image/gif' : '.xlsx'}
             disabled={uploading}
             style={{ fontSize: '0.84rem' }}
             onChange={e => {
               const file = e.target.files?.[0];
-              if (file) handleFileUpload(f.id, file);
+              if (file) handleFileUpload(f.id, file, image ? 'image' : 'file');
               e.target.value = '';
             }}
           />
@@ -637,7 +649,7 @@ export default function NewTaskPage() {
 
   const missingRequired = fields.filter(f => f.required).some(f => {
     const val = formValues[f.id];
-    if (f.tipo === 'file') return !(val as FileFieldValue | undefined)?.tempPath;
+    if (f.tipo === 'file' || f.tipo === 'image') return !(val as FileFieldValue | undefined)?.tempPath;
     if (f.multiple) return !Array.isArray(val) || val.length === 0;
     return !val;
   });
@@ -647,7 +659,7 @@ export default function NewTaskPage() {
   const missingRequiredLabels = fields.filter(f => {
     if (!f.required) return false;
     const val = formValues[f.id];
-    if (f.tipo === 'file') return !(val as FileFieldValue | undefined)?.tempPath;
+    if (f.tipo === 'file' || f.tipo === 'image') return !(val as FileFieldValue | undefined)?.tempPath;
     if (f.multiple) return !Array.isArray(val) || val.length === 0;
     return !val;
   }).map(f => f.label);
