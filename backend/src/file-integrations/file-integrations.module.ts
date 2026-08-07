@@ -15,13 +15,17 @@ import { TargetedMenuController } from './targeted-menu.controller';
 import { TargetedMenuProcessor } from './targeted-menu.processor';
 import { TargetedMenuScheduler } from './targeted-menu.scheduler';
 import { TargetedMenuService } from './targeted-menu.service';
+import { MenuCopyController } from './menu-copy.controller';
+import { MenuCopyProcessor } from './menu-copy.processor';
+import { MenuCopyService } from './menu-copy.service';
 
 @Module({
   imports: [
     BullModule.registerQueue({ name: 'file-integrations' }),
     BullModule.registerQueue({ name: 'targeted-menu' }),
+    BullModule.registerQueue({ name: 'menu-copy' }),
   ],
-  controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController, TargetedMenuController],
+  controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController, TargetedMenuController, MenuCopyController],
   providers: [
     FileIntegrationsService,
     FileIntegrationProcessor,
@@ -34,6 +38,8 @@ import { TargetedMenuService } from './targeted-menu.service';
     TargetedMenuService,
     TargetedMenuProcessor,
     TargetedMenuScheduler,
+    MenuCopyService,
+    MenuCopyProcessor,
   ],
   exports: [TargetedPromotionReaderService],
 })

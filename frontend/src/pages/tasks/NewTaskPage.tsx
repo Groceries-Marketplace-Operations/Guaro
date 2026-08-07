@@ -23,9 +23,6 @@ function isValidUrl(url: string): boolean {
 async function prepareStoreCover(file: File) {
   const bitmap = await createImageBitmap(file);
   try {
-    if (bitmap.width < 1200 || bitmap.height < 900) {
-      throw new Error(`La portada debe medir al menos 1200 × 900 px; la imagen mide ${bitmap.width} × ${bitmap.height} px.`);
-    }
     const canvas = document.createElement('canvas');
     canvas.width = 1200;
     canvas.height = 900;
@@ -33,20 +30,10 @@ async function prepareStoreCover(file: File) {
     if (!context) throw new Error('El navegador no pudo preparar la portada.');
     context.fillStyle = '#fff';
     context.fillRect(0, 0, canvas.width, canvas.height);
-    const sourceRatio = bitmap.width / bitmap.height;
-    const targetRatio = 4 / 3;
-    let sx = 0;
-    let sy = 0;
-    let sw = bitmap.width;
-    let sh = bitmap.height;
-    if (sourceRatio > targetRatio) {
-      sw = bitmap.height * targetRatio;
-      sx = (bitmap.width - sw) / 2;
-    } else if (sourceRatio < targetRatio) {
-      sh = bitmap.width / targetRatio;
-      sy = (bitmap.height - sh) / 2;
-    }
-    context.drawImage(bitmap, sx, sy, sw, sh, 0, 0, 1200, 900);
+    const scale = Math.min(canvas.width / bitmap.width, canvas.height / bitmap.height);
+    const width = bitmap.width * scale;
+    const height = bitmap.height * scale;
+    context.drawImage(bitmap, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
     const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
     if (!blob) throw new Error('No se pudo generar la portada 1200 × 900.');
     const base = file.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9_-]+/gi, '-');
@@ -661,7 +648,7 @@ export default function NewTaskPage() {
         <div className="form-group" key={f.id}>
           {label}
           <p className="form-hint" style={{ marginBottom: 6 }}>
-            {image ? 'JPG, JPEG o PNG. Se recorta al centro y se genera en 1200 × 900 (4:3), máximo 5 MB. Mantén logo y texto dentro de la zona central 2:1 para que ambos encuadres de DiDi se vean completos.' : t('pages.newTask.excelHint')}
+            {image ? 'JPG, JPEG o PNG. La imagen completa se ajusta a 1200 × 900 (4:3) sin recortarse; si la proporción es distinta, se agrega espacio blanco. Máximo 5 MB.' : t('pages.newTask.excelHint')}
           </p>
           <input
             type="file"
@@ -678,19 +665,12 @@ export default function NewTaskPage() {
           {fileVal?.name && !uploading && (
             <p style={{ fontSize: '0.78rem', color: 'var(--green)', marginTop: 4 }}>✓ {fileVal.name}</p>
           )}
-          {image && fileVal?.previewUrl && !uploading && <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(220px, 1fr)', gap: 12, marginTop: 12 }}>
+          {image && fileVal?.previewUrl && !uploading && <div style={{ marginTop: 12, maxWidth: 520 }}>
             <div>
               <div style={{ position: 'relative', aspectRatio: '4 / 3', overflow: 'hidden', borderRadius: 10, background: '#eee' }}>
-                <img src={fileVal.previewUrl} alt="Vista previa 4:3" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                <div style={{ position: 'absolute', left: 0, right: 0, top: '16.666%', height: '66.666%', border: '2px dashed rgba(255,105,0,.95)', boxSizing: 'border-box', pointerEvents: 'none' }} />
+                <img src={fileVal.previewUrl} alt="Vista previa 1200 por 900" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
               </div>
-              <p className="form-hint" style={{ marginTop: 5 }}>Archivo final 4:3 · el marco naranja marca la zona segura 2:1.</p>
-            </div>
-            <div>
-              <div style={{ aspectRatio: '2 / 1', overflow: 'hidden', borderRadius: 10, background: '#eee' }}>
-                <img src={fileVal.previewUrl} alt="Vista previa 2:1" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block' }} />
-              </div>
-              <p className="form-hint" style={{ marginTop: 5 }}>Vista previa del recorte central 2:1 que puede mostrar DiDi.</p>
+              <p className="form-hint" style={{ marginTop: 5 }}>Archivo final 1200 × 900 · imagen completa, sin recorte.</p>
             </div>
           </div>}
           {fileUploadErrors[f.id] && (

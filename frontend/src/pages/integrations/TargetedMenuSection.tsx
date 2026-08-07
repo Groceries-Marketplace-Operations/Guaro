@@ -1,13 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
-import { brandsApi, targetedMenuApi } from '../../api';
-import type { Brand, Paginated, TargetedMenuRule } from '../../types';
+import { targetedMenuApi } from '../../api';
+import type { TargetedMenuRule } from '../../types';
+import BrandSearchField from './BrandSearchField';
 
 interface FormState {
   name: string;
   brandId: string;
+  brandSearch: string;
   shopIds: string;
   upcs: string;
   mode: 'now' | 'scheduled';
@@ -25,7 +27,7 @@ function localDateInput(date = new Date()) {
 function emptyForm(): FormState {
   const start = new Date(Date.now() + 5 * 60_000);
   start.setSeconds(0, 0);
-  return { name: '', brandId: '', shopIds: '', upcs: '', mode: 'now', startsAt: localDateInput(start), active: true };
+  return { name: '', brandId: '', brandSearch: '', shopIds: '', upcs: '', mode: 'now', startsAt: localDateInput(start), active: true };
 }
 
 function values(source: string) {
@@ -55,14 +57,6 @@ export default function TargetedMenuSection() {
     refetchInterval: query => (query.state.data as TargetedMenuRule[] | undefined)
       ?.some(rule => rule.executions.some(execution => activeStatuses.has(execution.status))) ? 3000 : 15000,
   });
-  const { data: brandPage } = useQuery<Paginated<Brand>>({
-    queryKey: ['brands', 'targeted-menu'],
-    queryFn: () => brandsApi.list({ page: 1, limit: 500 }).then(response => response.data),
-  });
-  const brands = useMemo(
-    () => (brandPage?.data ?? []).filter(brand => !!brand.applicationId).sort((a, b) => a.brandName.localeCompare(b.brandName)),
-    [brandPage],
-  );
   const refresh = () => qc.invalidateQueries({ queryKey: ['targeted-menu-rules'] });
   const save = useMutation({
     mutationFn: () => {
@@ -102,6 +96,7 @@ export default function TargetedMenuSection() {
     setForm({
       name: rule.name,
       brandId: rule.brandId,
+      brandSearch: `${rule.brand.brandName} · ${rule.brand.country} · ${rule.brand.brandId}`,
       shopIds: rule.shopIds.join('\n'),
       upcs: rule.upcs.join('\n'),
       mode: 'scheduled',
@@ -192,7 +187,7 @@ export default function TargetedMenuSection() {
     </>}>
       {error && <div className="error-banner">{error}</div>}
       <div className="form-group"><label className="form-label">Nombre *</label><input className="form-input" value={form.name} onChange={event => setForm(value => ({ ...value, name: event.target.value }))} /></div>
-      <div className="form-group"><label className="form-label">Marca *</label><select className="form-input" value={form.brandId} onChange={event => setForm(value => ({ ...value, brandId: event.target.value }))}><option value="">Seleccionar…</option>{brands.map(brand => <option key={brand.id} value={brand.id}>{brand.brandName} · {brand.country}</option>)}</select></div>
+      <div className="form-group"><label className="form-label">Marca *</label><BrandSearchField value={form.brandId} displayValue={form.brandSearch} onChange={(brandId, brandSearch) => setForm(value => ({ ...value, brandId, brandSearch }))} /><p className="form-hint">Escribe para buscar en todo el catálogo de marcas, no solo en la primera página.</p></div>
       <div className="form-row">
         <div className="form-group"><label className="form-label">Shop IDs *</label><textarea className="form-input" rows={7} placeholder={'576…\n576…'} value={form.shopIds} onChange={event => setForm(value => ({ ...value, shopIds: event.target.value }))} /><p className="form-hint">Uno por línea o separados por coma. Se descarga el menú de cada tienda.</p></div>
         <div className="form-group"><label className="form-label">UPCs *</label><textarea className="form-input" rows={7} placeholder={'750…\n750…'} value={form.upcs} onChange={event => setForm(value => ({ ...value, upcs: event.target.value }))} /><p className="form-hint">Solo estos UPC se incluyen en la carga con merge; el resto del menú no se reemplaza.</p></div>

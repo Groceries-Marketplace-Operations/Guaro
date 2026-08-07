@@ -238,6 +238,7 @@ model Account {
   createdTargetedMenuRules       TargetedMenuRule[]            @relation("TargetedMenuRuleCreator")
   updatedTargetedMenuRules       TargetedMenuRule[]            @relation("TargetedMenuRuleUpdater")
   createdTargetedMenuRuns        TargetedMenuExecution[]       @relation("TargetedMenuExecutionCreator")
+  createdMenuCopyRuns            MenuCopyExecution[]           @relation("MenuCopyExecutionCreator")
 
   @@index([sectionId])
   @@map("account")
@@ -489,6 +490,8 @@ model Brand {
   sftpApplications     SftpApplication[]
   promotionApiExecutions PromotionApiExecution[]
   targetedMenuRules       TargetedMenuRule[]
+  sourceMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopySourceBrand")
+  targetMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopyTargetBrand")
 
   @@index([ownerId])
   @@index([applicationId])
@@ -999,6 +1002,39 @@ model TargetedMenuExecution {
   @@index([ruleId, createdAt])
   @@index([status])
   @@map("targeted_menu_execution")
+}
+
+model MenuCopyExecution {
+  id              String         @id @default(uuid()) @db.Uuid
+  status          AutoOpenStatus @default(pending)
+  sourceBrandId   String         @map("source_brand_id") @db.Uuid
+  targetBrandId   String         @map("target_brand_id") @db.Uuid
+  sourceShopId    String         @map("source_shop_id")
+  targetShopId    String         @map("target_shop_id")
+  sourceAppShopId String?        @map("source_app_shop_id")
+  targetAppShopId String?        @map("target_app_shop_id")
+  mergePolicy     Int            @default(0) @map("merge_policy")
+  currentStep     String?        @map("current_step")
+  exportTaskId    String?        @map("export_task_id")
+  uploadTaskId    String?        @map("upload_task_id")
+  itemCount       Int            @default(0) @map("item_count")
+  categoryCount   Int            @default(0) @map("category_count")
+  cancelRequested Boolean        @default(false) @map("cancel_requested")
+  errorMessage    String?        @map("error_message") @db.Text
+  startedAt       DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt      DateTime?      @map("finished_at") @db.Timestamptz
+  createdById     String?        @map("created_by") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  sourceBrand Brand    @relation("MenuCopySourceBrand", fields: [sourceBrandId], references: [id], onDelete: Restrict)
+  targetBrand Brand    @relation("MenuCopyTargetBrand", fields: [targetBrandId], references: [id], onDelete: Restrict)
+  createdBy   Account? @relation("MenuCopyExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([status])
+  @@index([sourceBrandId])
+  @@index([targetBrandId])
+  @@map("menu_copy_execution")
 }
 
 model StorePromotion {

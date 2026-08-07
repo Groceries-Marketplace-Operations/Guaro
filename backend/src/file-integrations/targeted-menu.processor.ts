@@ -2,6 +2,7 @@ import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { AutoOpenStatus, Prisma } from '@prisma/client';
 import { Job } from 'bullmq';
+import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { downloadMenu } from '../integrations/auto-turn-off-api.util';
 import {
@@ -54,10 +55,11 @@ export class TargetedMenuProcessor extends WorkerHost {
       await this.fail(executionId, 'The selected brand has no DiDi application linked', []);
       return;
     }
-
     const results: ShopUploadResult[] = [];
     try {
-      const targets = await this.resolveTargets(rule.brandId, rule.shopIds, application.appId, application.appSecret);
+      const encryptionKey = process.env.ENCRYPTION_KEY;
+      const appSecret = encryptionKey ? decrypt(application.appSecret, encryptionKey) : application.appSecret;
+      const targets = await this.resolveTargets(rule.brandId, rule.shopIds, application.appId, appSecret);
       for (const target of targets) {
         await this.ensureActive(executionId);
         await this.prisma.targetedMenuExecution.update({
@@ -76,7 +78,7 @@ export class TargetedMenuProcessor extends WorkerHost {
           continue;
         }
         try {
-          const authToken = await getAuthToken(application.appId, application.appSecret, target.appShopId);
+          const authToken = await getAuthToken(application.appId, appSecret, target.appShopId);
           const downloaded = await downloadMenu(authToken, () => this.ensureActive(executionId));
           const sourceMenu = parseJsonKeepingIds(downloaded.rawJson) as Record<string, unknown>;
           const selected = selectMenuUpcs(sourceMenu, rule.upcs);

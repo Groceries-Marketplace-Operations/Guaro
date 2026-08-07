@@ -526,6 +526,30 @@ export interface TargetedMenuRule {
   executions: TargetedMenuExecution[];
 }
 
+export interface MenuCopyExecution {
+  id: string;
+  status: AutoOpenStatus;
+  sourceBrandId: string;
+  targetBrandId: string;
+  sourceShopId: string;
+  targetShopId: string;
+  sourceAppShopId?: string;
+  targetAppShopId?: string;
+  mergePolicy: number;
+  currentStep?: string;
+  exportTaskId?: string;
+  uploadTaskId?: string;
+  itemCount: number;
+  categoryCount: number;
+  errorMessage?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  createdAt: string;
+  sourceBrand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'> & { application?: Pick<Application, 'id' | 'appId' | 'appName'> };
+  targetBrand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'> & { application?: Pick<Application, 'id' | 'appId' | 'appName'> };
+  createdBy?: Pick<Account, 'id' | 'name' | 'email'>;
+}
+
 export interface StoreEmergencyTarget {
   id: string;
   offlineStatus: string;

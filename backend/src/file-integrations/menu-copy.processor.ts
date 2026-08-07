@@ -1,0 +1,162 @@
+import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Injectable, Logger } from '@nestjs/common';
+import { Job } from 'bullmq';
+import { decrypt } from '../common/crypto.util';
+import { downloadMenu } from '../integrations/auto-turn-off-api.util';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  DIDI_BASE,
+  fetchShopIdMap,
+  fetchWithEndpointContext,
+  getAuthToken,
+  parseJsonKeepingIds,
+} from '../queue/handlers/didi-food.util';
+
+class MenuCopyCancelledError extends Error {}
+
+@Injectable()
+@Processor('menu-copy', { concurrency: 2 })
+export class MenuCopyProcessor extends WorkerHost {
+  private readonly logger = new Logger(MenuCopyProcessor.name);
+
+  constructor(private readonly prisma: PrismaService) {
+    super();
+  }
+
+  async process(job: Job<{ executionId: string }>) {
+    const executionId = job.data.executionId;
+    const claimed = await this.prisma.menuCopyExecution.updateMany({
+      where: { id: executionId, status: 'pending', cancelRequested: false },
+      data: { status: 'running', startedAt: new Date(), currentStep: 'resolving_source_shop', errorMessage: null },
+    });
+    if (!claimed.count) return;
+
+    try {
+      const execution = await this.prisma.menuCopyExecution.findUnique({
+        where: { id: executionId },
+        include: {
+          sourceBrand: { include: { application: true } },
+          targetBrand: { include: { application: true } },
+        },
+      });
+      if (!execution) return;
+      const sourceApplication = execution.sourceBrand.application;
+      const targetApplication = execution.targetBrand.application;
+      if (!sourceApplication) throw new Error('Source brand has no DiDi application linked');
+      if (!targetApplication) throw new Error('Target brand has no DiDi application linked');
+
+      const encryptionKey = process.env.ENCRYPTION_KEY;
+      const sourceSecret = encryptionKey ? decrypt(sourceApplication.appSecret, encryptionKey) : sourceApplication.appSecret;
+      const targetSecret = encryptionKey ? decrypt(targetApplication.appSecret, encryptionKey) : targetApplication.appSecret;
+
+      const sourceAppShopId = await this.resolveAppShopId(
+        execution.sourceBrandId,
+        execution.sourceShopId,
+        sourceApplication.appId,
+        sourceSecret,
+      );
+      await this.step(executionId, 'resolving_target_shop', { sourceAppShopId });
+      const targetAppShopId = await this.resolveAppShopId(
+        execution.targetBrandId,
+        execution.targetShopId,
+        targetApplication.appId,
+        targetSecret,
+      );
+
+      await this.step(executionId, 'downloading_source_menu', { targetAppShopId });
+      const sourceToken = await getAuthToken(sourceApplication.appId, sourceSecret, sourceAppShopId);
+      const downloaded = await downloadMenu(sourceToken, () => this.ensureActive(executionId));
+      const menu = parseJsonKeepingIds(downloaded.rawJson) as Record<string, unknown>;
+      const items = Array.isArray(menu.items) ? menu.items : [];
+      const categories = Array.isArray(menu.categories) ? menu.categories : [];
+      if (!items.length) throw new Error('The source menu contains no items');
+      if (items.length > 3000) throw new Error(`The source menu has ${items.length} items; DiDi accepts a maximum of 3000 per upload`);
+      if (categories.length > 30) throw new Error(`The source menu has ${categories.length} categories; DiDi accepts a maximum of 30`);
+
+      await this.step(executionId, 'uploading_target_menu', {
+        exportTaskId: downloaded.taskId,
+        itemCount: items.length,
+        categoryCount: categories.length,
+      });
+      const targetToken = await getAuthToken(targetApplication.appId, targetSecret, targetAppShopId);
+      const uploadTaskId = await this.upload(targetToken, menu, execution.mergePolicy);
+      await this.ensureActive(executionId);
+      await this.prisma.menuCopyExecution.update({
+        where: { id: executionId },
+        data: {
+          status: 'done',
+          currentStep: 'completed',
+          uploadTaskId,
+          finishedAt: new Date(),
+          errorMessage: null,
+        },
+      });
+      this.logger.log(
+        `Copied ${items.length} items from ${execution.sourceShopId} (${sourceApplication.appName}) `
+        + `to ${execution.targetShopId} (${targetApplication.appName}); upload task=${uploadTaskId}`,
+      );
+    } catch (error) {
+      if (error instanceof MenuCopyCancelledError) return;
+      await this.prisma.menuCopyExecution.updateMany({
+        where: { id: executionId, status: { in: ['pending', 'running'] } },
+        data: {
+          status: 'failed',
+          currentStep: null,
+          finishedAt: new Date(),
+          errorMessage: (error as Error).message,
+        },
+      });
+      this.logger.error(`Cross-app menu copy ${executionId} failed: ${(error as Error).message}`);
+    }
+  }
+
+  private async resolveAppShopId(brandId: string, shopId: string, appId: string, appSecret: string) {
+    const local = await this.prisma.shop.findFirst({
+      where: { brandId, shopId, deletedAt: null },
+      select: { appShopId: true },
+    });
+    if (local?.appShopId) return local.appShopId;
+    const mapping = await fetchShopIdMap(appId, appSecret, [shopId]);
+    const appShopId = mapping.get(shopId);
+    if (!appShopId) throw new Error(`shop_id ${shopId} was not found in POST /v1/shop/shop/list for the selected application`);
+    return appShopId;
+  }
+
+  private async upload(authToken: string, menu: Record<string, unknown>, mergePolicy: number) {
+    const endpoint = 'POST /v3/item/item/uploadGrocery';
+    const payload: Record<string, unknown> = {
+      auth_token: authToken,
+      menus: Array.isArray(menu.menus) ? menu.menus : [],
+      categories: Array.isArray(menu.categories) ? menu.categories : [],
+      items: Array.isArray(menu.items) ? menu.items : [],
+      merge_policy: mergePolicy,
+    };
+    if (Array.isArray(menu.modifier_groups) && menu.modifier_groups.length) {
+      payload.modifier_groups = menu.modifier_groups;
+    }
+    const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/uploadGrocery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = parseJsonKeepingIds(await response.text());
+    if (!response.ok || body.errno !== 0) {
+      throw new Error(`${endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
+    }
+    return String(body.data?.taskID ?? body.data?.taskId ?? 'accepted');
+  }
+
+  private async step(executionId: string, currentStep: string, data: Record<string, unknown> = {}) {
+    await this.ensureActive(executionId);
+    await this.prisma.menuCopyExecution.update({ where: { id: executionId }, data: { currentStep, ...data } });
+  }
+
+  private async ensureActive(executionId: string) {
+    const execution = await this.prisma.menuCopyExecution.findUnique({
+      where: { id: executionId }, select: { status: true, cancelRequested: true },
+    });
+    if (!execution || execution.cancelRequested || execution.status === 'cancelled') {
+      throw new MenuCopyCancelledError('Execution cancelled');
+    }
+  }
+}

@@ -6,6 +6,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import { fileIntegrationsApi, sftpApplicationsApi } from '../../api';
 import type { FileIntegrationKind, FileIntegrationRule, Paginated, SftpApplication } from '../../types';
 import TargetedMenuSection from './TargetedMenuSection';
+import CrossAppMenuCopySection from './CrossAppMenuCopySection';
 
 interface RuleForm {
   name: string;
@@ -132,6 +133,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           : 'Funciona como Auto Menu Fetch para promociones: conserva una instantánea local por App Shop ID. Las credenciales permanecen cifradas.'}
       </div>
       {isFilter && <TargetedMenuSection />}
+      {isFilter && <CrossAppMenuCopySection />}
       {isLoading && <p className="text-muted">Cargando…</p>}
       {!isLoading && rules.length === 0 && <div className="empty-state"><p>No hay configuraciones.</p></div>}
       <div style={{ display: 'grid', gap: 14 }}>

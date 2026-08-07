@@ -181,6 +181,12 @@ export const targetedMenuApi = {
   stop: (id: string) => client.post(`/integrations/targeted-menu/rules/${id}/stop`),
 };
 
+export const menuCopyApi = {
+  list: () => client.get('/integrations/menu-copy/executions'),
+  create: (data: object) => client.post('/integrations/menu-copy/executions', data),
+  stop: (id: string) => client.post(`/integrations/menu-copy/executions/${id}/stop`),
+};
+
 export const promotionApi = {
   contract: () => client.get('/integrations/promotion-api/contract'),
   execute: (data: object) => client.post('/integrations/promotion-api/execute', data),
