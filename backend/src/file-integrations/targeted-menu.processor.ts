@@ -14,7 +14,7 @@ import {
   isRawShopId,
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
-import { buildFlatGroceryUploads, FlatGroceryUpload } from './grocery-destination-menu.util';
+import { buildFlatGroceryUploads, FlatGroceryUpload, groceryMergePolicyForBatch } from './grocery-destination-menu.util';
 import { selectMenuUpcs } from './targeted-menu.util';
 
 class TargetedMenuCancelledError extends Error {}
@@ -98,9 +98,10 @@ export class TargetedMenuProcessor extends WorkerHost {
             throw new Error(`None of the ${rule.upcs.length} requested UPCs exist in the downloaded menu`);
           }
           const uploads = buildFlatGroceryUploads(sourceMenu, selected.items);
-          for (const upload of uploads) {
+          for (let index = 0; index < uploads.length; index++) {
             await this.ensureActive(executionId);
-            uploadTaskIds.push(await this.upload(authToken, upload));
+            const mergePolicy = groceryMergePolicyForBatch(rule.mergePolicy, index);
+            uploadTaskIds.push(await this.upload(authToken, uploads[index], mergePolicy));
           }
           results.push({
             shopId: target.shopId,
@@ -192,14 +193,14 @@ export class TargetedMenuProcessor extends WorkerHost {
     }));
   }
 
-  private async upload(authToken: string, selected: FlatGroceryUpload) {
+  private async upload(authToken: string, selected: FlatGroceryUpload, mergePolicy: number) {
     const endpoint = 'POST /v3/item/item/uploadGrocery';
     const payload: Record<string, unknown> = {
       auth_token: authToken,
       menus: selected.menus,
       categories: selected.categories,
       items: selected.items,
-      merge_policy: 0,
+      merge_policy: mergePolicy,
     };
     const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/uploadGrocery`, {
       method: 'POST',

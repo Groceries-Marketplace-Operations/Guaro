@@ -12,7 +12,7 @@ import {
   getAuthToken,
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
-import { buildFlatGroceryUploads, FlatGroceryUpload } from './grocery-destination-menu.util';
+import { buildFlatGroceryUploads, FlatGroceryUpload, groceryMergePolicyForBatch } from './grocery-destination-menu.util';
 
 class MenuCopyCancelledError extends Error {}
 
@@ -89,7 +89,7 @@ export class MenuCopyProcessor extends WorkerHost {
       const uploadTaskIds: string[] = [];
       for (let index = 0; index < uploads.length; index++) {
         await this.ensureActive(executionId);
-        const mergePolicy = index === 0 ? execution.mergePolicy : 0;
+        const mergePolicy = groceryMergePolicyForBatch(execution.mergePolicy, index);
         uploadTaskIds.push(await this.upload(targetToken, uploads[index], mergePolicy));
       }
       const uploadTaskId = uploadTaskIds.join(', ');

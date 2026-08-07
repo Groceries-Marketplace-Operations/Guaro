@@ -15,6 +15,7 @@ interface FormState {
   mode: 'now' | 'scheduled';
   startsAt: string;
   active: boolean;
+  mergePolicy: number;
 }
 
 const activeStatuses = new Set(['pending', 'running']);
@@ -27,7 +28,7 @@ function localDateInput(date = new Date()) {
 function emptyForm(): FormState {
   const start = new Date(Date.now() + 5 * 60_000);
   start.setSeconds(0, 0);
-  return { name: '', brandId: '', brandSearch: '', shopIds: '', upcs: '', mode: 'now', startsAt: localDateInput(start), active: true };
+  return { name: '', brandId: '', brandSearch: '', shopIds: '', upcs: '', mode: 'now', startsAt: localDateInput(start), active: true, mergePolicy: 1 };
 }
 
 function values(source: string) {
@@ -68,6 +69,7 @@ export default function TargetedMenuSection() {
         upcs: values(form.upcs),
         startsAt: runNow ? new Date().toISOString() : new Date(form.startsAt).toISOString(),
         active: form.active,
+        mergePolicy: form.mergePolicy,
         runNow,
       };
       return editing ? targetedMenuApi.update(editing.id, payload) : targetedMenuApi.create(payload);
@@ -102,6 +104,7 @@ export default function TargetedMenuSection() {
       mode: 'scheduled',
       startsAt: localDateInput(new Date(rule.startsAt)),
       active: rule.active,
+      mergePolicy: rule.mergePolicy,
     });
     setError('');
     setOpen(true);
@@ -109,6 +112,10 @@ export default function TargetedMenuSection() {
   const valid = form.name.trim() && form.brandId && values(form.shopIds).length > 0
     && values(form.upcs).length > 0 && values(form.upcs).length <= 5000
     && (form.mode === 'now' || !!form.startsAt);
+  const submit = () => {
+    if (form.mergePolicy === 1 && !window.confirm('Reemplazar sobrescribirá el menú actual de cada tienda y dejará únicamente los UPC encontrados. ¿Continuar?')) return;
+    save.mutate();
+  };
 
   return <section style={{ marginBottom: 22 }}>
     <div className="card" style={{ padding: 18, marginBottom: 14 }}>
@@ -139,6 +146,7 @@ export default function TargetedMenuSection() {
                 <span className="badge">{rule.brand.brandName}</span>
                 <span className="badge">{rule.shopIds.length} shops</span>
                 <span className="badge">{rule.upcs.length} UPCs</span>
+                <span className="badge">{rule.mergePolicy === 1 ? 'Reemplazar' : 'Merge'}</span>
                 <span className="badge">Diario</span>
                 {latest && <StatusBadge status={latest.status} />}
               </div>
@@ -184,15 +192,16 @@ export default function TargetedMenuSection() {
 
     {open && <Modal title={editing ? 'Editar Targeted Menu Upload' : 'Nueva regla Targeted Menu Upload'} onClose={() => setOpen(false)} footer={<>
       <button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancelar</button>
-      <button className="btn btn-primary" disabled={!valid || save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Guardando…' : editing ? 'Guardar' : form.mode === 'now' ? 'Crear y ejecutar' : 'Programar'}</button>
+      <button className="btn btn-primary" disabled={!valid || save.isPending} onClick={submit}>{save.isPending ? 'Guardando…' : editing ? 'Guardar' : form.mode === 'now' ? 'Crear y ejecutar' : 'Programar'}</button>
     </>}>
       {error && <div className="error-banner">{error}</div>}
       <div className="form-group"><label className="form-label">Nombre *</label><input className="form-input" value={form.name} onChange={event => setForm(value => ({ ...value, name: event.target.value }))} /></div>
       <div className="form-group"><label className="form-label">Marca *</label><BrandSearchField value={form.brandId} displayValue={form.brandSearch} onChange={(brandId, brandSearch) => setForm(value => ({ ...value, brandId, brandSearch }))} /><p className="form-hint">Escribe para buscar en todo el catálogo de marcas, no solo en la primera página.</p></div>
       <div className="form-row">
         <div className="form-group"><label className="form-label">Shop IDs *</label><textarea className="form-input" rows={7} placeholder={'576…\n576…'} value={form.shopIds} onChange={event => setForm(value => ({ ...value, shopIds: event.target.value }))} /><p className="form-hint">Uno por línea o separados por coma. Se descarga el menú de cada tienda.</p></div>
-        <div className="form-group"><label className="form-label">UPCs ({values(form.upcs).length}/5000) *</label><textarea className="form-input" rows={7} placeholder={'750…\n750…'} value={form.upcs} onChange={event => setForm(value => ({ ...value, upcs: event.target.value }))} /><p className="form-hint">Hasta 5,000 UPC. Se cargan con merge en Cate_Grocery_1, Cate_Grocery_2… con hasta 3,500 ítems por categoría.</p></div>
+        <div className="form-group"><label className="form-label">UPCs ({values(form.upcs).length}/5000) *</label><textarea className="form-input" rows={7} placeholder={'750…\n750…'} value={form.upcs} onChange={event => setForm(value => ({ ...value, upcs: event.target.value }))} /><p className="form-hint">Hasta 5,000 UPC en Cate_Grocery_1, Cate_Grocery_2… con hasta 3,500 ítems por categoría.</p></div>
       </div>
+      <div className="form-group"><label className="form-label">Política de carga *</label><select className="form-input" value={form.mergePolicy} onChange={event => setForm(value => ({ ...value, mergePolicy: Number(event.target.value) }))}><option value={1}>Reemplazar — sobrescribe el menú y deja únicamente los UPC encontrados</option><option value={0}>Merge — agrega o actualiza sin borrar el resto del menú</option></select><p className="form-hint">Reemplazar se aplica al primer bloque; si hay más de 3,500 ítems, los bloques siguientes se agregan sin borrar los anteriores.</p></div>
       {!editing && <div className="form-group"><label className="form-label">Primera ejecución *</label><div style={{ display: 'flex', gap: 16 }}><label><input type="radio" checked={form.mode === 'now'} onChange={() => setForm(value => ({ ...value, mode: 'now' }))} /> Ejecutar ahora</label><label><input type="radio" checked={form.mode === 'scheduled'} onChange={() => setForm(value => ({ ...value, mode: 'scheduled' }))} /> Fecha programada</label></div></div>}
       {(editing || form.mode === 'scheduled') && <div className="form-group"><label className="form-label">Inicio y hora diaria *</label><input className="form-input" type="datetime-local" min={editing ? undefined : localDateInput()} value={form.startsAt} onChange={event => setForm(value => ({ ...value, startsAt: event.target.value }))} /><p className="form-hint">Después de la primera ejecución, se repite cada día a esta hora.</p></div>}
       <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="checkbox" checked={form.active} onChange={event => setForm(value => ({ ...value, active: event.target.checked }))} /> Mantener recurrencia diaria activa</label>

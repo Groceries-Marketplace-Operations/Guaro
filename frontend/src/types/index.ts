@@ -516,6 +516,7 @@ export interface TargetedMenuRule {
   shopIds: string[];
   upcs: string[];
   active: boolean;
+  mergePolicy: number;
   startsAt: string;
   nextRunAt?: string;
   lastRunAt?: string;

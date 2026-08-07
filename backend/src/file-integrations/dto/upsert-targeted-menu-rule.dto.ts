@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsArray, IsBoolean, IsDateString, IsOptional, IsString, IsUUID, MaxLength, ArrayMaxSize, ArrayMinSize } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsIn, IsOptional, IsString, IsUUID, MaxLength, ArrayMaxSize, ArrayMinSize } from 'class-validator';
 
 function normalizeList(value: unknown): string[] {
   const source = Array.isArray(value) ? value : String(value ?? '').split(/[\s,;]+/);
@@ -34,6 +34,11 @@ export class UpsertTargetedMenuRuleDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @Transform(({ value }) => value === undefined || value === null || value === '' ? undefined : Number(value))
+  @IsOptional()
+  @IsIn([0, 1])
+  mergePolicy?: number;
 
   @IsOptional()
   @IsBoolean()

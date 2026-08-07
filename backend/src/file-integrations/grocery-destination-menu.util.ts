@@ -29,6 +29,12 @@ export interface FlatGroceryUpload {
   categoryIds: string[];
 }
 
+export function groceryMergePolicyForBatch(mergePolicy: number, batchIndex: number) {
+  if (![0, 1].includes(mergePolicy)) throw new Error('Grocery merge policy must be 0 or 1');
+  if (!Number.isInteger(batchIndex) || batchIndex < 0) throw new Error('Grocery batch index must be a non-negative integer');
+  return batchIndex === 0 ? mergePolicy : 0;
+}
+
 export function sanitizeGroceryDestinationItem(item: JsonObject): JsonObject {
   return Object.fromEntries(
     DESTINATION_ITEM_FIELDS

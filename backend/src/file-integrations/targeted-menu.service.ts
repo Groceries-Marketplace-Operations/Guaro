@@ -118,6 +118,7 @@ export class TargetedMenuService {
       brandId: dto.brandId,
       shopIds: dto.shopIds,
       upcs: dto.upcs,
+      mergePolicy: dto.mergePolicy ?? 1,
       active,
       startsAt,
       nextRunAt,
