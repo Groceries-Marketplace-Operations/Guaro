@@ -74,10 +74,18 @@ export function selectMenuUpcs(menu: JsonObject, requestedUpcs: string[]) {
     }];
   });
 
+  const nestedCategoryIds = new Set(
+    categories.flatMap(category => stringArray(category.sub_category_ids)),
+  );
+
   const menus = (Array.isArray(menu.menus) ? menu.menus : []).flatMap(value => {
     if (!value || typeof value !== 'object') return [];
     const source = value as JsonObject;
-    return [{ ...source, app_category_ids: stringArray(source.app_category_ids).filter(id => includedCategoryIds.has(id)) }];
+    return [{
+      ...source,
+      app_category_ids: stringArray(source.app_category_ids)
+        .filter(id => includedCategoryIds.has(id) && !nestedCategoryIds.has(id)),
+    }];
   }).filter(value => (value.app_category_ids as string[]).length > 0);
 
   const referencedModifierGroupIds = new Set(items.flatMap(item => [...collectReferencedModifierGroupIds(item)]));
