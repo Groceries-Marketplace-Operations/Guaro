@@ -106,7 +106,8 @@ export default function TargetedMenuSection() {
     setError('');
     setOpen(true);
   };
-  const valid = form.name.trim() && form.brandId && values(form.shopIds).length > 0 && values(form.upcs).length > 0
+  const valid = form.name.trim() && form.brandId && values(form.shopIds).length > 0
+    && values(form.upcs).length > 0 && values(form.upcs).length <= 5000
     && (form.mode === 'now' || !!form.startsAt);
 
   return <section style={{ marginBottom: 22 }}>
@@ -190,7 +191,7 @@ export default function TargetedMenuSection() {
       <div className="form-group"><label className="form-label">Marca *</label><BrandSearchField value={form.brandId} displayValue={form.brandSearch} onChange={(brandId, brandSearch) => setForm(value => ({ ...value, brandId, brandSearch }))} /><p className="form-hint">Escribe para buscar en todo el catálogo de marcas, no solo en la primera página.</p></div>
       <div className="form-row">
         <div className="form-group"><label className="form-label">Shop IDs *</label><textarea className="form-input" rows={7} placeholder={'576…\n576…'} value={form.shopIds} onChange={event => setForm(value => ({ ...value, shopIds: event.target.value }))} /><p className="form-hint">Uno por línea o separados por coma. Se descarga el menú de cada tienda.</p></div>
-        <div className="form-group"><label className="form-label">UPCs *</label><textarea className="form-input" rows={7} placeholder={'750…\n750…'} value={form.upcs} onChange={event => setForm(value => ({ ...value, upcs: event.target.value }))} /><p className="form-hint">Solo estos UPC se incluyen en la carga con merge; el resto del menú no se reemplaza.</p></div>
+        <div className="form-group"><label className="form-label">UPCs ({values(form.upcs).length}/5000) *</label><textarea className="form-input" rows={7} placeholder={'750…\n750…'} value={form.upcs} onChange={event => setForm(value => ({ ...value, upcs: event.target.value }))} /><p className="form-hint">Hasta 5,000 UPC. Se cargan con merge en lotes de máximo 3,000 ítems; el resto del menú no se reemplaza.</p></div>
       </div>
       {!editing && <div className="form-group"><label className="form-label">Primera ejecución *</label><div style={{ display: 'flex', gap: 16 }}><label><input type="radio" checked={form.mode === 'now'} onChange={() => setForm(value => ({ ...value, mode: 'now' }))} /> Ejecutar ahora</label><label><input type="radio" checked={form.mode === 'scheduled'} onChange={() => setForm(value => ({ ...value, mode: 'scheduled' }))} /> Fecha programada</label></div></div>}
       {(editing || form.mode === 'scheduled') && <div className="form-group"><label className="form-label">Inicio y hora diaria *</label><input className="form-input" type="datetime-local" min={editing ? undefined : localDateInput()} value={form.startsAt} onChange={event => setForm(value => ({ ...value, startsAt: event.target.value }))} /><p className="form-hint">Después de la primera ejecución, se repite cada día a esta hora.</p></div>}

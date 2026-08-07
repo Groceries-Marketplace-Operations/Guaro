@@ -235,10 +235,10 @@ model Account {
   createdFileIntegrationRules    FileIntegrationRule[]        @relation("FileIntegrationRuleCreator")
   createdFileIntegrationRuns     FileIntegrationExecution[]   @relation("FileIntegrationExecutionCreator")
   createdPromotionApiRuns        PromotionApiExecution[]      @relation("PromotionApiExecutionCreator")
-  createdTargetedMenuRules       TargetedMenuRule[]            @relation("TargetedMenuRuleCreator")
-  updatedTargetedMenuRules       TargetedMenuRule[]            @relation("TargetedMenuRuleUpdater")
-  createdTargetedMenuRuns        TargetedMenuExecution[]       @relation("TargetedMenuExecutionCreator")
-  createdMenuCopyRuns            MenuCopyExecution[]           @relation("MenuCopyExecutionCreator")
+  createdTargetedMenuRules       TargetedMenuRule[]           @relation("TargetedMenuRuleCreator")
+  updatedTargetedMenuRules       TargetedMenuRule[]           @relation("TargetedMenuRuleUpdater")
+  createdTargetedMenuRuns        TargetedMenuExecution[]      @relation("TargetedMenuExecutionCreator")
+  createdMenuCopyRuns            MenuCopyExecution[]          @relation("MenuCopyExecutionCreator")
 
   @@index([sectionId])
   @@map("account")
@@ -424,8 +424,10 @@ model Application {
   updatedAt   DateTime  @updatedAt @map("updated_at")
   deletedAt   DateTime? @map("deleted_at")
 
-  createdBy Account? @relation("AppCreador", fields: [createdById], references: [id])
-  brands    Brand[]
+  createdBy                Account?            @relation("AppCreador", fields: [createdById], references: [id])
+  brands                   Brand[]
+  sourceMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopySourceApplication")
+  targetMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopyTargetApplication")
 
   @@unique([id, country]) // target of composite FK (see constraints.sql)
   @@map("application")
@@ -446,10 +448,10 @@ model SftpApplication {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
 
-  createdBy Account? @relation("SftpAppCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  brand Brand? @relation(fields: [brandId], references: [id], onDelete: SetNull)
-  fileIntegrationRules FileIntegrationRule[]
-  storePromotions StorePromotion[]
+  createdBy              Account?                @relation("SftpAppCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  brand                  Brand?                  @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  fileIntegrationRules   FileIntegrationRule[]
+  storePromotions        StorePromotion[]
   promotionShopSnapshots PromotionShopSnapshot[]
 
   @@index([active])
@@ -474,24 +476,22 @@ model Brand {
   updatedAt       DateTime         @updatedAt @map("updated_at")
   deletedAt       DateTime?        @map("deleted_at")
 
-  owner                Account?              @relation("BrandResponsable", fields: [ownerId], references: [id])
-  createdBy            Account?              @relation("BrandCreador", fields: [createdById], references: [id])
-  application          Application?          @relation(fields: [applicationId], references: [id])
-  webhooks             BrandWebhook[]
-  shops                Shop[]
-  tasks                Task[]
-  formValues           FormValue[]
-  autoOpenPoolBrands   AutoOpenPoolBrand[]
-  autoFetchPoolBrands  AutoFetchPoolBrand[]
-  autoTurnOffRules     AutoTurnOffRule[]
-  storeEmergencies     StoreEmergency[]
-  forcedOpenOperations ForcedOpenOperation[]
-  items                BrandItem[]
-  sftpApplications     SftpApplication[]
+  owner                  Account?                @relation("BrandResponsable", fields: [ownerId], references: [id])
+  createdBy              Account?                @relation("BrandCreador", fields: [createdById], references: [id])
+  application            Application?            @relation(fields: [applicationId], references: [id])
+  webhooks               BrandWebhook[]
+  shops                  Shop[]
+  tasks                  Task[]
+  formValues             FormValue[]
+  autoOpenPoolBrands     AutoOpenPoolBrand[]
+  autoFetchPoolBrands    AutoFetchPoolBrand[]
+  autoTurnOffRules       AutoTurnOffRule[]
+  storeEmergencies       StoreEmergency[]
+  forcedOpenOperations   ForcedOpenOperation[]
+  items                  BrandItem[]
+  sftpApplications       SftpApplication[]
   promotionApiExecutions PromotionApiExecution[]
-  targetedMenuRules       TargetedMenuRule[]
-  sourceMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopySourceBrand")
-  targetMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopyTargetBrand")
+  targetedMenuRules      TargetedMenuRule[]
 
   @@index([ownerId])
   @@index([applicationId])
@@ -512,34 +512,34 @@ model BrandWebhook {
 }
 
 model Shop {
-  id             String     @id @default(uuid()) @db.Uuid
-  shopId         String     @unique @map("shop_id")
-  appShopId      String     @map("app_shop_id")
-  name           String?
-  brandId        String     @map("brand_id") @db.Uuid
-  latitude       Decimal?   @db.Decimal(9, 6)
-  longitude      Decimal?   @db.Decimal(9, 6)
-  city           String?
-  address        String?    @db.Text
-  status         ShopStatus @default(lead)
-  pickingModel   ShopPickingModel? @map("picking_model")
-  driverCashBlocked Boolean @default(true) @map("driver_cash_blocked")
-  createdById    String?    @map("created_by") @db.Uuid
-  createdAt      DateTime   @default(now()) @map("created_at")
-  updatedAt      DateTime   @updatedAt @map("updated_at")
-  deletedAt      DateTime?  @map("deleted_at")
-  menuSyncStatus String     @default("never") @map("menu_sync_status")
-  menuSyncedAt   DateTime?  @map("menu_synced_at") @db.Timestamptz
-  menuSyncError  String?    @map("menu_sync_error") @db.Text
-  menuItemCount  Int        @default(0) @map("menu_item_count")
+  id                String            @id @default(uuid()) @db.Uuid
+  shopId            String            @unique @map("shop_id")
+  appShopId         String            @map("app_shop_id")
+  name              String?
+  brandId           String            @map("brand_id") @db.Uuid
+  latitude          Decimal?          @db.Decimal(9, 6)
+  longitude         Decimal?          @db.Decimal(9, 6)
+  city              String?
+  address           String?           @db.Text
+  status            ShopStatus        @default(lead)
+  pickingModel      ShopPickingModel? @map("picking_model")
+  driverCashBlocked Boolean           @default(true) @map("driver_cash_blocked")
+  createdById       String?           @map("created_by") @db.Uuid
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+  deletedAt         DateTime?         @map("deleted_at")
+  menuSyncStatus    String            @default("never") @map("menu_sync_status")
+  menuSyncedAt      DateTime?         @map("menu_synced_at") @db.Timestamptz
+  menuSyncError     String?           @map("menu_sync_error") @db.Text
+  menuItemCount     Int               @default(0) @map("menu_item_count")
 
-  brand             Brand                  @relation(fields: [brandId], references: [id])
-  createdBy         Account?               @relation("ShopCreador", fields: [createdById], references: [id])
-  schedules         Schedule[]
-  taskShops         TaskShop[]
-  formValues        FormValue[]
-  emergencies       StoreEmergencyTarget[]
-  forcedOpenTargets ForcedOpenTarget[]
+  brand                  Brand                   @relation(fields: [brandId], references: [id])
+  createdBy              Account?                @relation("ShopCreador", fields: [createdById], references: [id])
+  schedules              Schedule[]
+  taskShops              TaskShop[]
+  formValues             FormValue[]
+  emergencies            StoreEmergencyTarget[]
+  forcedOpenTargets      ForcedOpenTarget[]
   promotionApiExecutions PromotionApiExecution[]
 
   @@unique([brandId, appShopId])
@@ -867,30 +867,30 @@ model AutoFetchPoolBrand {
 
 // -------------------- Integrations: SFTP files and promotions -------------
 model FileIntegrationRule {
-  id                String              @id @default(uuid()) @db.Uuid
-  name              String
-  kind              FileIntegrationKind
-  country           Country?
-  sftpApplicationId String              @map("sftp_application_id") @db.Uuid
-  active            Boolean             @default(false)
-  intervalMinutes   Int?                @map("interval_minutes")
-  nextRunAt         DateTime?           @map("next_run_at") @db.Timestamptz
-  lastRunAt         DateTime?           @map("last_run_at") @db.Timestamptz
-  lastRemoteModifiedAt DateTime?        @map("last_remote_modified_at") @db.Timestamptz
-  filePattern       String              @default("*") @map("file_pattern")
-  sourceScope       String              @default("all") @map("source_scope")
-  thresholdAmount   Decimal?            @map("threshold_amount") @db.Decimal(14, 2)
-  delimiter         String?
-  priceColumn       Int?                @map("price_column")
-  maxFilesPerRun    Int                 @default(250) @map("max_files_per_run")
-  fileStateInitializedAt DateTime?      @map("file_state_initialized_at") @db.Timestamptz
-  createdById       String?             @map("created_by") @db.Uuid
-  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt         DateTime?           @map("deleted_at") @db.Timestamptz
+  id                     String              @id @default(uuid()) @db.Uuid
+  name                   String
+  kind                   FileIntegrationKind
+  country                Country?
+  sftpApplicationId      String              @map("sftp_application_id") @db.Uuid
+  active                 Boolean             @default(false)
+  intervalMinutes        Int?                @map("interval_minutes")
+  nextRunAt              DateTime?           @map("next_run_at") @db.Timestamptz
+  lastRunAt              DateTime?           @map("last_run_at") @db.Timestamptz
+  lastRemoteModifiedAt   DateTime?           @map("last_remote_modified_at") @db.Timestamptz
+  filePattern            String              @default("*") @map("file_pattern")
+  sourceScope            String              @default("all") @map("source_scope")
+  thresholdAmount        Decimal?            @map("threshold_amount") @db.Decimal(14, 2)
+  delimiter              String?
+  priceColumn            Int?                @map("price_column")
+  maxFilesPerRun         Int                 @default(250) @map("max_files_per_run")
+  fileStateInitializedAt DateTime?           @map("file_state_initialized_at") @db.Timestamptz
+  createdById            String?             @map("created_by") @db.Uuid
+  createdAt              DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime            @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt              DateTime?           @map("deleted_at") @db.Timestamptz
 
-  sftpApplication SftpApplication           @relation(fields: [sftpApplicationId], references: [id])
-  createdBy       Account?                  @relation("FileIntegrationRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  sftpApplication SftpApplication            @relation(fields: [sftpApplicationId], references: [id])
+  createdBy       Account?                   @relation("FileIntegrationRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
   executions      FileIntegrationExecution[]
   fileStates      FileIntegrationFileState[]
 
@@ -945,7 +945,7 @@ model FileIntegrationExecution {
   createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
   rule      FileIntegrationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
-  createdBy Account?             @relation("FileIntegrationExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy Account?            @relation("FileIntegrationExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([ruleId, createdAt])
   @@index([status])
@@ -953,20 +953,20 @@ model FileIntegrationExecution {
 }
 
 model TargetedMenuRule {
-  id             String    @id @default(uuid()) @db.Uuid
-  name           String
-  brandId        String    @map("brand_id") @db.Uuid
-  shopIds        String[]  @default([]) @map("shop_ids")
-  upcs           String[]  @default([])
-  active         Boolean   @default(true)
-  startsAt       DateTime  @map("starts_at") @db.Timestamptz
-  nextRunAt      DateTime? @map("next_run_at") @db.Timestamptz
-  lastRunAt      DateTime? @map("last_run_at") @db.Timestamptz
-  createdById    String?   @map("created_by") @db.Uuid
-  updatedById    String?   @map("updated_by") @db.Uuid
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  brandId     String    @map("brand_id") @db.Uuid
+  shopIds     String[]  @default([]) @map("shop_ids")
+  upcs        String[]  @default([])
+  active      Boolean   @default(true)
+  startsAt    DateTime  @map("starts_at") @db.Timestamptz
+  nextRunAt   DateTime? @map("next_run_at") @db.Timestamptz
+  lastRunAt   DateTime? @map("last_run_at") @db.Timestamptz
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
 
   brand      Brand                   @relation(fields: [brandId], references: [id])
   createdBy  Account?                @relation("TargetedMenuRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -979,25 +979,25 @@ model TargetedMenuRule {
 }
 
 model TargetedMenuExecution {
-  id               String         @id @default(uuid()) @db.Uuid
-  ruleId           String         @map("rule_id") @db.Uuid
-  status           AutoOpenStatus @default(pending)
-  trigger          String         @default("manual")
-  startedAt        DateTime?      @map("started_at") @db.Timestamptz
-  finishedAt       DateTime?      @map("finished_at") @db.Timestamptz
-  totalShops       Int            @default(0) @map("total_shops")
-  processedShops   Int            @default(0) @map("processed_shops")
-  successfulShops  Int            @default(0) @map("successful_shops")
-  failedShops      Int            @default(0) @map("failed_shops")
-  currentShopId    String?        @map("current_shop_id")
-  cancelRequested  Boolean        @default(false) @map("cancel_requested")
-  errorMessage     String?        @map("error_message") @db.Text
-  result           Json?
-  createdById      String?        @map("created_by") @db.Uuid
-  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  id              String         @id @default(uuid()) @db.Uuid
+  ruleId          String         @map("rule_id") @db.Uuid
+  status          AutoOpenStatus @default(pending)
+  trigger         String         @default("manual")
+  startedAt       DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt      DateTime?      @map("finished_at") @db.Timestamptz
+  totalShops      Int            @default(0) @map("total_shops")
+  processedShops  Int            @default(0) @map("processed_shops")
+  successfulShops Int            @default(0) @map("successful_shops")
+  failedShops     Int            @default(0) @map("failed_shops")
+  currentShopId   String?        @map("current_shop_id")
+  cancelRequested Boolean        @default(false) @map("cancel_requested")
+  errorMessage    String?        @map("error_message") @db.Text
+  result          Json?
+  createdById     String?        @map("created_by") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
   rule      TargetedMenuRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
-  createdBy Account?          @relation("TargetedMenuExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy Account?         @relation("TargetedMenuExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([ruleId, createdAt])
   @@index([status])
@@ -1005,60 +1005,60 @@ model TargetedMenuExecution {
 }
 
 model MenuCopyExecution {
-  id              String         @id @default(uuid()) @db.Uuid
-  status          AutoOpenStatus @default(pending)
-  sourceBrandId   String         @map("source_brand_id") @db.Uuid
-  targetBrandId   String         @map("target_brand_id") @db.Uuid
-  sourceShopId    String         @map("source_shop_id")
-  targetShopId    String         @map("target_shop_id")
-  sourceAppShopId String?        @map("source_app_shop_id")
-  targetAppShopId String?        @map("target_app_shop_id")
-  mergePolicy     Int            @default(0) @map("merge_policy")
-  currentStep     String?        @map("current_step")
-  exportTaskId    String?        @map("export_task_id")
-  uploadTaskId    String?        @map("upload_task_id")
-  itemCount       Int            @default(0) @map("item_count")
-  categoryCount   Int            @default(0) @map("category_count")
-  cancelRequested Boolean        @default(false) @map("cancel_requested")
-  errorMessage    String?        @map("error_message") @db.Text
-  startedAt       DateTime?      @map("started_at") @db.Timestamptz
-  finishedAt      DateTime?      @map("finished_at") @db.Timestamptz
-  createdById     String?        @map("created_by") @db.Uuid
-  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  id                  String         @id @default(uuid()) @db.Uuid
+  status              AutoOpenStatus @default(pending)
+  sourceApplicationId String         @map("source_application_id") @db.Uuid
+  targetApplicationId String         @map("target_application_id") @db.Uuid
+  sourceShopId        String         @map("source_shop_id")
+  targetShopId        String         @map("target_shop_id")
+  sourceAppShopId     String?        @map("source_app_shop_id")
+  targetAppShopId     String?        @map("target_app_shop_id")
+  mergePolicy         Int            @default(0) @map("merge_policy")
+  currentStep         String?        @map("current_step")
+  exportTaskId        String?        @map("export_task_id")
+  uploadTaskId        String?        @map("upload_task_id")
+  itemCount           Int            @default(0) @map("item_count")
+  categoryCount       Int            @default(0) @map("category_count")
+  cancelRequested     Boolean        @default(false) @map("cancel_requested")
+  errorMessage        String?        @map("error_message") @db.Text
+  startedAt           DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt          DateTime?      @map("finished_at") @db.Timestamptz
+  createdById         String?        @map("created_by") @db.Uuid
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
-  sourceBrand Brand    @relation("MenuCopySourceBrand", fields: [sourceBrandId], references: [id], onDelete: Restrict)
-  targetBrand Brand    @relation("MenuCopyTargetBrand", fields: [targetBrandId], references: [id], onDelete: Restrict)
-  createdBy   Account? @relation("MenuCopyExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  sourceApplication Application @relation("MenuCopySourceApplication", fields: [sourceApplicationId], references: [id], onDelete: Restrict)
+  targetApplication Application @relation("MenuCopyTargetApplication", fields: [targetApplicationId], references: [id], onDelete: Restrict)
+  createdBy         Account?    @relation("MenuCopyExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([status])
-  @@index([sourceBrandId])
-  @@index([targetBrandId])
+  @@index([sourceApplicationId])
+  @@index([targetApplicationId])
   @@map("menu_copy_execution")
 }
 
 model StorePromotion {
-  id                    String   @id @default(uuid()) @db.Uuid
-  sftpApplicationId     String   @map("sftp_application_id") @db.Uuid
-  shopExternalId        String   @map("shop_external_id")
-  activityId            String   @map("activity_id")
-  activityName          String?  @map("activity_name")
-  startDate             String?  @map("start_date")
-  endDate               String?  @map("end_date")
-  activityType          Int?     @map("activity_type")
-  sku                   String
-  discountAmount        String?  @map("discount_amount")
-  discountPercentage    String?  @map("discount_percentage")
-  buyNum                String?  @map("buy_num")
-  getNum                String?  @map("get_num")
-  bxgyX                  String?  @map("bxgy_x")
-  bxgyY                  String?  @map("bxgy_y")
-  actionType            Int?     @map("action_type")
-  sourceFile            String   @map("source_file")
-  sourceModifiedAt      DateTime @map("source_modified_at") @db.Timestamptz
-  rawData               Json     @map("raw_data")
-  fetchedAt             DateTime @default(now()) @map("fetched_at") @db.Timestamptz
-  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id                 String   @id @default(uuid()) @db.Uuid
+  sftpApplicationId  String   @map("sftp_application_id") @db.Uuid
+  shopExternalId     String   @map("shop_external_id")
+  activityId         String   @map("activity_id")
+  activityName       String?  @map("activity_name")
+  startDate          String?  @map("start_date")
+  endDate            String?  @map("end_date")
+  activityType       Int?     @map("activity_type")
+  sku                String
+  discountAmount     String?  @map("discount_amount")
+  discountPercentage String?  @map("discount_percentage")
+  buyNum             String?  @map("buy_num")
+  getNum             String?  @map("get_num")
+  bxgyX              String?  @map("bxgy_x")
+  bxgyY              String?  @map("bxgy_y")
+  actionType         Int?     @map("action_type")
+  sourceFile         String   @map("source_file")
+  sourceModifiedAt   DateTime @map("source_modified_at") @db.Timestamptz
+  rawData            Json     @map("raw_data")
+  fetchedAt          DateTime @default(now()) @map("fetched_at") @db.Timestamptz
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   sftpApplication SftpApplication @relation(fields: [sftpApplicationId], references: [id], onDelete: Cascade)
 
@@ -1069,14 +1069,14 @@ model StorePromotion {
 }
 
 model PromotionShopSnapshot {
-  id                    String   @id @default(uuid()) @db.Uuid
-  sftpApplicationId     String   @map("sftp_application_id") @db.Uuid
-  shopExternalId        String   @map("shop_external_id")
-  sourceFile            String   @map("source_file")
-  sourceModifiedAt      DateTime @map("source_modified_at") @db.Timestamptz
-  rowCount              Int      @default(0) @map("row_count")
-  fetchedAt             DateTime @default(now()) @map("fetched_at") @db.Timestamptz
-  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id                String   @id @default(uuid()) @db.Uuid
+  sftpApplicationId String   @map("sftp_application_id") @db.Uuid
+  shopExternalId    String   @map("shop_external_id")
+  sourceFile        String   @map("source_file")
+  sourceModifiedAt  DateTime @map("source_modified_at") @db.Timestamptz
+  rowCount          Int      @default(0) @map("row_count")
+  fetchedAt         DateTime @default(now()) @map("fetched_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   sftpApplication SftpApplication @relation(fields: [sftpApplicationId], references: [id], onDelete: Cascade)
 
@@ -1102,8 +1102,8 @@ model PromotionApiExecution {
   createdById  String?          @map("created_by") @db.Uuid
   createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
-  brand     Brand   @relation(fields: [brandId], references: [id])
-  shop      Shop    @relation(fields: [shopId], references: [id])
+  brand     Brand    @relation(fields: [brandId], references: [id])
+  shop      Shop     @relation(fields: [shopId], references: [id])
   createdBy Account? @relation("PromotionApiExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([brandId, createdAt])

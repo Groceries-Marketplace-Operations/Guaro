@@ -489,6 +489,7 @@ export interface TargetedMenuShopResult {
   missingUpcs: string[];
   exportTaskId?: string;
   uploadTaskId?: string;
+  uploadTaskIds?: string[];
   error?: string;
 }
 
@@ -529,8 +530,8 @@ export interface TargetedMenuRule {
 export interface MenuCopyExecution {
   id: string;
   status: AutoOpenStatus;
-  sourceBrandId: string;
-  targetBrandId: string;
+  sourceApplicationId: string;
+  targetApplicationId: string;
   sourceShopId: string;
   targetShopId: string;
   sourceAppShopId?: string;
@@ -545,8 +546,8 @@ export interface MenuCopyExecution {
   startedAt?: string;
   finishedAt?: string;
   createdAt: string;
-  sourceBrand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'> & { application?: Pick<Application, 'id' | 'appId' | 'appName'> };
-  targetBrand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'> & { application?: Pick<Application, 'id' | 'appId' | 'appName'> };
+  sourceApplication: Pick<Application, 'id' | 'appId' | 'appName' | 'country'>;
+  targetApplication: Pick<Application, 'id' | 'appId' | 'appName' | 'country'>;
   createdBy?: Pick<Account, 'id' | 'name' | 'email'>;
 }
 

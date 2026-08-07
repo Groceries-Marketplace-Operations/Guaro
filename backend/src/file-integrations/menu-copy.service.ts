@@ -29,43 +29,29 @@ export class MenuCopyService implements OnModuleInit {
       take: 50,
       orderBy: { createdAt: 'desc' },
       include: {
-        sourceBrand: {
-          select: {
-            id: true, brandId: true, brandName: true, country: true,
-            application: { select: { id: true, appId: true, appName: true } },
-          },
-        },
-        targetBrand: {
-          select: {
-            id: true, brandId: true, brandName: true, country: true,
-            application: { select: { id: true, appId: true, appName: true } },
-          },
-        },
+        sourceApplication: { select: { id: true, appId: true, appName: true, country: true } },
+        targetApplication: { select: { id: true, appId: true, appName: true, country: true } },
         createdBy: { select: { id: true, name: true, email: true } },
       },
     });
   }
 
   async create(dto: CreateMenuCopyDto, accountId: string) {
-    const brands = await this.prisma.brand.findMany({
-      where: { id: { in: [dto.sourceBrandId, dto.targetBrandId] }, deletedAt: null },
-      select: { id: true, applicationId: true, brandName: true },
+    const applications = await this.prisma.application.findMany({
+      where: { id: { in: [dto.sourceApplicationId, dto.targetApplicationId] }, deletedAt: null },
+      select: { id: true, appName: true },
     });
-    const source = brands.find(brand => brand.id === dto.sourceBrandId);
-    const target = brands.find(brand => brand.id === dto.targetBrandId);
-    if (!source) throw new BadRequestException('Source brand not found');
-    if (!target) throw new BadRequestException('Target brand not found');
-    if (!source.applicationId) throw new BadRequestException(`Source brand ${source.brandName} has no DiDi application linked`);
-    if (!target.applicationId) throw new BadRequestException(`Target brand ${target.brandName} has no DiDi application linked`);
-    if (source.applicationId === target.applicationId) {
-      throw new BadRequestException('Source and target must belong to different DiDi applications');
-    }
+    const source = applications.find(application => application.id === dto.sourceApplicationId);
+    const target = applications.find(application => application.id === dto.targetApplicationId);
+    if (!source) throw new BadRequestException('Source application not found');
+    if (!target) throw new BadRequestException('Target application not found');
+    if (source.id === target.id) throw new BadRequestException('Source and target applications must be different');
 
     const execution = await this.prisma.menuCopyExecution.create({
       data: {
-        sourceBrandId: dto.sourceBrandId,
+        sourceApplicationId: dto.sourceApplicationId,
         sourceShopId: dto.sourceShopId,
-        targetBrandId: dto.targetBrandId,
+        targetApplicationId: dto.targetApplicationId,
         targetShopId: dto.targetShopId,
         mergePolicy: dto.mergePolicy,
         currentStep: 'queued',

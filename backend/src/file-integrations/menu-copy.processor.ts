@@ -1,5 +1,6 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
 import { decrypt } from '../common/crypto.util';
 import { downloadMenu } from '../integrations/auto-turn-off-api.util';
@@ -19,7 +20,10 @@ class MenuCopyCancelledError extends Error {}
 export class MenuCopyProcessor extends WorkerHost {
   private readonly logger = new Logger(MenuCopyProcessor.name);
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {
     super();
   }
 
@@ -35,29 +39,33 @@ export class MenuCopyProcessor extends WorkerHost {
       const execution = await this.prisma.menuCopyExecution.findUnique({
         where: { id: executionId },
         include: {
-          sourceBrand: { include: { application: true } },
-          targetBrand: { include: { application: true } },
+          sourceApplication: true,
+          targetApplication: true,
         },
       });
       if (!execution) return;
-      const sourceApplication = execution.sourceBrand.application;
-      const targetApplication = execution.targetBrand.application;
-      if (!sourceApplication) throw new Error('Source brand has no DiDi application linked');
-      if (!targetApplication) throw new Error('Target brand has no DiDi application linked');
+      const sourceApplication = execution.sourceApplication;
+      const targetApplication = execution.targetApplication;
 
-      const encryptionKey = process.env.ENCRYPTION_KEY;
-      const sourceSecret = encryptionKey ? decrypt(sourceApplication.appSecret, encryptionKey) : sourceApplication.appSecret;
-      const targetSecret = encryptionKey ? decrypt(targetApplication.appSecret, encryptionKey) : targetApplication.appSecret;
+      const encryptionKey = this.config.getOrThrow<string>('APP_SECRET_ENCRYPTION_KEY');
+      let sourceSecret: string;
+      let targetSecret: string;
+      try {
+        sourceSecret = decrypt(sourceApplication.appSecret, encryptionKey);
+        targetSecret = decrypt(targetApplication.appSecret, encryptionKey);
+      } catch {
+        throw new Error('Source or target application credential could not be decrypted with APP_SECRET_ENCRYPTION_KEY');
+      }
 
       const sourceAppShopId = await this.resolveAppShopId(
-        execution.sourceBrandId,
+        execution.sourceApplicationId,
         execution.sourceShopId,
         sourceApplication.appId,
         sourceSecret,
       );
       await this.step(executionId, 'resolving_target_shop', { sourceAppShopId });
       const targetAppShopId = await this.resolveAppShopId(
-        execution.targetBrandId,
+        execution.targetApplicationId,
         execution.targetShopId,
         targetApplication.appId,
         targetSecret,
@@ -110,9 +118,9 @@ export class MenuCopyProcessor extends WorkerHost {
     }
   }
 
-  private async resolveAppShopId(brandId: string, shopId: string, appId: string, appSecret: string) {
+  private async resolveAppShopId(applicationId: string, shopId: string, appId: string, appSecret: string) {
     const local = await this.prisma.shop.findFirst({
-      where: { brandId, shopId, deletedAt: null },
+      where: { shopId, deletedAt: null, brand: { applicationId, deletedAt: null } },
       select: { appShopId: true },
     });
     if (local?.appShopId) return local.appShopId;

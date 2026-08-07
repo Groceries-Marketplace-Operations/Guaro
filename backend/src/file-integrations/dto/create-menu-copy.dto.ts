@@ -5,7 +5,7 @@ const normalize = ({ value }: { value: unknown }) => String(value ?? '').trim();
 
 export class CreateMenuCopyDto {
   @IsUUID()
-  sourceBrandId!: string;
+  sourceApplicationId!: string;
 
   @Transform(normalize)
   @IsString()
@@ -13,7 +13,7 @@ export class CreateMenuCopyDto {
   sourceShopId!: string;
 
   @IsUUID()
-  targetBrandId!: string;
+  targetApplicationId!: string;
 
   @Transform(normalize)
   @IsString()

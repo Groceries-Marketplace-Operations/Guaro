@@ -24,7 +24,7 @@ export class UpsertTargetedMenuRuleDto {
   @Transform(({ value }) => normalizeList(value))
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(2000)
+  @ArrayMaxSize(5000)
   @IsString({ each: true })
   upcs!: string[];
 

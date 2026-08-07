@@ -4,14 +4,14 @@ import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { menuCopyApi } from '../../api';
 import type { MenuCopyExecution } from '../../types';
-import BrandSearchField from './BrandSearchField';
+import ApplicationSearchField from './ApplicationSearchField';
 
 interface FormState {
-  sourceBrandId: string;
-  sourceBrandSearch: string;
+  sourceApplicationId: string;
+  sourceApplicationSearch: string;
   sourceShopId: string;
-  targetBrandId: string;
-  targetBrandSearch: string;
+  targetApplicationId: string;
+  targetApplicationSearch: string;
   targetShopId: string;
   mergePolicy: number;
 }
@@ -19,8 +19,8 @@ const activeStatuses = new Set(['pending', 'running']);
 const shopIdPattern = /^57\d{17}$/;
 
 const initialForm = (): FormState => ({
-  sourceBrandId: '', sourceBrandSearch: '', sourceShopId: '',
-  targetBrandId: '', targetBrandSearch: '', targetShopId: '', mergePolicy: 0,
+  sourceApplicationId: '', sourceApplicationSearch: '', sourceShopId: '',
+  targetApplicationId: '', targetApplicationSearch: '', targetShopId: '', mergePolicy: 0,
 });
 
 const stepLabels: Record<string, string> = {
@@ -56,9 +56,9 @@ export default function CrossAppMenuCopySection() {
   const refresh = () => qc.invalidateQueries({ queryKey: ['menu-copy-executions'] });
   const create = useMutation({
     mutationFn: () => menuCopyApi.create({
-      sourceBrandId: form.sourceBrandId,
+      sourceApplicationId: form.sourceApplicationId,
       sourceShopId: form.sourceShopId.trim(),
-      targetBrandId: form.targetBrandId,
+      targetApplicationId: form.targetApplicationId,
       targetShopId: form.targetShopId.trim(),
       mergePolicy: form.mergePolicy,
     }),
@@ -71,8 +71,8 @@ export default function CrossAppMenuCopySection() {
     onError: reason => window.alert(apiError(reason)),
   });
 
-  const valid = !!form.sourceBrandId && !!form.targetBrandId
-    && form.sourceBrandId !== form.targetBrandId
+  const valid = !!form.sourceApplicationId && !!form.targetApplicationId
+    && form.sourceApplicationId !== form.targetApplicationId
     && shopIdPattern.test(form.sourceShopId.trim())
     && shopIdPattern.test(form.targetShopId.trim());
 
@@ -103,12 +103,12 @@ export default function CrossAppMenuCopySection() {
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
             <div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <strong>{execution.sourceBrand.brandName} → {execution.targetBrand.brandName}</strong>
+                <strong>{execution.sourceApplication.appName} → {execution.targetApplication.appName}</strong>
                 <StatusBadge status={execution.status} />
                 <span className="badge">{execution.mergePolicy === 1 ? 'Reemplazar' : 'Merge'}</span>
               </div>
               <p className="text-muted" style={{ marginTop: 7, fontSize: 12 }}>
-                {execution.sourceShopId} ({execution.sourceBrand.application?.appName ?? 'sin app'}) → {execution.targetShopId} ({execution.targetBrand.application?.appName ?? 'sin app'})
+                {execution.sourceShopId} ({execution.sourceApplication.appId}) → {execution.targetShopId} ({execution.targetApplication.appId})
               </p>
               <p className="text-muted" style={{ marginTop: 5, fontSize: 12 }}>
                 Paso: {stepLabels[execution.currentStep ?? ''] ?? execution.currentStep ?? '—'} · Creada: {date(execution.createdAt)} · Finalizada: {date(execution.finishedAt)}
@@ -131,17 +131,17 @@ export default function CrossAppMenuCopySection() {
       <div className="form-row">
         <div>
           <h3 style={{ fontSize: 14, marginBottom: 10 }}>Origen</h3>
-          <div className="form-group"><label className="form-label">Marca / aplicación origen *</label><BrandSearchField value={form.sourceBrandId} displayValue={form.sourceBrandSearch} onChange={(sourceBrandId, sourceBrandSearch) => setForm(value => ({ ...value, sourceBrandId, sourceBrandSearch }))} /></div>
+          <div className="form-group"><label className="form-label">Aplicación origen *</label><ApplicationSearchField value={form.sourceApplicationId} displayValue={form.sourceApplicationSearch} onChange={(sourceApplicationId, sourceApplicationSearch) => setForm(value => ({ ...value, sourceApplicationId, sourceApplicationSearch }))} /></div>
           <div className="form-group"><label className="form-label">Shop ID origen *</label><input className="form-input td-mono" value={form.sourceShopId} maxLength={19} placeholder="57…" onChange={event => setForm(value => ({ ...value, sourceShopId: event.target.value.replace(/\D/g, '') }))} /></div>
         </div>
         <div>
           <h3 style={{ fontSize: 14, marginBottom: 10 }}>Destino</h3>
-          <div className="form-group"><label className="form-label">Marca / aplicación destino *</label><BrandSearchField value={form.targetBrandId} displayValue={form.targetBrandSearch} onChange={(targetBrandId, targetBrandSearch) => setForm(value => ({ ...value, targetBrandId, targetBrandSearch }))} /></div>
+          <div className="form-group"><label className="form-label">Aplicación destino *</label><ApplicationSearchField value={form.targetApplicationId} displayValue={form.targetApplicationSearch} onChange={(targetApplicationId, targetApplicationSearch) => setForm(value => ({ ...value, targetApplicationId, targetApplicationSearch }))} /></div>
           <div className="form-group"><label className="form-label">Shop ID destino *</label><input className="form-input td-mono" value={form.targetShopId} maxLength={19} placeholder="57…" onChange={event => setForm(value => ({ ...value, targetShopId: event.target.value.replace(/\D/g, '') }))} /></div>
         </div>
       </div>
       <div className="form-group"><label className="form-label">Política de carga *</label><select className="form-input" value={form.mergePolicy} onChange={event => setForm(value => ({ ...value, mergePolicy: Number(event.target.value) }))}><option value={0}>Merge — agrega/actualiza sin borrar el resto</option><option value={1}>Reemplazar — sobrescribe el menú completo destino</option></select></div>
-      {form.sourceBrandId && form.targetBrandId && form.sourceBrandId === form.targetBrandId && <p style={{ color: 'var(--red)' }}>Selecciona marcas vinculadas a aplicaciones diferentes.</p>}
+      {form.sourceApplicationId && form.targetApplicationId && form.sourceApplicationId === form.targetApplicationId && <p style={{ color: 'var(--red)' }}>Selecciona aplicaciones diferentes.</p>}
     </Modal>}
   </section>;
 }

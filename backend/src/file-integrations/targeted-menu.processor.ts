@@ -1,5 +1,6 @@
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AutoOpenStatus, Prisma } from '@prisma/client';
 import { Job } from 'bullmq';
 import { decrypt } from '../common/crypto.util';
@@ -13,7 +14,7 @@ import {
   isRawShopId,
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
-import { selectMenuUpcs } from './targeted-menu.util';
+import { selectMenuUpcBatches, selectMenuUpcs } from './targeted-menu.util';
 
 class TargetedMenuCancelledError extends Error {}
 
@@ -26,6 +27,7 @@ interface ShopUploadResult {
   missingUpcs: string[];
   exportTaskId?: string;
   uploadTaskId?: string;
+  uploadTaskIds?: string[];
   error?: string;
 }
 
@@ -34,7 +36,10 @@ interface ShopUploadResult {
 export class TargetedMenuProcessor extends WorkerHost {
   private readonly logger = new Logger(TargetedMenuProcessor.name);
 
-  constructor(private readonly prisma: PrismaService) { super(); }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) { super(); }
 
   async process(job: Job<{ executionId: string }>) {
     const executionId = job.data.executionId;
@@ -57,8 +62,13 @@ export class TargetedMenuProcessor extends WorkerHost {
     }
     const results: ShopUploadResult[] = [];
     try {
-      const encryptionKey = process.env.ENCRYPTION_KEY;
-      const appSecret = encryptionKey ? decrypt(application.appSecret, encryptionKey) : application.appSecret;
+      const encryptionKey = this.config.getOrThrow<string>('APP_SECRET_ENCRYPTION_KEY');
+      let appSecret: string;
+      try {
+        appSecret = decrypt(application.appSecret, encryptionKey);
+      } catch {
+        throw new Error(`Credential for application ${application.appName} could not be decrypted with APP_SECRET_ENCRYPTION_KEY`);
+      }
       const targets = await this.resolveTargets(rule.brandId, rule.shopIds, application.appId, appSecret);
       for (const target of targets) {
         await this.ensureActive(executionId);
@@ -81,23 +91,32 @@ export class TargetedMenuProcessor extends WorkerHost {
           const authToken = await getAuthToken(application.appId, appSecret, target.appShopId);
           const downloaded = await downloadMenu(authToken, () => this.ensureActive(executionId));
           const sourceMenu = parseJsonKeepingIds(downloaded.rawJson) as Record<string, unknown>;
-          const selected = selectMenuUpcs(sourceMenu, rule.upcs);
-          if (!selected.items.length) {
+          const uploadTaskIds: string[] = [];
+          const foundUpcs = new Set<string>();
+          const missingUpcs = new Set<string>();
+          for (const selected of selectMenuUpcBatches(sourceMenu, rule.upcs)) {
+            await this.ensureActive(executionId);
+            selected.foundUpcs.forEach(upc => foundUpcs.add(upc));
+            selected.missingUpcs.forEach(upc => missingUpcs.add(upc));
+            if (!selected.items.length) continue;
+            if (selected.categories.length > 30) {
+              throw new Error(`Selected UPCs require ${selected.categories.length} categories; DiDi accepts a maximum of 30 per upload`);
+            }
+            uploadTaskIds.push(await this.upload(authToken, selected));
+          }
+          if (!uploadTaskIds.length) {
             throw new Error(`None of the ${rule.upcs.length} requested UPCs exist in the downloaded menu`);
           }
-          if (selected.categories.length > 30) {
-            throw new Error(`Selected UPCs require ${selected.categories.length} categories; DiDi accepts a maximum of 30`);
-          }
-          const uploadTaskId = await this.upload(authToken, selected);
           results.push({
             shopId: target.shopId,
             appShopId: target.appShopId,
-            status: selected.missingUpcs.length ? 'partial_success' : 'done',
+            status: missingUpcs.size ? 'partial_success' : 'done',
             requestedUpcs: rule.upcs.length,
-            uploadedUpcs: selected.foundUpcs.length,
-            missingUpcs: selected.missingUpcs,
+            uploadedUpcs: foundUpcs.size,
+            missingUpcs: [...missingUpcs],
             exportTaskId: downloaded.taskId,
-            uploadTaskId,
+            uploadTaskId: uploadTaskIds.join(', '),
+            uploadTaskIds,
           });
         } catch (error) {
           results.push({

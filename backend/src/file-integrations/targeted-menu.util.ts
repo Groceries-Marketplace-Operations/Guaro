@@ -96,3 +96,11 @@ export function selectMenuUpcs(menu: JsonObject, requestedUpcs: string[]) {
     missingUpcs,
   };
 }
+
+export function selectMenuUpcBatches(menu: JsonObject, requestedUpcs: string[], batchSize = 3000) {
+  const batches: ReturnType<typeof selectMenuUpcs>[] = [];
+  for (let offset = 0; offset < requestedUpcs.length; offset += batchSize) {
+    batches.push(selectMenuUpcs(menu, requestedUpcs.slice(offset, offset + batchSize)));
+  }
+  return batches;
+}
