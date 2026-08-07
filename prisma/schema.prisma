@@ -953,21 +953,22 @@ model FileIntegrationExecution {
 }
 
 model TargetedMenuRule {
-  id          String    @id @default(uuid()) @db.Uuid
-  name        String
-  brandId     String    @map("brand_id") @db.Uuid
-  shopIds     String[]  @default([]) @map("shop_ids")
-  upcs        String[]  @default([])
-  active      Boolean   @default(true)
-  mergePolicy Int       @default(1) @map("merge_policy")
-  startsAt    DateTime  @map("starts_at") @db.Timestamptz
-  nextRunAt   DateTime? @map("next_run_at") @db.Timestamptz
-  lastRunAt   DateTime? @map("last_run_at") @db.Timestamptz
-  createdById String?   @map("created_by") @db.Uuid
-  updatedById String?   @map("updated_by") @db.Uuid
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+  id             String    @id @default(uuid()) @db.Uuid
+  name           String
+  brandId        String    @map("brand_id") @db.Uuid
+  shopIds        String[]  @default([]) @map("shop_ids")
+  upcs           String[]  @default([])
+  active         Boolean   @default(true)
+  mergePolicy    Int       @default(1) @map("merge_policy")
+  uploadEndpoint String    @default("uploadGrocery") @map("upload_endpoint")
+  startsAt       DateTime  @map("starts_at") @db.Timestamptz
+  nextRunAt      DateTime? @map("next_run_at") @db.Timestamptz
+  lastRunAt      DateTime? @map("last_run_at") @db.Timestamptz
+  createdById    String?   @map("created_by") @db.Uuid
+  updatedById    String?   @map("updated_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz
 
   brand      Brand                   @relation(fields: [brandId], references: [id])
   createdBy  Account?                @relation("TargetedMenuRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -1015,6 +1016,7 @@ model MenuCopyExecution {
   sourceAppShopId     String?        @map("source_app_shop_id")
   targetAppShopId     String?        @map("target_app_shop_id")
   mergePolicy         Int            @default(0) @map("merge_policy")
+  uploadEndpoint      String         @default("uploadGrocery") @map("upload_endpoint")
   currentStep         String?        @map("current_step")
   exportTaskId        String?        @map("export_task_id")
   uploadTaskId        String?        @map("upload_task_id")

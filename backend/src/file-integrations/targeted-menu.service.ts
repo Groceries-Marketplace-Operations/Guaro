@@ -119,6 +119,7 @@ export class TargetedMenuService {
       shopIds: dto.shopIds,
       upcs: dto.upcs,
       mergePolicy: dto.mergePolicy ?? 1,
+      uploadEndpoint: dto.uploadEndpoint ?? 'uploadGrocery',
       active,
       startsAt,
       nextRunAt,

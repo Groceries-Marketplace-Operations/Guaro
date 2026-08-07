@@ -41,6 +41,10 @@ export class UpsertTargetedMenuRuleDto {
   mergePolicy?: number;
 
   @IsOptional()
+  @IsIn(['uploadGrocery', 'updateItemsync'])
+  uploadEndpoint?: string;
+
+  @IsOptional()
   @IsBoolean()
   runNow?: boolean;
 }

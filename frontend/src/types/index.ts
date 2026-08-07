@@ -490,6 +490,7 @@ export interface TargetedMenuShopResult {
   exportTaskId?: string;
   uploadTaskId?: string;
   uploadTaskIds?: string[];
+  failedItems?: Array<{ appItemId: string; reason: string }>;
   error?: string;
 }
 
@@ -517,6 +518,7 @@ export interface TargetedMenuRule {
   upcs: string[];
   active: boolean;
   mergePolicy: number;
+  uploadEndpoint: 'uploadGrocery' | 'updateItemsync';
   startsAt: string;
   nextRunAt?: string;
   lastRunAt?: string;
@@ -538,6 +540,7 @@ export interface MenuCopyExecution {
   sourceAppShopId?: string;
   targetAppShopId?: string;
   mergePolicy: number;
+  uploadEndpoint: 'uploadGrocery' | 'updateItemsync';
   currentStep?: string;
   exportTaskId?: string;
   uploadTaskId?: string;

@@ -6,13 +6,12 @@ import { decrypt } from '../common/crypto.util';
 import { downloadMenu } from '../integrations/auto-turn-off-api.util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  DIDI_BASE,
   fetchShopIdMap,
-  fetchWithEndpointContext,
   getAuthToken,
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
-import { buildFlatGroceryUploads, FlatGroceryUpload, groceryMergePolicyForBatch } from './grocery-destination-menu.util';
+import { buildFlatGroceryUploads, groceryMergePolicyForBatch } from './grocery-destination-menu.util';
+import { GroceryItemFailure, uploadGroceryBatch } from './grocery-menu-upload.util';
 
 class MenuCopyCancelledError extends Error {}
 
@@ -87,26 +86,35 @@ export class MenuCopyProcessor extends WorkerHost {
       });
       const targetToken = await getAuthToken(targetApplication.appId, targetSecret, targetAppShopId);
       const uploadTaskIds: string[] = [];
+      const failedItems: GroceryItemFailure[] = [];
+      let acceptedCount = 0;
       for (let index = 0; index < uploads.length; index++) {
         await this.ensureActive(executionId);
         const mergePolicy = groceryMergePolicyForBatch(execution.mergePolicy, index);
-        uploadTaskIds.push(await this.upload(targetToken, uploads[index], mergePolicy));
+        const upload = await uploadGroceryBatch(targetToken, uploads[index], execution.uploadEndpoint, mergePolicy);
+        uploadTaskIds.push(upload.referenceId);
+        failedItems.push(...upload.failedItems);
+        acceptedCount += upload.acceptedCount;
       }
       const uploadTaskId = uploadTaskIds.join(', ');
       await this.ensureActive(executionId);
+      const status = acceptedCount === 0 ? 'failed' : failedItems.length ? 'partial_success' : 'done';
+      const errorMessage = failedItems.length
+        ? `${failedItems.length} item update(s) failed: ${failedItems.slice(0, 10).map(item => `${item.appItemId}: ${item.reason}`).join('; ')}`
+        : null;
       await this.prisma.menuCopyExecution.update({
         where: { id: executionId },
         data: {
-          status: 'done',
+          status,
           currentStep: 'completed',
           uploadTaskId,
           finishedAt: new Date(),
-          errorMessage: null,
+          errorMessage,
         },
       });
       this.logger.log(
-        `Copied ${items.length} items from ${execution.sourceShopId} (${sourceApplication.appName}) `
-        + `to ${execution.targetShopId} (${targetApplication.appName}); upload task=${uploadTaskId}`,
+        `Copied ${acceptedCount}/${items.length} items from ${execution.sourceShopId} (${sourceApplication.appName}) `
+        + `to ${execution.targetShopId} (${targetApplication.appName}) using ${execution.uploadEndpoint}; upload reference=${uploadTaskId}`,
       );
     } catch (error) {
       if (error instanceof MenuCopyCancelledError) return;
@@ -133,27 +141,6 @@ export class MenuCopyProcessor extends WorkerHost {
     const appShopId = mapping.get(shopId);
     if (!appShopId) throw new Error(`shop_id ${shopId} was not found in POST /v1/shop/shop/list for the selected application`);
     return appShopId;
-  }
-
-  private async upload(authToken: string, menu: FlatGroceryUpload, mergePolicy: number) {
-    const endpoint = 'POST /v3/item/item/uploadGrocery';
-    const payload: Record<string, unknown> = {
-      auth_token: authToken,
-      menus: menu.menus,
-      categories: menu.categories,
-      items: menu.items,
-      merge_policy: mergePolicy,
-    };
-    const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/uploadGrocery`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const body = parseJsonKeepingIds(await response.text());
-    if (!response.ok || body.errno !== 0) {
-      throw new Error(`${endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
-    }
-    return String(body.data?.taskID ?? body.data?.taskId ?? 'accepted');
   }
 
   private async step(executionId: string, currentStep: string, data: Record<string, unknown> = {}) {

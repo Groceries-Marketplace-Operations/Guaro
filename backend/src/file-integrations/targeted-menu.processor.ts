@@ -7,14 +7,13 @@ import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { downloadMenu } from '../integrations/auto-turn-off-api.util';
 import {
-  DIDI_BASE,
   fetchShopIdMap,
-  fetchWithEndpointContext,
   getAuthToken,
   isRawShopId,
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
-import { buildFlatGroceryUploads, FlatGroceryUpload, groceryMergePolicyForBatch } from './grocery-destination-menu.util';
+import { buildFlatGroceryUploads, groceryMergePolicyForBatch } from './grocery-destination-menu.util';
+import { GroceryItemFailure, uploadGroceryBatch } from './grocery-menu-upload.util';
 import { selectMenuUpcs } from './targeted-menu.util';
 
 class TargetedMenuCancelledError extends Error {}
@@ -29,6 +28,7 @@ interface ShopUploadResult {
   exportTaskId?: string;
   uploadTaskId?: string;
   uploadTaskIds?: string[];
+  failedItems?: GroceryItemFailure[];
   error?: string;
 }
 
@@ -93,6 +93,8 @@ export class TargetedMenuProcessor extends WorkerHost {
           const downloaded = await downloadMenu(authToken, () => this.ensureActive(executionId));
           const sourceMenu = parseJsonKeepingIds(downloaded.rawJson) as Record<string, unknown>;
           const uploadTaskIds: string[] = [];
+          const failedItems: GroceryItemFailure[] = [];
+          let acceptedCount = 0;
           const selected = selectMenuUpcs(sourceMenu, rule.upcs);
           if (!selected.items.length) {
             throw new Error(`None of the ${rule.upcs.length} requested UPCs exist in the downloaded menu`);
@@ -101,18 +103,24 @@ export class TargetedMenuProcessor extends WorkerHost {
           for (let index = 0; index < uploads.length; index++) {
             await this.ensureActive(executionId);
             const mergePolicy = groceryMergePolicyForBatch(rule.mergePolicy, index);
-            uploadTaskIds.push(await this.upload(authToken, uploads[index], mergePolicy));
+            const upload = await uploadGroceryBatch(authToken, uploads[index], rule.uploadEndpoint, mergePolicy);
+            uploadTaskIds.push(upload.referenceId);
+            failedItems.push(...upload.failedItems);
+            acceptedCount += upload.acceptedCount;
           }
+          const uploadFailed = acceptedCount === 0;
           results.push({
             shopId: target.shopId,
             appShopId: target.appShopId,
-            status: selected.missingUpcs.length ? 'partial_success' : 'done',
+            status: uploadFailed ? 'failed' : selected.missingUpcs.length || failedItems.length ? 'partial_success' : 'done',
             requestedUpcs: rule.upcs.length,
-            uploadedUpcs: selected.foundUpcs.length,
+            uploadedUpcs: Math.min(selected.foundUpcs.length, acceptedCount),
             missingUpcs: selected.missingUpcs,
             exportTaskId: downloaded.taskId,
             uploadTaskId: uploadTaskIds.join(', '),
             uploadTaskIds,
+            failedItems,
+            error: uploadFailed ? `${failedItems.length} item update(s) failed` : undefined,
           });
         } catch (error) {
           results.push({
@@ -132,14 +140,15 @@ export class TargetedMenuProcessor extends WorkerHost {
       const successfulShops = results.filter(result => result.status !== 'failed').length;
       const failedShops = results.length - successfulShops;
       const hasMissingUpcs = results.some(result => result.missingUpcs.length > 0);
+      const failedItemUpdates = results.reduce((sum, result) => sum + (result.failedItems?.length ?? 0), 0);
       const status: AutoOpenStatus = successfulShops === 0
         ? AutoOpenStatus.failed
-        : failedShops > 0 || hasMissingUpcs
+        : failedShops > 0 || hasMissingUpcs || failedItemUpdates > 0
           ? AutoOpenStatus.partial_success
           : AutoOpenStatus.done;
       const errorMessage = status === AutoOpenStatus.done
         ? null
-        : `${failedShops} store(s) failed; ${results.reduce((sum, result) => sum + result.missingUpcs.length, 0)} UPC match(es) missing`;
+        : `${failedShops} store(s) failed; ${results.reduce((sum, result) => sum + result.missingUpcs.length, 0)} UPC match(es) missing; ${failedItemUpdates} item update(s) failed`;
       const now = new Date();
       await this.prisma.$transaction([
         this.prisma.targetedMenuExecution.update({
@@ -191,27 +200,6 @@ export class TargetedMenuProcessor extends WorkerHost {
         ?? localByAppShopId.get(shopId)
         ?? (isRawShopId(shopId) ? remote.get(shopId) : shopId),
     }));
-  }
-
-  private async upload(authToken: string, selected: FlatGroceryUpload, mergePolicy: number) {
-    const endpoint = 'POST /v3/item/item/uploadGrocery';
-    const payload: Record<string, unknown> = {
-      auth_token: authToken,
-      menus: selected.menus,
-      categories: selected.categories,
-      items: selected.items,
-      merge_policy: mergePolicy,
-    };
-    const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/uploadGrocery`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const body = parseJsonKeepingIds(await response.text());
-    if (!response.ok || body.errno !== 0) {
-      throw new Error(`${endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
-    }
-    return String(body.data?.taskID ?? body.data?.taskId ?? 'accepted');
   }
 
   private async ensureActive(executionId: string) {

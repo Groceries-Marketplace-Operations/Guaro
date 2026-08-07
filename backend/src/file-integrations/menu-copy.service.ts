@@ -54,6 +54,7 @@ export class MenuCopyService implements OnModuleInit {
         targetApplicationId: dto.targetApplicationId,
         targetShopId: dto.targetShopId,
         mergePolicy: dto.mergePolicy,
+        uploadEndpoint: dto.uploadEndpoint ?? 'uploadGrocery',
         currentStep: 'queued',
         createdById: accountId,
       },

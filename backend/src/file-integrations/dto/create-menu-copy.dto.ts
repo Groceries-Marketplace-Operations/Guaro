@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsIn, IsString, IsUUID, Matches } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
 
 const normalize = ({ value }: { value: unknown }) => String(value ?? '').trim();
 
@@ -22,4 +22,8 @@ export class CreateMenuCopyDto {
 
   @IsIn([0, 1])
   mergePolicy!: number;
+
+  @IsOptional()
+  @IsIn(['uploadGrocery', 'updateItemsync'])
+  uploadEndpoint?: string;
 }

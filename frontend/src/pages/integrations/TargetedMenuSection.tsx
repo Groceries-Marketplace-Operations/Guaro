@@ -16,6 +16,7 @@ interface FormState {
   startsAt: string;
   active: boolean;
   mergePolicy: number;
+  uploadEndpoint: 'uploadGrocery' | 'updateItemsync';
 }
 
 const activeStatuses = new Set(['pending', 'running']);
@@ -28,7 +29,7 @@ function localDateInput(date = new Date()) {
 function emptyForm(): FormState {
   const start = new Date(Date.now() + 5 * 60_000);
   start.setSeconds(0, 0);
-  return { name: '', brandId: '', brandSearch: '', shopIds: '', upcs: '', mode: 'now', startsAt: localDateInput(start), active: true, mergePolicy: 1 };
+  return { name: '', brandId: '', brandSearch: '', shopIds: '', upcs: '', mode: 'now', startsAt: localDateInput(start), active: true, mergePolicy: 1, uploadEndpoint: 'uploadGrocery' };
 }
 
 function values(source: string) {
@@ -70,6 +71,7 @@ export default function TargetedMenuSection() {
         startsAt: runNow ? new Date().toISOString() : new Date(form.startsAt).toISOString(),
         active: form.active,
         mergePolicy: form.mergePolicy,
+        uploadEndpoint: form.uploadEndpoint,
         runNow,
       };
       return editing ? targetedMenuApi.update(editing.id, payload) : targetedMenuApi.create(payload);
@@ -105,6 +107,7 @@ export default function TargetedMenuSection() {
       startsAt: localDateInput(new Date(rule.startsAt)),
       active: rule.active,
       mergePolicy: rule.mergePolicy,
+      uploadEndpoint: rule.uploadEndpoint,
     });
     setError('');
     setOpen(true);
@@ -113,7 +116,7 @@ export default function TargetedMenuSection() {
     && values(form.upcs).length > 0 && values(form.upcs).length <= 5000
     && (form.mode === 'now' || !!form.startsAt);
   const submit = () => {
-    if (form.mergePolicy === 1 && !window.confirm('Reemplazar sobrescribirá el menú actual de cada tienda y dejará únicamente los UPC encontrados. ¿Continuar?')) return;
+    if (form.uploadEndpoint === 'uploadGrocery' && form.mergePolicy === 1 && !window.confirm('Reemplazar sobrescribirá el menú actual de cada tienda y dejará únicamente los UPC encontrados. ¿Continuar?')) return;
     save.mutate();
   };
 
@@ -146,7 +149,8 @@ export default function TargetedMenuSection() {
                 <span className="badge">{rule.brand.brandName}</span>
                 <span className="badge">{rule.shopIds.length} shops</span>
                 <span className="badge">{rule.upcs.length} UPCs</span>
-                <span className="badge">{rule.mergePolicy === 1 ? 'Reemplazar' : 'Merge'}</span>
+                <span className="badge">{rule.uploadEndpoint === 'updateItemsync' ? 'updateItemsync' : 'uploadGrocery'}</span>
+                {rule.uploadEndpoint === 'uploadGrocery' && <span className="badge">{rule.mergePolicy === 1 ? 'Reemplazar' : 'Merge'}</span>}
                 <span className="badge">Diario</span>
                 {latest && <StatusBadge status={latest.status} />}
               </div>
@@ -176,12 +180,13 @@ export default function TargetedMenuSection() {
             </div>
             {latest.errorMessage && <p style={{ color: 'var(--red)', marginTop: 8 }}>{latest.errorMessage}</p>}
             {expanded === latest.id && <div className="table-wrap" style={{ marginTop: 12 }}><table>
-              <thead><tr><th>Shop ID</th><th>Resultado</th><th>UPCs cargados</th><th>UPCs faltantes</th><th>Task ID / error</th></tr></thead>
+              <thead><tr><th>Shop ID</th><th>Resultado</th><th>UPCs cargados</th><th>UPCs faltantes</th><th>Ítems fallidos</th><th>Task ID / error</th></tr></thead>
               <tbody>{shops.map(shop => <tr key={shop.shopId}>
                 <td className="td-mono">{shop.shopId}</td>
                 <td><StatusBadge status={shop.status} /></td>
                 <td>{shop.uploadedUpcs}/{shop.requestedUpcs}</td>
                 <td className="td-mono">{shop.missingUpcs.join(', ') || '—'}</td>
+                <td className="td-mono">{shop.failedItems?.map(item => `${item.appItemId}: ${item.reason}`).join('; ') || '—'}</td>
                 <td className="td-mono">{shop.error ?? shop.uploadTaskId ?? '—'}</td>
               </tr>)}</tbody>
             </table></div>}
@@ -201,7 +206,8 @@ export default function TargetedMenuSection() {
         <div className="form-group"><label className="form-label">Shop IDs *</label><textarea className="form-input" rows={7} placeholder={'576…\n576…'} value={form.shopIds} onChange={event => setForm(value => ({ ...value, shopIds: event.target.value }))} /><p className="form-hint">Uno por línea o separados por coma. Se descarga el menú de cada tienda.</p></div>
         <div className="form-group"><label className="form-label">UPCs ({values(form.upcs).length}/5000) *</label><textarea className="form-input" rows={7} placeholder={'750…\n750…'} value={form.upcs} onChange={event => setForm(value => ({ ...value, upcs: event.target.value }))} /><p className="form-hint">Hasta 5,000 UPC en Cate_Grocery_1, Cate_Grocery_2… con hasta 3,500 ítems por categoría.</p></div>
       </div>
-      <div className="form-group"><label className="form-label">Política de carga *</label><select className="form-input" value={form.mergePolicy} onChange={event => setForm(value => ({ ...value, mergePolicy: Number(event.target.value) }))}><option value={1}>Reemplazar — sobrescribe el menú y deja únicamente los UPC encontrados</option><option value={0}>Merge — agrega o actualiza sin borrar el resto del menú</option></select><p className="form-hint">Reemplazar se aplica al primer bloque; si hay más de 3,500 ítems, los bloques siguientes se agregan sin borrar los anteriores.</p></div>
+      <div className="form-group"><label className="form-label">Método de subida *</label><select className="form-input" value={form.uploadEndpoint} onChange={event => setForm(value => ({ ...value, uploadEndpoint: event.target.value as FormState['uploadEndpoint'] }))}><option value="uploadGrocery">uploadGrocery — carga estructural del menú</option><option value="updateItemsync">updateItemsync — actualiza los ítems existentes</option></select><p className="form-hint">updateItemsync no crea categorías ni reemplaza el menú; los app_item_id deben existir en la tienda destino.</p></div>
+      {form.uploadEndpoint === 'uploadGrocery' && <div className="form-group"><label className="form-label">Política de carga *</label><select className="form-input" value={form.mergePolicy} onChange={event => setForm(value => ({ ...value, mergePolicy: Number(event.target.value) }))}><option value={1}>Reemplazar — sobrescribe el menú y deja únicamente los UPC encontrados</option><option value={0}>Merge — agrega o actualiza sin borrar el resto del menú</option></select><p className="form-hint">Reemplazar se aplica al primer bloque; si hay más de 3,500 ítems, los bloques siguientes se agregan sin borrar los anteriores.</p></div>}
       {!editing && <div className="form-group"><label className="form-label">Primera ejecución *</label><div style={{ display: 'flex', gap: 16 }}><label><input type="radio" checked={form.mode === 'now'} onChange={() => setForm(value => ({ ...value, mode: 'now' }))} /> Ejecutar ahora</label><label><input type="radio" checked={form.mode === 'scheduled'} onChange={() => setForm(value => ({ ...value, mode: 'scheduled' }))} /> Fecha programada</label></div></div>}
       {(editing || form.mode === 'scheduled') && <div className="form-group"><label className="form-label">Inicio y hora diaria *</label><input className="form-input" type="datetime-local" min={editing ? undefined : localDateInput()} value={form.startsAt} onChange={event => setForm(value => ({ ...value, startsAt: event.target.value }))} /><p className="form-hint">Después de la primera ejecución, se repite cada día a esta hora.</p></div>}
       <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="checkbox" checked={form.active} onChange={event => setForm(value => ({ ...value, active: event.target.checked }))} /> Mantener recurrencia diaria activa</label>

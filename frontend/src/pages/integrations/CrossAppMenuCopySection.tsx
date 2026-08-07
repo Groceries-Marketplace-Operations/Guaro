@@ -14,13 +14,14 @@ interface FormState {
   targetApplicationSearch: string;
   targetShopId: string;
   mergePolicy: number;
+  uploadEndpoint: 'uploadGrocery' | 'updateItemsync';
 }
 const activeStatuses = new Set(['pending', 'running']);
 const shopIdPattern = /^57\d{17}$/;
 
 const initialForm = (): FormState => ({
   sourceApplicationId: '', sourceApplicationSearch: '', sourceShopId: '',
-  targetApplicationId: '', targetApplicationSearch: '', targetShopId: '', mergePolicy: 0,
+  targetApplicationId: '', targetApplicationSearch: '', targetShopId: '', mergePolicy: 0, uploadEndpoint: 'uploadGrocery',
 });
 
 const stepLabels: Record<string, string> = {
@@ -61,6 +62,7 @@ export default function CrossAppMenuCopySection() {
       targetApplicationId: form.targetApplicationId,
       targetShopId: form.targetShopId.trim(),
       mergePolicy: form.mergePolicy,
+      uploadEndpoint: form.uploadEndpoint,
     }),
     onSuccess: () => { refresh(); setOpen(false); setForm(initialForm()); setError(''); },
     onError: reason => setError(apiError(reason)),
@@ -77,7 +79,7 @@ export default function CrossAppMenuCopySection() {
     && shopIdPattern.test(form.targetShopId.trim());
 
   const submit = () => {
-    if (form.mergePolicy === 1 && !window.confirm('Reemplazar sobrescribirá el menú actual de la tienda destino. ¿Continuar?')) return;
+    if (form.uploadEndpoint === 'uploadGrocery' && form.mergePolicy === 1 && !window.confirm('Reemplazar sobrescribirá el menú actual de la tienda destino. ¿Continuar?')) return;
     create.mutate();
   };
 
@@ -105,7 +107,8 @@ export default function CrossAppMenuCopySection() {
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <strong>{execution.sourceApplication.appName} → {execution.targetApplication.appName}</strong>
                 <StatusBadge status={execution.status} />
-                <span className="badge">{execution.mergePolicy === 1 ? 'Reemplazar' : 'Merge'}</span>
+                <span className="badge">{execution.uploadEndpoint === 'updateItemsync' ? 'updateItemsync' : 'uploadGrocery'}</span>
+                {execution.uploadEndpoint === 'uploadGrocery' && <span className="badge">{execution.mergePolicy === 1 ? 'Reemplazar' : 'Merge'}</span>}
               </div>
               <p className="text-muted" style={{ marginTop: 7, fontSize: 12 }}>
                 {execution.sourceShopId} ({execution.sourceApplication.appId}) → {execution.targetShopId} ({execution.targetApplication.appId})
@@ -140,7 +143,8 @@ export default function CrossAppMenuCopySection() {
           <div className="form-group"><label className="form-label">Shop ID destino *</label><input className="form-input td-mono" value={form.targetShopId} maxLength={19} placeholder="57…" onChange={event => setForm(value => ({ ...value, targetShopId: event.target.value.replace(/\D/g, '') }))} /></div>
         </div>
       </div>
-      <div className="form-group"><label className="form-label">Política de carga *</label><select className="form-input" value={form.mergePolicy} onChange={event => setForm(value => ({ ...value, mergePolicy: Number(event.target.value) }))}><option value={0}>Merge — agrega/actualiza sin borrar el resto</option><option value={1}>Reemplazar — sobrescribe el menú completo destino</option></select></div>
+      <div className="form-group"><label className="form-label">Método de subida *</label><select className="form-input" value={form.uploadEndpoint} onChange={event => setForm(value => ({ ...value, uploadEndpoint: event.target.value as FormState['uploadEndpoint'] }))}><option value="uploadGrocery">uploadGrocery — carga estructural del menú</option><option value="updateItemsync">updateItemsync — actualiza los ítems existentes</option></select><p className="form-hint">En Cross-App, updateItemsync requiere que los mismos app_item_id ya existan en la tienda destino.</p></div>
+      {form.uploadEndpoint === 'uploadGrocery' && <div className="form-group"><label className="form-label">Política de carga *</label><select className="form-input" value={form.mergePolicy} onChange={event => setForm(value => ({ ...value, mergePolicy: Number(event.target.value) }))}><option value={0}>Merge — agrega/actualiza sin borrar el resto</option><option value={1}>Reemplazar — sobrescribe el menú completo destino</option></select></div>}
       {form.sourceApplicationId && form.targetApplicationId && form.sourceApplicationId === form.targetApplicationId && <p style={{ color: 'var(--red)' }}>Selecciona aplicaciones diferentes.</p>}
     </Modal>}
   </section>;
