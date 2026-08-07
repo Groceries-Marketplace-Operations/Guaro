@@ -394,20 +394,15 @@ export class TaskValidationService {
       await unlink(file.path).catch(() => undefined);
       throw new BadRequestException(`The cover must be at least 1200 x 900 px; received ${dimensions.width} x ${dimensions.height} px`);
     }
-    const ratio = dimensions.width / dimensions.height;
-    if (Math.abs(ratio - (4 / 3)) > 0.01) {
-      await unlink(file.path).catch(() => undefined);
-      throw new BadRequestException(`The cover must use a 4:3 aspect ratio; received ${dimensions.width} x ${dimensions.height} px`);
-    }
     return {
       originalName: file.originalname,
       tempPath: file.filename,
       canProceed: true,
-      summary: 'Cover validated: 4:3, at least 1200 x 900 px and smaller than 5 MB. Keep important content in the centered 2:1 safe area; DiDi will review one cover submission at a time.',
+      summary: 'Original cover validated and stored without resizing, cropping, padding or recompression. DiDi will receive the uploaded JPG or PNG file as-is.',
       checks: [
         { id: 'access', label: 'Access permission', status: 'passed' as const, message: `Authorized as ${user.email}` },
         { id: 'image-type', label: 'Image format', status: 'passed' as const, message: `${extension.toUpperCase()} accepted; ${Math.ceil(file.size / 1024)} KB (maximum 5 MB)` },
-        { id: 'image-size', label: 'Cover dimensions', status: 'passed' as const, message: `${dimensions.width} x ${dimensions.height} px; valid 4:3 cover with a centered 2:1 display-safe area` },
+        { id: 'image-size', label: 'Cover dimensions', status: 'passed' as const, message: `${dimensions.width} x ${dimensions.height} px; original dimensions preserved` },
         { id: 'image-framing', label: 'DiDi framing', status: 'warning' as const, message: 'DiDi may display the cover as 4:3 or crop it to the centered 2:1 area. Keep logos, faces and text away from the top and bottom edges.' },
         { id: 'image-review', label: 'DiDi review', status: 'warning' as const, message: 'Only one cover can be under review at a time; another submission may be rejected until review finishes.' },
       ],

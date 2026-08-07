@@ -20,32 +20,6 @@ function isValidUrl(url: string): boolean {
   try { new URL(url); return true; } catch { return false; }
 }
 
-async function prepareStoreCover(file: File) {
-  const bitmap = await createImageBitmap(file);
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1200;
-    canvas.height = 900;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('El navegador no pudo preparar la portada.');
-    context.fillStyle = '#fff';
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    const scale = Math.min(canvas.width / bitmap.width, canvas.height / bitmap.height);
-    const width = bitmap.width * scale;
-    const height = bitmap.height * scale;
-    context.drawImage(bitmap, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
-    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
-    if (!blob) throw new Error('No se pudo generar la portada 1200 × 900.');
-    const base = file.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9_-]+/gi, '-');
-    return {
-      file: new File([blob], `${base || 'store-cover'}-1200x900.jpg`, { type: 'image/jpeg' }),
-      previewUrl: URL.createObjectURL(blob),
-    };
-  } finally {
-    bitmap.close();
-  }
-}
-
 function toLocalDatetimeInput(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -434,7 +408,7 @@ export default function NewTaskPage() {
     setFileUploading(p => ({ ...p, [fieldId]: true }));
     setFileUploadErrors(p => { const n = { ...p }; delete n[fieldId]; return n; });
     try {
-      const prepared = kind === 'image' ? await prepareStoreCover(file) : { file, previewUrl: undefined };
+      const prepared = { file, previewUrl: kind === 'image' ? URL.createObjectURL(file) : undefined };
       const fd = new FormData();
       fd.append('file', prepared.file);
       fd.append('taskTypeId', selectedTTId ?? '');
@@ -648,7 +622,7 @@ export default function NewTaskPage() {
         <div className="form-group" key={f.id}>
           {label}
           <p className="form-hint" style={{ marginBottom: 6 }}>
-            {image ? 'JPG, JPEG o PNG. La imagen completa se ajusta a 1200 × 900 (4:3) sin recortarse; si la proporción es distinta, se agrega espacio blanco. Máximo 5 MB.' : t('pages.newTask.excelHint')}
+            {image ? 'JPG, JPEG o PNG. Se enviará el archivo original sin redimensionar, recortar, rellenar ni recomprimir. Mínimo 1200 × 900 px y máximo 5 MB.' : t('pages.newTask.excelHint')}
           </p>
           <input
             type="file"
@@ -667,10 +641,10 @@ export default function NewTaskPage() {
           )}
           {image && fileVal?.previewUrl && !uploading && <div style={{ marginTop: 12, maxWidth: 520 }}>
             <div>
-              <div style={{ position: 'relative', aspectRatio: '4 / 3', overflow: 'hidden', borderRadius: 10, background: '#eee' }}>
-                <img src={fileVal.previewUrl} alt="Vista previa 1200 por 900" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+              <div style={{ overflow: 'hidden', borderRadius: 10, background: '#eee' }}>
+                <img src={fileVal.previewUrl} alt="Vista previa del archivo original" style={{ width: '100%', height: 'auto', display: 'block' }} />
               </div>
-              <p className="form-hint" style={{ marginTop: 5 }}>Archivo final 1200 × 900 · imagen completa, sin recorte.</p>
+              <p className="form-hint" style={{ marginTop: 5 }}>Archivo original · sin transformaciones.</p>
             </div>
           </div>}
           {fileUploadErrors[f.id] && (
