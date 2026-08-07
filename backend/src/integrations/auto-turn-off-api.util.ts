@@ -45,6 +45,10 @@ export class AutoTurnOffCancelledError extends Error {
   }
 }
 
+export function isMenuTaskPending(body: Record<string, unknown>) {
+  return body.errno === 10005 || /task\s*\([^)]*\)\s*not found|task not found/i.test(String(body.errmsg ?? ''));
+}
+
 export async function downloadMenu(
   authToken: string,
   ensureActive: () => Promise<void>,
@@ -96,9 +100,12 @@ export async function downloadMenu(
       },
     );
     const taskBody = parseJsonKeepingIds(await taskResponse.text());
-    if (taskBody.errno === 10005) continue;
+    if (isMenuTaskPending(taskBody)) continue;
     if (!taskResponse.ok || taskBody.errno !== 0) {
-      throw new Error(`${taskEndpoint} failed: ${taskBody.errmsg ?? `HTTP ${taskResponse.status}`}`);
+      throw new Error(
+        `${taskEndpoint} failed: ${taskBody.errmsg ?? `HTTP ${taskResponse.status}`}`
+        + `${taskBody.errno !== undefined ? ` (errno=${taskBody.errno})` : ''}`,
+      );
     }
 
     const status = Number(taskBody.data?.status);
