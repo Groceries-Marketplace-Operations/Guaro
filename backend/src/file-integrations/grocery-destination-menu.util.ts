@@ -2,6 +2,15 @@ type JsonObject = Record<string, unknown>;
 
 export const GROCERY_DESTINATION_CATEGORY_SIZE = 3500;
 const CATEGORY_PREFIX = 'Cate_Grocery_';
+const DESTINATION_ITEM_FIELDS = [
+  'upc',
+  'app_item_id',
+  'price',
+  'activity_price',
+  'item_name',
+  'short_desc',
+  'status',
+] as const;
 
 function text(value: unknown) {
   return value === undefined || value === null ? '' : String(value).trim();
@@ -17,14 +26,20 @@ export interface FlatGroceryUpload {
   menus: JsonObject[];
   categories: JsonObject[];
   items: JsonObject[];
-  modifierGroups: JsonObject[];
   categoryIds: string[];
+}
+
+export function sanitizeGroceryDestinationItem(item: JsonObject): JsonObject {
+  return Object.fromEntries(
+    DESTINATION_ITEM_FIELDS
+      .filter(field => Object.prototype.hasOwnProperty.call(item, field))
+      .map(field => [field, item[field]]),
+  );
 }
 
 export function buildFlatGroceryUploads(
   sourceMenu: JsonObject,
   selectedItems: JsonObject[],
-  modifierGroups = objects(sourceMenu.modifier_groups),
   categorySize = GROCERY_DESTINATION_CATEGORY_SIZE,
 ): FlatGroceryUpload[] {
   if (!Number.isInteger(categorySize) || categorySize < 1) {
@@ -37,7 +52,9 @@ export function buildFlatGroceryUploads(
 
   const uploads: FlatGroceryUpload[] = [];
   for (let offset = 0; offset < selectedItems.length; offset += categorySize) {
-    const items = selectedItems.slice(offset, offset + categorySize);
+    const items = selectedItems
+      .slice(offset, offset + categorySize)
+      .map(sanitizeGroceryDestinationItem);
     const categoryNumber = uploads.length + 1;
     const categoryId = `${CATEGORY_PREFIX}${categoryNumber}`;
     const itemIds = items.map(item => text(item.app_item_id));
@@ -54,7 +71,6 @@ export function buildFlatGroceryUploads(
         priority: categoryNumber,
       }],
       items,
-      modifierGroups,
       categoryIds: [categoryId],
     });
   }

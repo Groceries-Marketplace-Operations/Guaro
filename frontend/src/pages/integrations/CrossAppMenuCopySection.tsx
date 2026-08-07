@@ -87,7 +87,7 @@ export default function CrossAppMenuCopySection() {
         <div>
           <strong>Cross-App Menu Copy</strong>
           <p className="text-muted" style={{ marginTop: 5, fontSize: 12 }}>
-            Copia los ítems entre aplicaciones y crea categorías planas Cate_Grocery_N de hasta 3,500 ítems. No copia categorías ni subcategorías de origen.
+            Copia los ítems entre aplicaciones en categorías planas Cate_Grocery_N de hasta 3,500 ítems. Cada ítem conserva solo UPC, app_item_id, precio, precio de actividad, nombre, descripción y estado.
           </p>
         </div>
         <button className="btn btn-primary" onClick={() => { setForm(initialForm()); setError(''); setOpen(true); }}>+ Nueva copia</button>

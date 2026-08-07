@@ -97,7 +97,7 @@ export class TargetedMenuProcessor extends WorkerHost {
           if (!selected.items.length) {
             throw new Error(`None of the ${rule.upcs.length} requested UPCs exist in the downloaded menu`);
           }
-          const uploads = buildFlatGroceryUploads(sourceMenu, selected.items, selected.modifierGroups);
+          const uploads = buildFlatGroceryUploads(sourceMenu, selected.items);
           for (const upload of uploads) {
             await this.ensureActive(executionId);
             uploadTaskIds.push(await this.upload(authToken, upload));
@@ -201,7 +201,6 @@ export class TargetedMenuProcessor extends WorkerHost {
       items: selected.items,
       merge_policy: 0,
     };
-    if (selected.modifierGroups.length) payload.modifier_groups = selected.modifierGroups;
     const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/uploadGrocery`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

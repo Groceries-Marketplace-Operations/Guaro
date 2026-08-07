@@ -144,9 +144,6 @@ export class MenuCopyProcessor extends WorkerHost {
       items: menu.items,
       merge_policy: mergePolicy,
     };
-    if (menu.modifierGroups.length) {
-      payload.modifier_groups = menu.modifierGroups;
-    }
     const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/uploadGrocery`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

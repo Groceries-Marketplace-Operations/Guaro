@@ -116,7 +116,7 @@ export default function TargetedMenuSection() {
         <div>
           <strong>Targeted Menu Upload</strong>
           <p className="text-muted" style={{ marginTop: 5, fontSize: 12 }}>
-            Descarga el menú de cada shop_id y vuelve a cargar únicamente los UPC indicados en categorías planas Cate_Grocery_N de hasta 3,500 ítems. No copia categorías ni subcategorías de origen.
+            Descarga el menú de cada shop_id y vuelve a cargar únicamente los UPC indicados en categorías planas Cate_Grocery_N de hasta 3,500 ítems. Cada ítem conserva solo UPC, app_item_id, precio, precio de actividad, nombre, descripción y estado.
           </p>
         </div>
         <button className="btn btn-primary" onClick={openCreate}>+ Nueva regla</button>
