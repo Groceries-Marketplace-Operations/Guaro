@@ -644,38 +644,10 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
   border-radius: 50%;
   animation: assistant-ring 2.4s ease-out infinite;
 }
-.validation-assistant-face {
-  position: relative;
-  z-index: 1;
-  width: 32px;
-  height: 32px;
-  border-radius: 11px 13px 12px 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: linear-gradient(145deg, #ff8b22, #ff5200);
-  box-shadow: inset 0 1px 1px rgba(255,255,255,.45), 0 6px 15px rgba(255,82,0,.28);
-  transform: rotate(-3deg);
-}
-.validation-assistant-face::after {
-  content: '';
-  position: absolute;
-  width: 12px;
-  height: 5px;
-  border-bottom: 2px solid white;
-  border-radius: 50%;
-  left: 10px;
-  bottom: 6px;
-}
-.validation-assistant-face i {
-  width: 4px;
-  height: 5px;
-  margin-top: -7px;
-  border-radius: 99px;
-  background: white;
-  animation: assistant-blink 5s infinite;
-}
+.validation-assistant-avatar img { position: relative; z-index: 1; width: 34px; height: 34px; object-fit: cover; border-radius: 12px; box-shadow: 0 6px 15px rgba(255,82,0,.2); }
+.validation-assistant-avatar.is-working img { animation: naranja-thinking .75s ease-in-out infinite alternate; }
+.validation-assistant-avatar.is-success img { animation: naranja-success .65s ease-out; }
+.validation-assistant-avatar.is-error img { animation: naranja-error .45s ease-in-out; }
 .validation-assistant-heading { display: flex; flex-direction: column; min-width: 0; }
 .validation-assistant-heading strong { font-size: .9rem; color: #bc4200; }
 .validation-assistant-heading span { font-size: .69rem; color: var(--text-muted); }
@@ -733,10 +705,42 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
 @keyframes assistant-ring { 0% { transform: scale(.78); opacity: .8; } 80%,100% { transform: scale(1.3); opacity: 0; } }
 @keyframes assistant-blink { 0%,46%,50%,100% { transform: scaleY(1); } 48% { transform: scaleY(.1); } }
 @keyframes assistant-type { 0%,100% { transform: translateY(0); opacity: .35; } 50% { transform: translateY(-3px); opacity: 1; } }
+
+/* Naranja global action mascot ------------------------------------------- */
+.naranja-mascot { position: fixed; right: 22px; bottom: 18px; z-index: 950; display: flex; align-items: flex-end; gap: 10px; pointer-events: none; }
+.naranja-character { position: relative; width: 76px; height: 76px; padding: 0; overflow: visible; border: 2px solid rgba(255,105,0,.36); border-radius: 24px; background: #fff7ed; box-shadow: 0 14px 38px rgba(78,35,0,.2); cursor: pointer; pointer-events: auto; transition: transform .2s ease, box-shadow .2s ease; }
+.naranja-character:hover { transform: translateY(-3px) scale(1.03); box-shadow: 0 18px 44px rgba(78,35,0,.25); }
+.naranja-character img { width: 100%; height: 100%; display: block; object-fit: cover; border-radius: 22px; }
+.naranja-status { position: absolute; right: -4px; bottom: -4px; width: 16px; height: 16px; border: 3px solid white; border-radius: 50%; background: #98a2b3; }
+.naranja-mascot.is-working .naranja-status { background: var(--orange); animation: assistant-ring 1.1s ease-out infinite; }
+.naranja-mascot.is-success .naranja-status { background: #12b76a; }
+.naranja-mascot.is-error .naranja-status { background: #f04438; }
+.naranja-mascot.is-working .naranja-character { animation: naranja-thinking .72s ease-in-out infinite alternate; }
+.naranja-mascot.is-success .naranja-character { animation: naranja-success .7s cubic-bezier(.2,.9,.35,1.3); }
+.naranja-mascot.is-error .naranja-character { animation: naranja-error .45s ease-in-out 2; }
+.naranja-speech { position: relative; width: min(280px, calc(100vw - 130px)); padding: 11px 14px; border: 1px solid rgba(255,105,0,.22); border-radius: 15px 15px 4px 15px; background: rgba(255,255,255,.98); box-shadow: 0 13px 34px rgba(52,31,16,.16); pointer-events: auto; animation: naranja-speech-in .22s ease-out; }
+.naranja-speech strong { display: block; color: #bc4200; font-size: .78rem; }
+.naranja-speech span { display: block; margin-top: 2px; color: var(--text-primary); font-size: .75rem; line-height: 1.35; }
+.naranja-dots { display: flex; gap: 3px; margin-top: 7px; }
+.naranja-dots b { width: 5px; height: 5px; border-radius: 50%; background: var(--orange); animation: assistant-type .9s ease-in-out infinite; }
+.naranja-dots b:nth-child(2) { animation-delay: .12s; }
+.naranja-dots b:nth-child(3) { animation-delay: .24s; }
+.naranja-confetti { position: absolute; inset: -14px; pointer-events: none; }
+.naranja-confetti i { position: absolute; left: 50%; top: 45%; width: 6px; height: 10px; border-radius: 2px; background: var(--orange); animation: naranja-confetti .75s ease-out forwards; }
+.naranja-confetti i:nth-child(2) { --x: 38px; --y: -34px; background: #12b76a; transform: rotate(35deg); }
+.naranja-confetti i:nth-child(3) { --x: -42px; --y: -28px; background: #fdb022; transform: rotate(-40deg); }
+.naranja-confetti i:nth-child(4) { --x: 32px; --y: 25px; background: #7f56d9; transform: rotate(65deg); }
+.naranja-confetti i:nth-child(5) { --x: -36px; --y: 24px; background: #2e90fa; transform: rotate(-70deg); }
+@keyframes naranja-thinking { from { transform: translateY(0) rotate(-1deg); } to { transform: translateY(-5px) rotate(2deg); } }
+@keyframes naranja-success { 0% { transform: translateY(0) scale(1); } 42% { transform: translateY(-12px) scale(1.07); } 75% { transform: translateY(2px) scale(.98); } 100% { transform: translateY(0) scale(1); } }
+@keyframes naranja-error { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-5px) rotate(-2deg); } 75% { transform: translateX(5px) rotate(2deg); } }
+@keyframes naranja-speech-in { from { transform: translateY(6px) scale(.97); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+@keyframes naranja-confetti { from { opacity: 1; transform: translate(0,0) rotate(0); } to { opacity: 0; transform: translate(var(--x, 0),var(--y, -45px)) rotate(180deg); } }
+@media (max-width: 760px) { .naranja-mascot { right: 12px; bottom: 12px; } .naranja-character { width: 62px; height: 62px; border-radius: 20px; } .naranja-character img { border-radius: 18px; } }
 @media (max-width: 1500px) {
   .new-task-workspace { grid-template-columns: minmax(0, 640px); }
   .validation-assistant { position: static; grid-row: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .validation-assistant-avatar, .validation-assistant-ring, .validation-assistant-face i, .assistant-typing i { animation: none; }
+  .validation-assistant-avatar, .validation-assistant-ring, .validation-assistant-avatar img, .assistant-typing i, .naranja-character, .naranja-status, .naranja-confetti i, .naranja-dots b { animation: none !important; }
 }

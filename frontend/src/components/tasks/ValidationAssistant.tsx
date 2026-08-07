@@ -63,6 +63,11 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
     queryKey: ['validation-assistant', taskTypeId],
     queryFn: () => tasksApi.assistantContext(taskTypeId).then(response => response.data),
   });
+  const mascotState = isLoading || asking
+    ? 'is-working'
+    : latestValidation
+      ? latestValidation.canProceed ? 'is-success' : 'is-error'
+      : 'is-idle';
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -123,9 +128,9 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
   return (
     <aside className={`validation-assistant ${collapsed ? 'is-collapsed' : ''}`} aria-label={es ? 'Asistente de validación Naranja' : 'Naranja validation assistant'}>
       <header className="validation-assistant-header">
-        <div className="validation-assistant-avatar" aria-hidden="true">
+        <div className={`validation-assistant-avatar ${mascotState}`} aria-hidden="true">
           <span className="validation-assistant-ring" />
-          <span className="validation-assistant-face"><i /><i /></span>
+          <img src={`${import.meta.env.BASE_URL}mascot/naranja.png`} alt="" />
         </div>
         <div className="validation-assistant-heading">
           <strong>Naranja</strong>
