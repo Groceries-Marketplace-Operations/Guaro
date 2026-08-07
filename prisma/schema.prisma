@@ -489,6 +489,7 @@ model Brand {
   storeEmergencies       StoreEmergency[]
   forcedOpenOperations   ForcedOpenOperation[]
   items                  BrandItem[]
+  menuCategories         BrandMenuCategory[]
   sftpApplications       SftpApplication[]
   promotionApiExecutions PromotionApiExecution[]
   targetedMenuRules      TargetedMenuRule[]
@@ -566,6 +567,23 @@ model BrandItem {
   @@index([brandId, upc])
   @@index([brandId, name])
   @@map("brand_item")
+}
+
+model BrandMenuCategory {
+  id         String   @id @default(uuid()) @db.Uuid
+  brandId    String   @map("brand_id") @db.Uuid
+  categoryId String   @map("category_id")
+  name       String
+  order      Int      @default(0) @map("orden")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, categoryId])
+  @@index([brandId, active, order])
+  @@map("brand_menu_category")
 }
 
 model Schedule {

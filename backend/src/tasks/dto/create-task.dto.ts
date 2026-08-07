@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsDateString,
+  IsIn,
   IsOptional,
   IsString,
 
@@ -38,6 +39,10 @@ export class CreateTaskDto {
   @IsArray()
   @IsString({ each: true })
   shopIds?: string[];
+
+  @IsOptional()
+  @IsIn(['selected', 'all'])
+  shopScope?: 'selected' | 'all';
 
   @IsOptional()
   @IsArray()

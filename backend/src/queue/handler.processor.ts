@@ -98,6 +98,16 @@ export interface HandlerContext {
       appSecret: string;
     } | null;
   } | null;
+  /** Stores snapshotted when the task was created. */
+  targetShops: Array<{
+    id: string;
+    shopId: string;
+    appShopId: string;
+    name: string | null;
+    city: string | null;
+  }>;
+  /** Active destination categories configured for the linked brand. */
+  menuCategories: Array<{ categoryId: string; name: string; order: number }>;
   /** Helper: get a form value by its field label */
   field(label: string): string | null;
   /** Accumulate a line in the step note (shown in UI after completion/failure) */
@@ -207,6 +217,11 @@ export class HandlerProcessor extends WorkerHost {
             shop: { select: { id: true, shopId: true, appShopId: true, brandId: true } },
           },
         },
+        taskShops: {
+          include: {
+            shop: { select: { id: true, shopId: true, appShopId: true, name: true, city: true } },
+          },
+        },
       },
     });
 
@@ -219,6 +234,13 @@ export class HandlerProcessor extends WorkerHost {
     }));
 
     const rawBrand = task?.brand ?? null;
+    const menuCategories = rawBrand
+      ? await this.prisma.brandMenuCategory.findMany({
+          where: { brandId: rawBrand.id, active: true },
+          select: { categoryId: true, name: true, order: true },
+          orderBy: [{ order: 'asc' }, { name: 'asc' }],
+        })
+      : [];
     const brand = rawBrand
       ? {
           id: rawBrand.id,
@@ -254,6 +276,8 @@ export class HandlerProcessor extends WorkerHost {
       taskId,
       formValues,
       brand,
+      targetShops: (task?.taskShops ?? []).map(target => target.shop),
+      menuCategories,
       field: (label) => formValues.find((f) => f.label === label)?.valor ?? null,
       addNote: (text: string) => { noteLines.push(text); },
       sendAlert: (payload: WebhookPayload) => this.webhooks.sendAlert(payload),

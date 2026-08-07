@@ -44,7 +44,12 @@ export class TasksService {
     const createdById = user.id;
     const taskType = await this.prisma.taskType.findUnique({
       where: { id: dto.taskTypeId },
-      include: { stepDefinitions: { orderBy: { order: 'asc' } } },
+      include: {
+        stepDefinitions: {
+          orderBy: { order: 'asc' },
+          include: { handler: { select: { name: true } } },
+        },
+      },
     });
     if (!taskType || taskType.deletedAt) throw new NotFoundException('TaskType not found');
 
@@ -56,6 +61,39 @@ export class TasksService {
     // Derive brandId from a select_brand formValue if not provided directly
     const resolvedBrandId =
       dto.brandId ?? dto.formValues?.find((fv) => fv.brandId)?.brandId ?? null;
+    const isCommercialMenu = taskType.stepDefinitions.some(
+      definition => definition.handler?.name === 'commercial_menu_upload',
+    );
+    let resolvedShopIds = [...new Set(dto.shopIds ?? [])];
+
+    if (dto.shopScope === 'all') {
+      if (!resolvedBrandId) throw new BadRequestException('A brand is required to select all stores');
+      const shops = await this.prisma.shop.findMany({
+        where: { brandId: resolvedBrandId, deletedAt: null },
+        select: { id: true },
+      });
+      resolvedShopIds = shops.map(shop => shop.id);
+    }
+
+    if (resolvedShopIds.length) {
+      if (!resolvedBrandId) throw new BadRequestException('A brand is required when stores are selected');
+      const validShops = await this.prisma.shop.findMany({
+        where: { id: { in: resolvedShopIds }, brandId: resolvedBrandId, deletedAt: null },
+        select: { id: true },
+      });
+      if (validShops.length !== resolvedShopIds.length) {
+        throw new BadRequestException('One or more selected stores do not belong to the selected brand');
+      }
+    }
+
+    if (isCommercialMenu) {
+      if (!resolvedBrandId) throw new BadRequestException('Brand is required for this task');
+      if (!resolvedShopIds.length) throw new BadRequestException('Select at least one target store');
+      const categoryCount = await this.prisma.brandMenuCategory.count({
+        where: { brandId: resolvedBrandId, active: true },
+      });
+      if (!categoryCount) throw new BadRequestException('Configure the brand menu categories before creating this task');
+    }
 
     const task = await this.prisma.$transaction(async (tx) => {
       const created = await tx.task.create({
@@ -93,9 +131,9 @@ export class TasksService {
       }
 
       // TaskShops
-      if (dto.shopIds?.length) {
+      if (resolvedShopIds.length) {
         await tx.taskShop.createMany({
-          data: dto.shopIds.map((shopId) => ({ taskId: created.id, shopId })),
+          data: resolvedShopIds.map((shopId) => ({ taskId: created.id, shopId })),
         });
       }
 

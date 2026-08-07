@@ -381,6 +381,17 @@ export interface BrandItem {
   lastSeenAt: string;
 }
 
+export interface BrandMenuCategory {
+  id: string;
+  brandId: string;
+  categoryId: string;
+  name: string;
+  order: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BrandPromotion {
   id: string;
   shopExternalId: string;

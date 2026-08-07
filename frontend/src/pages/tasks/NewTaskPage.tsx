@@ -241,6 +241,9 @@ export default function NewTaskPage() {
   const [latestFileValidation, setLatestFileValidation] = useState<FileValidationResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  const [targetShopIds, setTargetShopIds] = useState<string[]>([]);
+  const [targetShopSearch, setTargetShopSearch] = useState('');
+  const [downloadingCommercialTemplate, setDownloadingCommercialTemplate] = useState(false);
 
   const { data: taskTypesResult } = useQuery<{ data: TaskType[] }>({
     queryKey: ['task-types', { page: 1, limit: 200 }],
@@ -267,6 +270,22 @@ export default function NewTaskPage() {
     [selectedTT],
   );
 
+  const isCommercialMenuUpload = !!selectedTT?.stepDefinitions?.some(
+    step => step.handler?.name === 'commercial_menu_upload',
+  );
+  const storeScopeField = fields.find(field => field.label === 'Store Scope');
+  const storeScope = storeScopeField ? String(formValues[storeScopeField.id] ?? '') : '';
+
+  useEffect(() => {
+    if (!isCommercialMenuUpload) return;
+    const defaults: Record<string, FieldValue> = {};
+    const scope = fields.find(field => field.label === 'Store Scope');
+    const mode = fields.find(field => field.label === 'Upload Mode');
+    if (scope && !formValues[scope.id]) defaults[scope.id] = 'One store';
+    if (mode && !formValues[mode.id]) defaults[mode.id] = 'Merge';
+    if (Object.keys(defaults).length) setFormValues(previous => ({ ...previous, ...defaults }));
+  }, [fields, formValues, isCommercialMenuUpload]);
+
   const hasStoreField   = fields.some(f => f.tipo === 'select_store');
   const hasKaTypeField      = fields.some(f => f.tipo === 'select_ka_type');
   const hasCountryField     = fields.some(f => f.tipo === 'select_country');
@@ -285,12 +304,18 @@ export default function NewTaskPage() {
 
   const anySelectedBrand = Object.values(selectedBrandIds)[0] ?? '';
 
+  useEffect(() => {
+    setTargetShopIds([]);
+    setTargetShopSearch('');
+  }, [anySelectedBrand]);
 
-  const { data: shops = [] } = useQuery<Shop[]>({
+
+  const { data: shopsResult } = useQuery<{ data: Shop[]; total: number }>({
     queryKey: ['shops', 'for-task', anySelectedBrand],
-    queryFn: () => shopsApi.list({ brandId: anySelectedBrand, limit: 500 }).then(r => (r.data as { data: Shop[] }).data),
-    enabled: hasStoreField && !!anySelectedBrand,
+    queryFn: () => shopsApi.list({ brandId: anySelectedBrand, limit: 10000 }).then(r => r.data as { data: Shop[]; total: number }),
+    enabled: (hasStoreField || isCommercialMenuUpload) && !!anySelectedBrand,
   });
+  const shops = shopsResult?.data ?? [];
 
   const { data: appConfig = {} } = useQuery<Record<string, { value: string; label: string }[]>>({
     queryKey: ['app-config'],
@@ -318,6 +343,8 @@ export default function NewTaskPage() {
     setUrlErrors({});
     setScheduledStart('');
     setLatestFileValidation(null);
+    setTargetShopIds([]);
+    setTargetShopSearch('');
     setErr('');
   };
 
@@ -389,6 +416,10 @@ export default function NewTaskPage() {
       const payload: Record<string, unknown> = {
         taskTypeId: selectedTT.id,
         ...(fvPayload.length && { formValues: fvPayload }),
+        ...(isCommercialMenuUpload && {
+          shopScope: storeScope === 'All brand stores' ? 'all' : 'selected',
+          shopIds: storeScope === 'All brand stores' ? [] : targetShopIds,
+        }),
         ...(scheduledStart && {
           scheduledStart: new Date(scheduledStart).toISOString(),
           scheduledEnd:   addHours(scheduledStart, WINDOW_HOURS),
@@ -401,6 +432,25 @@ export default function NewTaskPage() {
       setErr(errMsg(ex));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const downloadCommercialTemplate = async () => {
+    if (!anySelectedBrand) return;
+    setDownloadingCommercialTemplate(true);
+    setErr('');
+    try {
+      const response = await brandsApi.downloadCommercialMenuTemplate(anySelectedBrand);
+      const url = URL.createObjectURL(response.data as Blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'commercial-grocery-menu-template.xlsx';
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setErr(errMsg(error));
+    } finally {
+      setDownloadingCommercialTemplate(false);
     }
   };
 
@@ -525,7 +575,10 @@ export default function NewTaskPage() {
       return (
         <div className="form-group" key={f.id}>
           {label}
-          <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)}>
+          <select className="form-select" value={strVal} onChange={e => {
+            setField(f.id, e.target.value);
+            if (f.label === 'Store Scope') setTargetShopIds([]);
+          }}>
             <option value="">{t('pages.newTask.selectOption')}</option>
             {f.options.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
@@ -664,8 +717,11 @@ export default function NewTaskPage() {
     return !val;
   });
 
+  const targetStoresMissing = isCommercialMenuUpload
+    && storeScope !== 'All brand stores'
+    && targetShopIds.length === 0;
   const hasUrlErrors = Object.keys(urlErrors).length > 0;
-  const canSubmit = !saving && !missingRequired && !hasUrlErrors;
+  const canSubmit = !saving && !missingRequired && !targetStoresMissing && !hasUrlErrors;
   const missingRequiredLabels = fields.filter(f => {
     if (!f.required) return false;
     const val = formValues[f.id];
@@ -780,10 +836,22 @@ export default function NewTaskPage() {
                 </div>
               )}
 
-              {(selectedTT?.templates?.length ?? 0) > 0 && (
+              {((selectedTT?.templates?.length ?? 0) > 0 || isCommercialMenuUpload) && (
                 <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
                   <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: 12, color: 'var(--text-secondary)' }}>{t('pages.newTask.templatesSection')}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {isCommercialMenuUpload && (
+                      <button type="button" onClick={downloadCommercialTemplate} disabled={!anySelectedBrand || downloadingCommercialTemplate}
+                        style={{ display:'flex', width:'100%', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:8, background:'var(--surface-2)', border:'1px solid var(--border)', color:'var(--text-primary)', cursor:anySelectedBrand ? 'pointer' : 'not-allowed', textAlign:'left', opacity: anySelectedBrand ? 1 : 0.6 }}>
+                        <span style={{ fontSize:'0.72rem', fontWeight:700, padding:'1px 6px', borderRadius:4, background:'var(--orange-muted)', color:'var(--orange)' }}>XLSX</span>
+                        <span style={{ fontWeight:500, fontSize:'0.84rem' }}>
+                          {downloadingCommercialTemplate ? 'Generating template…' : 'Download brand menu template'}
+                        </span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {anySelectedBrand ? 'Uses the configured categories' : 'Select a brand first'}
+                        </span>
+                      </button>
+                    )}
                     {selectedTT!.templates!.map(tp => (
                       <button key={tp.id} type="button" onClick={() => downloadTaskTemplate(tp).catch(() => setErr('No se pudo descargar la plantilla.'))}
                         style={{ display:'flex', width:'100%', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:8, background:'var(--surface-2)', border:'1px solid var(--border)', color:'var(--text-primary)', cursor:'pointer', textAlign:'left' }}>
@@ -802,6 +870,40 @@ export default function NewTaskPage() {
                 <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
                   <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: 16, color: 'var(--text-secondary)' }}>{t('pages.newTask.taskDetailsSection')}</div>
                   {fields.map(f => renderField(f))}
+                  {isCommercialMenuUpload && anySelectedBrand && (
+                    <div className="form-group" style={{ marginTop: 16 }}>
+                      <label className="form-label">Target stores <span style={{ color: 'var(--red)' }}>*</span></label>
+                      {storeScope === 'All brand stores' ? (
+                        <div style={{ padding: 12, borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--border)', fontSize: '0.84rem' }}>
+                          A snapshot of all {shopsResult?.total ?? shops.length} local stores in this brand will be attached when the task is created.
+                        </div>
+                      ) : (
+                        <>
+                          <input className="form-input" value={targetShopSearch} onChange={event => setTargetShopSearch(event.target.value)} placeholder="Search by shop ID, appShopId, name or city…" />
+                          <div style={{ border: '1px solid var(--border)', borderRadius: 8, maxHeight: 260, overflowY: 'auto' }}>
+                            {shops
+                              .filter(shop => `${shop.shopId} ${shop.appShopId} ${shop.name ?? ''} ${shop.city ?? ''}`.toLowerCase().includes(targetShopSearch.toLowerCase()))
+                              .slice(0, storeScope === 'One store' ? 200 : 500)
+                              .map(shop => {
+                                const checked = targetShopIds.includes(shop.id);
+                                return (
+                                  <label key={shop.id} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderBottom: '1px solid var(--border)', cursor: 'pointer', fontSize: '0.82rem' }}>
+                                    <input type={storeScope === 'One store' ? 'radio' : 'checkbox'} name={storeScope === 'One store' ? 'commercial-target-shop' : undefined} checked={checked}
+                                      onChange={() => setTargetShopIds(previous => storeScope === 'One store'
+                                        ? [shop.id]
+                                        : checked ? previous.filter(id => id !== shop.id) : [...previous, shop.id])} />
+                                    <strong>{shop.shopId}</strong>
+                                    <span className="text-muted">{shop.name ?? shop.appShopId}{shop.city ? ` · ${shop.city}` : ''}</span>
+                                  </label>
+                                );
+                              })}
+                            {shops.length === 0 && <div className="text-muted text-sm" style={{ padding: 12 }}>This brand has no local stores.</div>}
+                          </div>
+                          <p className="form-hint" style={{ marginTop: 6 }}>{targetShopIds.length} store(s) selected.</p>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -841,7 +943,7 @@ export default function NewTaskPage() {
                   style={{ minWidth: 140 }}
                   onClick={submit}
                   disabled={!canSubmit}
-                  title={missingRequired ? t('pages.newTask.missingRequiredTitle') : hasUrlErrors ? t('pages.newTask.fixUrlErrors') : ''}
+                  title={missingRequired || targetStoresMissing ? t('pages.newTask.missingRequiredTitle') : hasUrlErrors ? t('pages.newTask.fixUrlErrors') : ''}
                 >
                   {saving ? t('pages.newTask.creating') : t('pages.newTask.createTaskBtn')}
                 </button>

@@ -9,7 +9,7 @@ import { brandsApi, shopsApi, tasksApi, taskTypesApi, applicationsApi, accountsA
 import type { AppConfigOption } from '../../types';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
-import type { Brand, BrandItem, BrandPromotion, Shop, Task, TaskType, Paginated, Application, Country } from '../../types';
+import type { Brand, BrandItem, BrandMenuCategory, BrandPromotion, Shop, Task, TaskType, Paginated, Application, Country } from '../../types';
 
 const COUNTRY_EMOJI: Record<string, string> = { MX: '🇲🇽', CO: '🇨🇴', CR: '🇨🇷' };
 
@@ -179,6 +179,10 @@ export default function BrandDetail() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [batchRows, setBatchRows] = useState<ShopBatchRow[]>([]);
   const [batchDone, setBatchDone] = useState(false);
+  const [openMenuCategories, setOpenMenuCategories] = useState(false);
+  const [menuCategoryText, setMenuCategoryText] = useState('');
+  const [savingMenuCategories, setSavingMenuCategories] = useState(false);
+  const [menuCategoryError, setMenuCategoryError] = useState('');
 
   const { data: brand, refetch: refetchBrand } = useQuery<Brand>({
     queryKey: ['brand', id],
@@ -204,6 +208,11 @@ export default function BrandDetail() {
     enabled: tab === 'menu',
   });
   const menuItems = menuResult?.data ?? [];
+  const { data: menuCategories = [] } = useQuery<BrandMenuCategory[]>({
+    queryKey: ['brand-menu-categories', id],
+    queryFn: () => brandsApi.menuCategories(id!).then(response => response.data as BrandMenuCategory[]),
+    enabled: tab === 'menu',
+  });
 
   const { data: promotionResult, isLoading: loadingPromotions } = useQuery<Paginated<BrandPromotion> & { storesWithPromotions: number; lastFetchedAt?: string }>({
     queryKey: ['brand-promotions', id, promotionPage, promotionSearch, promotionShopId, promotionActivityType],
@@ -425,6 +434,33 @@ export default function BrandDetail() {
     } finally { setSavingApp(false); }
   };
 
+  const openMenuCategoryEditor = () => {
+    setMenuCategoryText(menuCategories.map(category => `${category.categoryId} | ${category.name}`).join('\n'));
+    setMenuCategoryError('');
+    setOpenMenuCategories(true);
+  };
+
+  const saveMenuCategories = async () => {
+    const rows = menuCategoryText.split(/\r?\n/).map(row => row.trim()).filter(Boolean);
+    const categories = rows.map((row, order) => {
+      const separator = row.indexOf('|');
+      if (separator < 1) throw new Error(`Line ${order + 1}: use category_id | Category name`);
+      return { categoryId: row.slice(0, separator).trim(), name: row.slice(separator + 1).trim(), order, active: true };
+    });
+    if (!categories.length) throw new Error('Add at least one category');
+    setSavingMenuCategories(true);
+    setMenuCategoryError('');
+    try {
+      await brandsApi.replaceMenuCategories(id!, categories);
+      await qc.invalidateQueries({ queryKey: ['brand-menu-categories', id] });
+      setOpenMenuCategories(false);
+    } catch (error) {
+      setMenuCategoryError(apiErrorMessage(error, 'Could not save menu categories'));
+    } finally {
+      setSavingMenuCategories(false);
+    }
+  };
+
   if (!brand) return null;
 
   return (
@@ -644,6 +680,19 @@ export default function BrandDetail() {
 
         {tab === 'menu' && (
           <>
+            <div className="card" style={{ marginBottom: 14, padding: '14px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>Commercial upload categories</div>
+                  <p className="form-hint" style={{ marginTop: 3 }}>These are the only categories available in the generated Commercial Grocery Menu Upload template.</p>
+                </div>
+                {isAdmin && <button className="btn btn-ghost btn-sm" onClick={openMenuCategoryEditor}>Configure</button>}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                {menuCategories.map(category => <span className="badge" key={category.id}>{category.categoryId} · {category.name}</span>)}
+                {!menuCategories.length && <span className="text-muted text-sm">No categories configured. The commercial template cannot be generated yet.</span>}
+              </div>
+            </div>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
               <input
                 className="form-input"
@@ -929,6 +978,23 @@ export default function BrandDetail() {
               </p>
             </div>
           )}
+        </Modal>
+      )}
+
+      {openMenuCategories && (
+        <Modal
+          title="Configure commercial menu categories"
+          onClose={() => setOpenMenuCategories(false)}
+          footer={<>
+            <button className="btn btn-ghost" onClick={() => setOpenMenuCategories(false)}>Cancel</button>
+            <button className="btn btn-primary" onClick={() => saveMenuCategories().catch(error => setMenuCategoryError((error as Error).message))} disabled={savingMenuCategories}>
+              {savingMenuCategories ? 'Saving…' : 'Save categories'}
+            </button>
+          </>}
+        >
+          {menuCategoryError && <div className="error-banner" style={{ marginBottom: 12 }}>{menuCategoryError}</div>}
+          <p className="form-hint" style={{ marginBottom: 10 }}>One category per line. Maximum 30. Format: <strong>category_id | Category name</strong>.</p>
+          <textarea className="form-input" rows={12} value={menuCategoryText} onChange={event => setMenuCategoryText(event.target.value)} placeholder={'bebidas | Bebidas\nsnacks | Snacks'} />
         </Modal>
       )}
 

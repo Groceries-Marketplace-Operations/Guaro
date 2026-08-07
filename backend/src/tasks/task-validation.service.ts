@@ -30,6 +30,7 @@ const KNOWN_FILE_HANDLERS = new Set([
   'stock_update',
   'library_menu_upload',
   'scheduled_targeted_menu_upload',
+  'commercial_menu_upload',
   'add_shops_to_integration',
 ]);
 
@@ -89,6 +90,8 @@ function expectedColumns(handlerName?: string): string[] {
       return ['app_shop_id / shop_id', 'UPC', 'Stock'];
     case 'library_menu_upload':
       return ['app_shop_id / shop_id', 'UPC', 'Price', 'Discount (optional)'];
+    case 'commercial_menu_upload':
+      return ['category_id', 'UPC_SKU', 'price', 'activity_price', 'image_url', 'item_name_optional'];
     case 'add_shops_to_integration':
       return ['shop_id', 'app_shop_id', 'picking_model', 'driver_cash_blocked', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     default:
@@ -354,6 +357,8 @@ export class TaskValidationService {
     const handlerName = this.getFileHandler(taskType.stepDefinitions);
     const result = handlerName === 'library_menu_upload' || handlerName === 'scheduled_targeted_menu_upload'
       ? this.validateMenuWorkbook(workbook)
+      : handlerName === 'commercial_menu_upload'
+        ? this.validateCommercialMenuWorkbook(workbook)
       : this.validateSheet(sheet, handlerName);
     checks.push(...result.checks);
     const response = this.finishValidation(file.originalname, checks, result.validRows, result.totalRows);
@@ -580,6 +585,87 @@ export class TaskValidationService {
         ? `${validRows}/${totalRows} rows are valid across ${shopCounts.size} target store(s).`
         : 'The Items worksheet has no data rows.',
       details: itemIssues.slice(0, MAX_DETAIL_ITEMS),
+    });
+    return { checks, validRows, totalRows };
+  }
+
+  private validateCommercialMenuWorkbook(workbook: ExcelJS.Workbook) {
+    const categoriesSheet = workbook.getWorksheet('Categories');
+    const itemsSheet = workbook.getWorksheet('Items');
+    const checks: AssistantCheck[] = [];
+    if (!categoriesSheet || !itemsSheet) {
+      return {
+        checks: [{
+          id: 'commercial-menu-sheets', label: 'Commercial menu worksheets', status: 'failed' as const,
+          message: 'Expected Categories and Items worksheets. Download a fresh template for the selected brand.',
+        }],
+        validRows: 0,
+        totalRows: 0,
+      };
+    }
+
+    const categoryHeadersOk = normalizeHeader(categoriesSheet.getRow(1).getCell(1).value) === 'categoryid'
+      && normalizeHeader(categoriesSheet.getRow(1).getCell(2).value) === 'categoryname';
+    const expectedItemHeaders = ['categoryid', 'upcsku', 'price', 'activityprice', 'imageurl', 'itemnameoptional'];
+    const itemHeadersOk = expectedItemHeaders.every((header, index) =>
+      normalizeHeader(itemsSheet.getRow(1).getCell(index + 1).value) === header,
+    );
+    checks.push({
+      id: 'commercial-menu-columns', label: 'Template structure',
+      status: categoryHeadersOk && itemHeadersOk ? 'passed' : 'failed',
+      message: categoryHeadersOk && itemHeadersOk
+        ? 'The generated template structure is valid.'
+        : 'Do not rename the Categories/Items sheets or their columns; download a fresh template.',
+    });
+
+    const categories = new Set<string>();
+    for (let rowNumber = 2; rowNumber <= categoriesSheet.actualRowCount; rowNumber += 1) {
+      const id = cellText(categoriesSheet.getRow(rowNumber).getCell(1));
+      const name = cellText(categoriesSheet.getRow(rowNumber).getCell(2));
+      if (!id && !name) continue;
+      if (id && name) categories.add(id);
+    }
+    checks.push({
+      id: 'commercial-menu-categories', label: 'Configured categories',
+      status: categories.size > 0 && categories.size <= 30 ? 'passed' : 'failed',
+      message: categories.size > 0 && categories.size <= 30
+        ? `${categories.size} category(ies) are available in the brand template.`
+        : 'The template must contain between 1 and 30 categories.',
+    });
+
+    const issues: string[] = [];
+    const upcs = new Set<string>();
+    let totalRows = 0;
+    let validRows = 0;
+    for (let rowNumber = 2; rowNumber <= itemsSheet.actualRowCount; rowNumber += 1) {
+      const row = itemsSheet.getRow(rowNumber);
+      if (isBlankRow(row)) continue;
+      totalRows += 1;
+      const before = issues.length;
+      const categoryId = cellText(row.getCell(1));
+      const upc = cellText(row.getCell(2));
+      const rawPrice = cellText(row.getCell(3)).replace(',', '.');
+      const rawActivity = cellText(row.getCell(4)).replace(',', '.');
+      const imageUrl = cellText(row.getCell(5));
+      const price = Number(rawPrice);
+      const activity = rawActivity ? Number(rawActivity) : undefined;
+      if (!categoryId || !categories.has(categoryId)) issues.push(`Row ${rowNumber}: select a category_id from Categories.`);
+      if (!upc) issues.push(`Row ${rowNumber}: UPC_SKU is required.`);
+      else if (upcs.has(upc)) issues.push(`Row ${rowNumber}: UPC_SKU ${upc} is repeated.`);
+      if (!rawPrice || !Number.isFinite(price) || price < 0) issues.push(`Row ${rowNumber}: price must be zero or greater.`);
+      if (activity !== undefined && (!Number.isFinite(activity) || activity < 0 || activity > price)) {
+        issues.push(`Row ${rowNumber}: activity_price must be between zero and price.`);
+      }
+      if (!/^https:\/\//i.test(imageUrl)) issues.push(`Row ${rowNumber}: image_url must be a public HTTPS URL.`);
+      if (upc) upcs.add(upc);
+      if (issues.length === before) validRows += 1;
+    }
+    if (totalRows > 3000) issues.push(`The workbook has ${totalRows} items; the maximum is 3000.`);
+    checks.push({
+      id: 'commercial-menu-items', label: 'Menu items',
+      status: totalRows > 0 && issues.length === 0 ? 'passed' : 'failed',
+      message: totalRows > 0 ? `${validRows}/${totalRows} item rows are valid.` : 'The Items worksheet has no data rows.',
+      details: issues.slice(0, MAX_DETAIL_ITEMS),
     });
     return { checks, validRows, totalRows };
   }

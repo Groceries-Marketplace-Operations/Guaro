@@ -84,6 +84,11 @@ export const brandsApi = {
   listRules: () => client.get('/brands/assignment-rules'),
   updateRule: (id: string, data: object) => client.patch(`/brands/assignment-rules/${id}`, data),
   menu: (id: string, params?: object) => client.get(`/brands/${id}/menu`, { params }),
+  menuCategories: (id: string) => client.get(`/brands/${id}/menu/categories`),
+  replaceMenuCategories: (id: string, categories: Array<{ categoryId: string; name: string; order?: number; active?: boolean }>) =>
+    client.put(`/brands/${id}/menu/categories`, { categories }),
+  downloadCommercialMenuTemplate: (id: string) =>
+    client.get(`/brands/${id}/menu/commercial-template`, { responseType: 'blob' }),
   promotions: (id: string, params?: object) => client.get(`/brands/${id}/promotions`, { params }),
 };
 
