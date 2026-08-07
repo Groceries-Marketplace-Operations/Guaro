@@ -106,11 +106,31 @@ export class TaskTypesService {
 
   async update(id: string, dto: UpdateTaskTypeDto, roles: AccountRole[], sectionId: string | null) {
     const tt = await this.assertTaskTypeAccess(id, roles, sectionId);
-    const { description, ...rest } = dto as UpdateTaskTypeDto & { description?: string };
-    return this.prisma.taskType.update({
-      where: { id: tt.id },
-      data: { ...rest, ...(description !== undefined && { descripcion: description }) },
-      include: TASK_TYPE_INCLUDE,
+    const { description, sectionId: targetSectionId, ...rest } = dto;
+    const movingSections = targetSectionId !== undefined && targetSectionId !== tt.sectionId;
+    if (movingSections) {
+      this.assertAdminOfSection(roles, sectionId, targetSectionId);
+      const target = await this.prisma.section.findUnique({
+        where: { id: targetSectionId }, select: { id: true },
+      });
+      if (!target) throw new BadRequestException('Target section does not exist');
+    }
+    return this.prisma.$transaction(async tx => {
+      const targetOrder = movingSections
+        ? ((await tx.taskType.aggregate({
+            where: { sectionId: targetSectionId, deletedAt: null },
+            _max: { order: true },
+          }))._max.order ?? -1) + 1
+        : undefined;
+      return tx.taskType.update({
+        where: { id: tt.id },
+        data: {
+          ...rest,
+          ...(description !== undefined && { descripcion: description }),
+          ...(movingSections && { sectionId: targetSectionId, order: targetOrder }),
+        },
+        include: TASK_TYPE_INCLUDE,
+      });
     });
   }
 

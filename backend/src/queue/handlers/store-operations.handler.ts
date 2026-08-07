@@ -112,7 +112,7 @@ async function postShopUpdate(authToken: string, data: Record<string, unknown>) 
 async function updateShopHeadImage(ctx: HandlerContext) {
   const { brand, application } = requireBrand(ctx);
   const imageKey = ctx.field('Shop Head Image');
-  if (!imageKey || !/^[a-f0-9-]+\.(?:jpe?g|png|gif)$/i.test(imageKey)) {
+  if (!imageKey || !/^[a-f0-9-]+\.(?:jpe?g|png)$/i.test(imageKey)) {
     throw new Error('A valid Shop Head Image upload is required');
   }
   const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173/guaro').replace(/\/$/, '');

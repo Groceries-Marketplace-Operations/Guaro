@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { fileIntegrationsApi, sftpApplicationsApi } from '../../api';
 import type { FileIntegrationKind, FileIntegrationRule, Paginated, SftpApplication } from '../../types';
+import TargetedMenuSection from './TargetedMenuSection';
 
 interface RuleForm {
   name: string;
@@ -52,7 +52,6 @@ function saveBase64(fileName: string, contentBase64: string, mimeType: string) {
 }
 
 export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKind }) {
-  const navigate = useNavigate();
   const qc = useQueryClient();
   const isFilter = kind === 'price_filter';
   const title = isFilter ? 'Custom integrations' : 'Lectura de promociones complejas SFTP';
@@ -132,17 +131,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           ? 'El sistema registra un solo estado por archivo, procesa primero los más antiguos y conserva pendientes o fallidos para la siguiente ejecución. Antes de reemplazar, genera Antes/Después, verifica el temporal y mueve el original a /upload/.tequila-backup/<ejecución>/.'
           : 'Funciona como Auto Menu Fetch para promociones: conserva una instantánea local por App Shop ID. Las credenciales permanecen cifradas.'}
       </div>
-      {isFilter && <div className="card" style={{ marginBottom: 18, padding: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 18 }}>
-        <div>
-          <strong>Scheduled targeted menu upload</strong>
-          <p className="text-muted" style={{ marginTop: 5, fontSize: 12 }}>
-            Select a brand, upload the store/item Excel and choose the exact time when processing can start.
-          </p>
-        </div>
-        <button className="btn btn-primary" onClick={() => navigate('/tasks/new?taskType=Scheduled%20Targeted%20Menu%20Upload')}>
-          Create scheduled upload
-        </button>
-      </div>}
+      {isFilter && <TargetedMenuSection />}
       {isLoading && <p className="text-muted">Cargando…</p>}
       {!isLoading && rules.length === 0 && <div className="empty-state"><p>No hay configuraciones.</p></div>}
       <div style={{ display: 'grid', gap: 14 }}>

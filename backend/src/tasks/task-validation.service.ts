@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { FormFieldTipo } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
-import { unlink } from 'fs/promises';
+import { readFile, unlink } from 'fs/promises';
 import { extname } from 'path';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -34,6 +34,27 @@ const KNOWN_FILE_HANDLERS = new Set([
 ]);
 
 const MAX_DETAIL_ITEMS = 20;
+
+function readImageDimensions(buffer: Buffer, extension: string): { width: number; height: number } | null {
+  if (extension === '.png') {
+    if (buffer.length < 24 || buffer.toString('ascii', 1, 4) !== 'PNG') return null;
+    return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+  }
+  if (!['.jpg', '.jpeg'].includes(extension) || buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 9 < buffer.length) {
+    if (buffer[offset] !== 0xff) { offset += 1; continue; }
+    const marker = buffer[offset + 1];
+    if (marker === 0xd8 || marker === 0xd9) { offset += 2; continue; }
+    const size = buffer.readUInt16BE(offset + 2);
+    if (size < 2 || offset + size + 2 > buffer.length) return null;
+    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+      return { height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
+    }
+    offset += size + 2;
+  }
+  return null;
+}
 
 function normalizeHeader(value: unknown): string {
   return String(value ?? '')
@@ -359,19 +380,36 @@ export class TaskValidationService {
       throw new ForbiddenException('This image field does not belong to the selected task type');
     }
     const extension = extname(file.originalname).toLowerCase();
-    const supported = ['.jpg', '.jpeg', '.png', '.gif'];
+    const supported = ['.jpg', '.jpeg', '.png'];
     if (!supported.includes(extension)) {
       await unlink(file.path).catch(() => undefined);
-      throw new BadRequestException('Only JPG, PNG or GIF images are supported');
+      throw new BadRequestException('Only JPG, JPEG or PNG images are supported');
+    }
+    const dimensions = readImageDimensions(await readFile(file.path), extension);
+    if (!dimensions) {
+      await unlink(file.path).catch(() => undefined);
+      throw new BadRequestException('The uploaded file is not a valid JPG, JPEG or PNG image');
+    }
+    if (dimensions.width < 1200 || dimensions.height < 900) {
+      await unlink(file.path).catch(() => undefined);
+      throw new BadRequestException(`The cover must be at least 1200 x 900 px; received ${dimensions.width} x ${dimensions.height} px`);
+    }
+    const ratio = dimensions.width / dimensions.height;
+    if (Math.abs(ratio - (4 / 3)) > 0.01) {
+      await unlink(file.path).catch(() => undefined);
+      throw new BadRequestException(`The cover must use a 4:3 aspect ratio; received ${dimensions.width} x ${dimensions.height} px`);
     }
     return {
       originalName: file.originalname,
       tempPath: file.filename,
       canProceed: true,
-      summary: 'Image validated and ready. DiDi requires a secure URL and a file smaller than 10 MB.',
+      summary: 'Cover validated: 4:3, at least 1200 x 900 px and smaller than 5 MB. Keep important content in the centered 2:1 safe area; DiDi will review one cover submission at a time.',
       checks: [
         { id: 'access', label: 'Access permission', status: 'passed' as const, message: `Authorized as ${user.email}` },
-        { id: 'image-type', label: 'Image format', status: 'passed' as const, message: `${extension.toUpperCase()} accepted; ${Math.ceil(file.size / 1024)} KB` },
+        { id: 'image-type', label: 'Image format', status: 'passed' as const, message: `${extension.toUpperCase()} accepted; ${Math.ceil(file.size / 1024)} KB (maximum 5 MB)` },
+        { id: 'image-size', label: 'Cover dimensions', status: 'passed' as const, message: `${dimensions.width} x ${dimensions.height} px; valid 4:3 cover with a centered 2:1 display-safe area` },
+        { id: 'image-framing', label: 'DiDi framing', status: 'warning' as const, message: 'DiDi may display the cover as 4:3 or crop it to the centered 2:1 area. Keep logos, faces and text away from the top and bottom edges.' },
+        { id: 'image-review', label: 'DiDi review', status: 'warning' as const, message: 'Only one cover can be under review at a time; another submission may be rejected until review finishes.' },
       ],
       stats: { validRows: 1, totalRows: 1 },
     };

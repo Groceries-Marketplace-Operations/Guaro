@@ -480,6 +480,52 @@ export interface FileIntegrationRule {
   executions: FileIntegrationExecution[];
 }
 
+export interface TargetedMenuShopResult {
+  shopId: string;
+  appShopId?: string;
+  status: 'done' | 'partial_success' | 'failed';
+  requestedUpcs: number;
+  uploadedUpcs: number;
+  missingUpcs: string[];
+  exportTaskId?: string;
+  uploadTaskId?: string;
+  error?: string;
+}
+
+export interface TargetedMenuExecution {
+  id: string;
+  status: AutoOpenStatus;
+  trigger: string;
+  startedAt?: string;
+  finishedAt?: string;
+  totalShops: number;
+  processedShops: number;
+  successfulShops: number;
+  failedShops: number;
+  currentShopId?: string;
+  errorMessage?: string;
+  result?: { shops?: TargetedMenuShopResult[] };
+  createdAt: string;
+}
+
+export interface TargetedMenuRule {
+  id: string;
+  name: string;
+  brandId: string;
+  shopIds: string[];
+  upcs: string[];
+  active: boolean;
+  startsAt: string;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  brand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'>;
+  createdBy?: Pick<Account, 'id' | 'name' | 'email'>;
+  updatedBy?: Pick<Account, 'id' | 'name' | 'email'>;
+  executions: TargetedMenuExecution[];
+}
+
 export interface StoreEmergencyTarget {
   id: string;
   offlineStatus: string;

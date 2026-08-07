@@ -172,6 +172,15 @@ export const fileIntegrationsApi = {
   download: (executionId: string, fileName: string) => client.get(`/integrations/file-integrations/executions/${executionId}/files/${encodeURIComponent(fileName)}`),
 };
 
+export const targetedMenuApi = {
+  list: () => client.get('/integrations/targeted-menu/rules'),
+  create: (data: object) => client.post('/integrations/targeted-menu/rules', data),
+  update: (id: string, data: object) => client.patch(`/integrations/targeted-menu/rules/${id}`, data),
+  delete: (id: string) => client.delete(`/integrations/targeted-menu/rules/${id}`),
+  run: (id: string) => client.post(`/integrations/targeted-menu/rules/${id}/run`),
+  stop: (id: string) => client.post(`/integrations/targeted-menu/rules/${id}/stop`),
+};
+
 export const promotionApi = {
   contract: () => client.get('/integrations/promotion-api/contract'),
   execute: (data: object) => client.post('/integrations/promotion-api/execute', data),

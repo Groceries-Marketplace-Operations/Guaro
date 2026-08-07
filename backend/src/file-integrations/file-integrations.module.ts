@@ -11,10 +11,17 @@ import { BrandPromotionsController } from './brand-promotions.controller';
 import { BrandPromotionsService } from './brand-promotions.service';
 import { StorePromotionStorageService } from './store-promotion-storage.service';
 import { TargetedPromotionReaderService } from './targeted-promotion-reader.service';
+import { TargetedMenuController } from './targeted-menu.controller';
+import { TargetedMenuProcessor } from './targeted-menu.processor';
+import { TargetedMenuScheduler } from './targeted-menu.scheduler';
+import { TargetedMenuService } from './targeted-menu.service';
 
 @Module({
-  imports: [BullModule.registerQueue({ name: 'file-integrations' })],
-  controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController],
+  imports: [
+    BullModule.registerQueue({ name: 'file-integrations' }),
+    BullModule.registerQueue({ name: 'targeted-menu' }),
+  ],
+  controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController, TargetedMenuController],
   providers: [
     FileIntegrationsService,
     FileIntegrationProcessor,
@@ -24,6 +31,9 @@ import { TargetedPromotionReaderService } from './targeted-promotion-reader.serv
     TargetedPromotionReaderService,
     PromotionApiService,
     BrandPromotionsService,
+    TargetedMenuService,
+    TargetedMenuProcessor,
+    TargetedMenuScheduler,
   ],
   exports: [TargetedPromotionReaderService],
 })

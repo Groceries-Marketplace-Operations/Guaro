@@ -20,6 +20,45 @@ function isValidUrl(url: string): boolean {
   try { new URL(url); return true; } catch { return false; }
 }
 
+async function prepareStoreCover(file: File) {
+  const bitmap = await createImageBitmap(file);
+  try {
+    if (bitmap.width < 1200 || bitmap.height < 900) {
+      throw new Error(`La portada debe medir al menos 1200 × 900 px; la imagen mide ${bitmap.width} × ${bitmap.height} px.`);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = 1200;
+    canvas.height = 900;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('El navegador no pudo preparar la portada.');
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const sourceRatio = bitmap.width / bitmap.height;
+    const targetRatio = 4 / 3;
+    let sx = 0;
+    let sy = 0;
+    let sw = bitmap.width;
+    let sh = bitmap.height;
+    if (sourceRatio > targetRatio) {
+      sw = bitmap.height * targetRatio;
+      sx = (bitmap.width - sw) / 2;
+    } else if (sourceRatio < targetRatio) {
+      sh = bitmap.width / targetRatio;
+      sy = (bitmap.height - sh) / 2;
+    }
+    context.drawImage(bitmap, sx, sy, sw, sh, 0, 0, 1200, 900);
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    if (!blob) throw new Error('No se pudo generar la portada 1200 × 900.');
+    const base = file.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9_-]+/gi, '-');
+    return {
+      file: new File([blob], `${base || 'store-cover'}-1200x900.jpg`, { type: 'image/jpeg' }),
+      previewUrl: URL.createObjectURL(blob),
+    };
+  } finally {
+    bitmap.close();
+  }
+}
+
 function toLocalDatetimeInput(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -140,7 +179,7 @@ function BrandCombobox({ value, onChange, placeholder = 'Search brand…' }: Bra
   );
 }
 
-type FileFieldValue = { name: string; tempPath: string };
+type FileFieldValue = { name: string; tempPath: string; previewUrl?: string };
 type FieldValue = string | string[] | FileFieldValue | Brand[];
 
 interface MultiBrandComboboxProps {
@@ -408,14 +447,15 @@ export default function NewTaskPage() {
     setFileUploading(p => ({ ...p, [fieldId]: true }));
     setFileUploadErrors(p => { const n = { ...p }; delete n[fieldId]; return n; });
     try {
+      const prepared = kind === 'image' ? await prepareStoreCover(file) : { file, previewUrl: undefined };
       const fd = new FormData();
-      fd.append('file', file);
+      fd.append('file', prepared.file);
       fd.append('taskTypeId', selectedTTId ?? '');
       fd.append('formFieldId', fieldId);
       const res = kind === 'image' ? await tasksApi.uploadImage(fd) : await tasksApi.uploadExcel(fd);
       setLatestFileValidation(res.data);
       if (res.data.canProceed && res.data.tempPath) {
-        setField(fieldId, { name: res.data.originalName, tempPath: res.data.tempPath } as FileFieldValue);
+        setField(fieldId, { name: res.data.originalName, tempPath: res.data.tempPath, previewUrl: prepared.previewUrl } as FileFieldValue);
       } else {
         setField(fieldId, { name: '', tempPath: '' } as FileFieldValue);
         setFileUploadErrors(p => ({ ...p, [fieldId]: res.data.summary }));
@@ -621,11 +661,11 @@ export default function NewTaskPage() {
         <div className="form-group" key={f.id}>
           {label}
           <p className="form-hint" style={{ marginBottom: 6 }}>
-            {image ? 'JPG, PNG or GIF. Maximum 10 MB; 2880 × 2304 px is recommended.' : t('pages.newTask.excelHint')}
+            {image ? 'JPG, JPEG o PNG. Se recorta al centro y se genera en 1200 × 900 (4:3), máximo 5 MB. Mantén logo y texto dentro de la zona central 2:1 para que ambos encuadres de DiDi se vean completos.' : t('pages.newTask.excelHint')}
           </p>
           <input
             type="file"
-            accept={image ? '.jpg,.jpeg,.png,.gif,image/jpeg,image/png,image/gif' : '.xlsx'}
+            accept={image ? '.jpg,.jpeg,.png,image/jpeg,image/png' : '.xlsx'}
             disabled={uploading}
             style={{ fontSize: '0.84rem' }}
             onChange={e => {
@@ -638,6 +678,21 @@ export default function NewTaskPage() {
           {fileVal?.name && !uploading && (
             <p style={{ fontSize: '0.78rem', color: 'var(--green)', marginTop: 4 }}>✓ {fileVal.name}</p>
           )}
+          {image && fileVal?.previewUrl && !uploading && <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(220px, 1fr)', gap: 12, marginTop: 12 }}>
+            <div>
+              <div style={{ position: 'relative', aspectRatio: '4 / 3', overflow: 'hidden', borderRadius: 10, background: '#eee' }}>
+                <img src={fileVal.previewUrl} alt="Vista previa 4:3" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                <div style={{ position: 'absolute', left: 0, right: 0, top: '16.666%', height: '66.666%', border: '2px dashed rgba(255,105,0,.95)', boxSizing: 'border-box', pointerEvents: 'none' }} />
+              </div>
+              <p className="form-hint" style={{ marginTop: 5 }}>Archivo final 4:3 · el marco naranja marca la zona segura 2:1.</p>
+            </div>
+            <div>
+              <div style={{ aspectRatio: '2 / 1', overflow: 'hidden', borderRadius: 10, background: '#eee' }}>
+                <img src={fileVal.previewUrl} alt="Vista previa 2:1" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block' }} />
+              </div>
+              <p className="form-hint" style={{ marginTop: 5 }}>Vista previa del recorte central 2:1 que puede mostrar DiDi.</p>
+            </div>
+          </div>}
           {fileUploadErrors[f.id] && (
             <p style={{ fontSize: '0.78rem', color: 'var(--red)', marginTop: 4 }}>{fileUploadErrors[f.id]}</p>
           )}

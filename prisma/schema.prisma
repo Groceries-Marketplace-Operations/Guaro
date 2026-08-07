@@ -235,6 +235,9 @@ model Account {
   createdFileIntegrationRules    FileIntegrationRule[]        @relation("FileIntegrationRuleCreator")
   createdFileIntegrationRuns     FileIntegrationExecution[]   @relation("FileIntegrationExecutionCreator")
   createdPromotionApiRuns        PromotionApiExecution[]      @relation("PromotionApiExecutionCreator")
+  createdTargetedMenuRules       TargetedMenuRule[]            @relation("TargetedMenuRuleCreator")
+  updatedTargetedMenuRules       TargetedMenuRule[]            @relation("TargetedMenuRuleUpdater")
+  createdTargetedMenuRuns        TargetedMenuExecution[]       @relation("TargetedMenuExecutionCreator")
 
   @@index([sectionId])
   @@map("account")
@@ -485,6 +488,7 @@ model Brand {
   items                BrandItem[]
   sftpApplications     SftpApplication[]
   promotionApiExecutions PromotionApiExecution[]
+  targetedMenuRules       TargetedMenuRule[]
 
   @@index([ownerId])
   @@index([applicationId])
@@ -943,6 +947,58 @@ model FileIntegrationExecution {
   @@index([ruleId, createdAt])
   @@index([status])
   @@map("file_integration_execution")
+}
+
+model TargetedMenuRule {
+  id             String    @id @default(uuid()) @db.Uuid
+  name           String
+  brandId        String    @map("brand_id") @db.Uuid
+  shopIds        String[]  @default([]) @map("shop_ids")
+  upcs           String[]  @default([])
+  active         Boolean   @default(true)
+  startsAt       DateTime  @map("starts_at") @db.Timestamptz
+  nextRunAt      DateTime? @map("next_run_at") @db.Timestamptz
+  lastRunAt      DateTime? @map("last_run_at") @db.Timestamptz
+  createdById    String?   @map("created_by") @db.Uuid
+  updatedById    String?   @map("updated_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz
+
+  brand      Brand                   @relation(fields: [brandId], references: [id])
+  createdBy  Account?                @relation("TargetedMenuRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy  Account?                @relation("TargetedMenuRuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  executions TargetedMenuExecution[]
+
+  @@index([active, nextRunAt])
+  @@index([brandId])
+  @@map("targeted_menu_rule")
+}
+
+model TargetedMenuExecution {
+  id               String         @id @default(uuid()) @db.Uuid
+  ruleId           String         @map("rule_id") @db.Uuid
+  status           AutoOpenStatus @default(pending)
+  trigger          String         @default("manual")
+  startedAt        DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt       DateTime?      @map("finished_at") @db.Timestamptz
+  totalShops       Int            @default(0) @map("total_shops")
+  processedShops   Int            @default(0) @map("processed_shops")
+  successfulShops  Int            @default(0) @map("successful_shops")
+  failedShops      Int            @default(0) @map("failed_shops")
+  currentShopId    String?        @map("current_shop_id")
+  cancelRequested  Boolean        @default(false) @map("cancel_requested")
+  errorMessage     String?        @map("error_message") @db.Text
+  result           Json?
+  createdById      String?        @map("created_by") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  rule      TargetedMenuRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  createdBy Account?          @relation("TargetedMenuExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([ruleId, createdAt])
+  @@index([status])
+  @@map("targeted_menu_execution")
 }
 
 model StorePromotion {

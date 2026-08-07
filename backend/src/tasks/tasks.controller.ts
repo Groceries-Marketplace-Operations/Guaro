@@ -277,11 +277,11 @@ export class TasksController {
       filename: (_, file, cb) => cb(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`),
     }),
     fileFilter: (_, file, cb) => {
-      const ok = /\.(jpe?g|png|gif)$/i.test(file.originalname)
-        && ['image/jpeg', 'image/png', 'image/gif'].includes(file.mimetype);
-      cb(ok ? null : new BadRequestException('Only JPG, PNG or GIF images are allowed'), ok);
+      const ok = /\.(jpe?g|png)$/i.test(file.originalname)
+        && ['image/jpeg', 'image/png'].includes(file.mimetype);
+      cb(ok ? null : new BadRequestException('Only JPG, JPEG or PNG images are allowed'), ok);
     },
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 5 * 1024 * 1024 },
   }))
   async uploadImage(
     @UploadedFile() file: Express.Multer.File,

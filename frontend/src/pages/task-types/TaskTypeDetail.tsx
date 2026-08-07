@@ -3,10 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
-import { taskTypesApi, handlersApi, webhooksApi, accountsApi } from '../../api';
+import { taskTypesApi, handlersApi, webhooksApi, accountsApi, sectionsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
-import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account } from '../../types';
+import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account, Section } from '../../types';
 import { downloadTaskTemplate } from '../../utils/downloadTaskTemplate';
 
 const PlusIcon = () => (
@@ -89,11 +89,11 @@ export default function TaskTypeDetail() {
 
   // Edit task type header
   const [openEditTT, setOpenEditTT] = useState(false);
-  const [ttForm, setTtForm] = useState({ name: '', description: '', schedulable: false });
+  const [ttForm, setTtForm] = useState({ name: '', description: '', sectionId: '', schedulable: false });
 
   const openEditTaskType = () => {
     if (!tt) return;
-    setTtForm({ name: tt.name, description: tt.description ?? '', schedulable: tt.schedulable });
+    setTtForm({ name: tt.name, description: tt.description ?? '', sectionId: tt.sectionId, schedulable: tt.schedulable });
     setOpenEditTT(true);
   };
   const deleteTaskType = async () => {
@@ -128,6 +128,12 @@ export default function TaskTypeDetail() {
     } catch (ex) { setErr(errMsg(ex)); }
     finally { setSaving(false); }
   };
+
+  const { data: sections = [] } = useQuery<Section[]>({
+    queryKey: ['sections', 'task-type-edit'],
+    queryFn: () => sectionsApi.list().then(response => response.data),
+    enabled: openEditTT,
+  });
 
   // Drag-and-drop for steps
   const [stepDragIndex, setStepDragIndex] = useState<number | null>(null);
@@ -1010,7 +1016,7 @@ export default function TaskTypeDetail() {
         <Modal title={t('pages.taskTypeDetail.modalEditTT')} onClose={() => setOpenEditTT(false)}
           footer={<>
             <button className="btn btn-ghost" onClick={() => setOpenEditTT(false)}>{t('common.cancel')}</button>
-            <button className="btn btn-primary" form="edit-tt-form" type="submit" disabled={saving || !ttForm.name.trim()}>
+            <button className="btn btn-primary" form="edit-tt-form" type="submit" disabled={saving || !ttForm.name.trim() || !ttForm.sectionId}>
               {saving ? t('common.saving') : t('common.save')}
             </button>
           </>}
@@ -1024,6 +1030,14 @@ export default function TaskTypeDetail() {
             <div className="form-group">
               <label className="form-label">{t('pages.taskTypeDetail.ttDescLabel')}</label>
               <textarea className="form-textarea" rows={3} value={ttForm.description} onChange={e => setTtForm(f => ({ ...f, description: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Sección</label>
+              <select className="form-select" value={ttForm.sectionId} onChange={e => setTtForm(f => ({ ...f, sectionId: e.target.value }))} required>
+                <option value="">Seleccionar sección…</option>
+                {sections.map(section => <option key={section.id} value={section.id}>{section.name}</option>)}
+              </select>
+              {ttForm.sectionId !== tt?.sectionId && <p className="form-hint">Al moverlo, se colocará al final de la nueva sección. Sus pasos, campos, plantillas y tareas no cambian.</p>}
             </div>
             <div className="form-check">
               <input type="checkbox" id="tt-schedulable" checked={ttForm.schedulable} onChange={e => setTtForm(f => ({ ...f, schedulable: e.target.checked }))} />
