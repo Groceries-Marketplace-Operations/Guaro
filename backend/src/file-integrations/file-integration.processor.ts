@@ -405,6 +405,23 @@ export class FileIntegrationProcessor extends WorkerHost {
       where: { ruleId, status: 'done', lastSeenAt: { lt: retentionCutoff } },
     });
 
+    // The remote directory can change while a large batch is being processed.
+    // Do not keep pending/failed state forever for files that are no longer
+    // present in the latest authoritative SFTP listing. If a file reappears,
+    // the next scan will create a fresh pending state for it.
+    const missingStates = await this.prisma.fileIntegrationFileState.deleteMany({
+      where: {
+        ruleId,
+        status: { in: ['pending', 'failed'] },
+        lastSeenAt: { lt: scanAt },
+      },
+    });
+    if (missingStates.count > 0) {
+      this.logger.warn(
+        `Removed ${missingStates.count} stale file state(s) for rule ${ruleId}; files are absent from the current SFTP listing`,
+      );
+    }
+
     const states = await this.prisma.fileIntegrationFileState.findMany({
       where: {
         ruleId,
