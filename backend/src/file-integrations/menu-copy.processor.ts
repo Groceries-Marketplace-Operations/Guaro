@@ -12,6 +12,7 @@ import {
   getAuthToken,
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
+import { buildFlatGroceryUploads, FlatGroceryUpload } from './grocery-destination-menu.util';
 
 class MenuCopyCancelledError extends Error {}
 
@@ -76,18 +77,22 @@ export class MenuCopyProcessor extends WorkerHost {
       const downloaded = await downloadMenu(sourceToken, () => this.ensureActive(executionId));
       const menu = parseJsonKeepingIds(downloaded.rawJson) as Record<string, unknown>;
       const items = Array.isArray(menu.items) ? menu.items : [];
-      const categories = Array.isArray(menu.categories) ? menu.categories : [];
       if (!items.length) throw new Error('The source menu contains no items');
-      if (items.length > 3000) throw new Error(`The source menu has ${items.length} items; DiDi accepts a maximum of 3000 per upload`);
-      if (categories.length > 30) throw new Error(`The source menu has ${categories.length} categories; DiDi accepts a maximum of 30`);
+      const uploads = buildFlatGroceryUploads(menu, items as Record<string, unknown>[]);
 
       await this.step(executionId, 'uploading_target_menu', {
         exportTaskId: downloaded.taskId,
         itemCount: items.length,
-        categoryCount: categories.length,
+        categoryCount: uploads.length,
       });
       const targetToken = await getAuthToken(targetApplication.appId, targetSecret, targetAppShopId);
-      const uploadTaskId = await this.upload(targetToken, menu, execution.mergePolicy);
+      const uploadTaskIds: string[] = [];
+      for (let index = 0; index < uploads.length; index++) {
+        await this.ensureActive(executionId);
+        const mergePolicy = index === 0 ? execution.mergePolicy : 0;
+        uploadTaskIds.push(await this.upload(targetToken, uploads[index], mergePolicy));
+      }
+      const uploadTaskId = uploadTaskIds.join(', ');
       await this.ensureActive(executionId);
       await this.prisma.menuCopyExecution.update({
         where: { id: executionId },
@@ -130,17 +135,17 @@ export class MenuCopyProcessor extends WorkerHost {
     return appShopId;
   }
 
-  private async upload(authToken: string, menu: Record<string, unknown>, mergePolicy: number) {
+  private async upload(authToken: string, menu: FlatGroceryUpload, mergePolicy: number) {
     const endpoint = 'POST /v3/item/item/uploadGrocery';
     const payload: Record<string, unknown> = {
       auth_token: authToken,
-      menus: Array.isArray(menu.menus) ? menu.menus : [],
-      categories: Array.isArray(menu.categories) ? menu.categories : [],
-      items: Array.isArray(menu.items) ? menu.items : [],
+      menus: menu.menus,
+      categories: menu.categories,
+      items: menu.items,
       merge_policy: mergePolicy,
     };
-    if (Array.isArray(menu.modifier_groups) && menu.modifier_groups.length) {
-      payload.modifier_groups = menu.modifier_groups;
+    if (menu.modifierGroups.length) {
+      payload.modifier_groups = menu.modifierGroups;
     }
     const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/uploadGrocery`, {
       method: 'POST',

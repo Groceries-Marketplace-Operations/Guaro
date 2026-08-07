@@ -14,7 +14,8 @@ import {
   isRawShopId,
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
-import { selectMenuUpcBatches, selectMenuUpcs } from './targeted-menu.util';
+import { buildFlatGroceryUploads, FlatGroceryUpload } from './grocery-destination-menu.util';
+import { selectMenuUpcs } from './targeted-menu.util';
 
 class TargetedMenuCancelledError extends Error {}
 
@@ -92,28 +93,22 @@ export class TargetedMenuProcessor extends WorkerHost {
           const downloaded = await downloadMenu(authToken, () => this.ensureActive(executionId));
           const sourceMenu = parseJsonKeepingIds(downloaded.rawJson) as Record<string, unknown>;
           const uploadTaskIds: string[] = [];
-          const foundUpcs = new Set<string>();
-          const missingUpcs = new Set<string>();
-          for (const selected of selectMenuUpcBatches(sourceMenu, rule.upcs)) {
-            await this.ensureActive(executionId);
-            selected.foundUpcs.forEach(upc => foundUpcs.add(upc));
-            selected.missingUpcs.forEach(upc => missingUpcs.add(upc));
-            if (!selected.items.length) continue;
-            if (selected.categories.length > 30) {
-              throw new Error(`Selected UPCs require ${selected.categories.length} categories; DiDi accepts a maximum of 30 per upload`);
-            }
-            uploadTaskIds.push(await this.upload(authToken, selected));
-          }
-          if (!uploadTaskIds.length) {
+          const selected = selectMenuUpcs(sourceMenu, rule.upcs);
+          if (!selected.items.length) {
             throw new Error(`None of the ${rule.upcs.length} requested UPCs exist in the downloaded menu`);
+          }
+          const uploads = buildFlatGroceryUploads(sourceMenu, selected.items, selected.modifierGroups);
+          for (const upload of uploads) {
+            await this.ensureActive(executionId);
+            uploadTaskIds.push(await this.upload(authToken, upload));
           }
           results.push({
             shopId: target.shopId,
             appShopId: target.appShopId,
-            status: missingUpcs.size ? 'partial_success' : 'done',
+            status: selected.missingUpcs.length ? 'partial_success' : 'done',
             requestedUpcs: rule.upcs.length,
-            uploadedUpcs: foundUpcs.size,
-            missingUpcs: [...missingUpcs],
+            uploadedUpcs: selected.foundUpcs.length,
+            missingUpcs: selected.missingUpcs,
             exportTaskId: downloaded.taskId,
             uploadTaskId: uploadTaskIds.join(', '),
             uploadTaskIds,
@@ -197,7 +192,7 @@ export class TargetedMenuProcessor extends WorkerHost {
     }));
   }
 
-  private async upload(authToken: string, selected: ReturnType<typeof selectMenuUpcs>) {
+  private async upload(authToken: string, selected: FlatGroceryUpload) {
     const endpoint = 'POST /v3/item/item/uploadGrocery';
     const payload: Record<string, unknown> = {
       auth_token: authToken,

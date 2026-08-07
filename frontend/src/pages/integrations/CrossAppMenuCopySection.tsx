@@ -87,7 +87,7 @@ export default function CrossAppMenuCopySection() {
         <div>
           <strong>Cross-App Menu Copy</strong>
           <p className="text-muted" style={{ marginTop: 5, fontSize: 12 }}>
-            Descarga el menú completo de un shop_id con las credenciales de su aplicación y lo carga en un shop_id perteneciente a otra aplicación.
+            Copia los ítems entre aplicaciones y crea categorías planas Cate_Grocery_N de hasta 3,500 ítems. No copia categorías ni subcategorías de origen.
           </p>
         </div>
         <button className="btn btn-primary" onClick={() => { setForm(initialForm()); setError(''); setOpen(true); }}>+ Nueva copia</button>
