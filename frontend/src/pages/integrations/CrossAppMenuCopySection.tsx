@@ -47,6 +47,7 @@ export default function CrossAppMenuCopySection() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<FormState>(initialForm);
   const [error, setError] = useState('');
+  const [sourceExecution, setSourceExecution] = useState<MenuCopyExecution | null>(null);
   const { data: executions = [], isLoading } = useQuery<MenuCopyExecution[]>({
     queryKey: ['menu-copy-executions'],
     queryFn: () => menuCopyApi.list().then(response => response.data),
@@ -64,7 +65,7 @@ export default function CrossAppMenuCopySection() {
       mergePolicy: form.mergePolicy,
       uploadEndpoint: form.uploadEndpoint,
     }),
-    onSuccess: () => { refresh(); setOpen(false); setForm(initialForm()); setError(''); },
+    onSuccess: () => { refresh(); setOpen(false); setForm(initialForm()); setSourceExecution(null); setError(''); },
     onError: reason => setError(apiError(reason)),
   });
   const stop = useMutation({
@@ -83,6 +84,29 @@ export default function CrossAppMenuCopySection() {
     create.mutate();
   };
 
+  const openCreate = () => {
+    setSourceExecution(null);
+    setForm(initialForm());
+    setError('');
+    setOpen(true);
+  };
+
+  const openFromExecution = (execution: MenuCopyExecution) => {
+    setSourceExecution(execution);
+    setForm({
+      sourceApplicationId: execution.sourceApplicationId,
+      sourceApplicationSearch: `${execution.sourceApplication.appName} · ${execution.sourceApplication.country} · ${execution.sourceApplication.appId}`,
+      sourceShopId: execution.sourceShopId,
+      targetApplicationId: execution.targetApplicationId,
+      targetApplicationSearch: `${execution.targetApplication.appName} · ${execution.targetApplication.country} · ${execution.targetApplication.appId}`,
+      targetShopId: execution.targetShopId,
+      mergePolicy: execution.mergePolicy,
+      uploadEndpoint: execution.uploadEndpoint ?? 'uploadGrocery',
+    });
+    setError('');
+    setOpen(true);
+  };
+
   return <section style={{ marginBottom: 22 }}>
     <div className="card" style={{ padding: 18, marginBottom: 14 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
@@ -92,7 +116,7 @@ export default function CrossAppMenuCopySection() {
             Copia los ítems entre aplicaciones en categorías planas Cate_Grocery_N de hasta 3,500 ítems. Cada ítem conserva solo UPC, app_item_id, precio, precio de actividad, nombre, descripción y estado.
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => { setForm(initialForm()); setError(''); setOpen(true); }}>+ Nueva copia</button>
+        <button className="btn btn-primary" onClick={openCreate}>+ Nueva copia</button>
       </div>
     </div>
 
@@ -119,17 +143,21 @@ export default function CrossAppMenuCopySection() {
               {(execution.itemCount > 0 || execution.categoryCount > 0) && <p style={{ marginTop: 6, fontSize: 12 }}>{execution.itemCount} ítems · {execution.categoryCount} categorías · taskID carga: {execution.uploadTaskId ?? '—'}</p>}
               {execution.errorMessage && <p style={{ color: 'var(--red)', marginTop: 7 }}>{execution.errorMessage}</p>}
             </div>
-            {running && <button className="btn btn-ghost btn-sm" disabled={stop.isPending} onClick={() => stop.mutate(execution.id)}>Detener</button>}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {!running && <button className="btn btn-ghost btn-sm" onClick={() => openFromExecution(execution)}>Editar y repetir</button>}
+              {running && <button className="btn btn-ghost btn-sm" disabled={stop.isPending} onClick={() => stop.mutate(execution.id)}>Detener</button>}
+            </div>
           </div>
         </article>;
       })}
     </div>
 
-    {open && <Modal title="Copiar menú entre aplicaciones" onClose={() => setOpen(false)} footer={<>
+    {open && <Modal title={sourceExecution ? 'Editar y volver a ejecutar la copia' : 'Copiar menú entre aplicaciones'} onClose={() => setOpen(false)} footer={<>
       <button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancelar</button>
-      <button className="btn btn-primary" disabled={!valid || create.isPending} onClick={submit}>{create.isPending ? 'Enviando…' : 'Iniciar copia'}</button>
+      <button className="btn btn-primary" disabled={!valid || create.isPending} onClick={submit}>{create.isPending ? 'Enviando…' : sourceExecution ? 'Crear nueva ejecución' : 'Iniciar copia'}</button>
     </>}>
       {error && <div className="error-banner">{error}</div>}
+      {sourceExecution && <div className="alert alert-info" style={{ marginBottom: 14 }}>Se cargaron los valores de la ejecución anterior. Puedes modificar cualquier campo; al confirmar se creará una ejecución nueva y el historial original no cambiará.</div>}
       <div className="alert alert-info" style={{ marginBottom: 14 }}>Usa shop_id de 19 dígitos. El sistema resuelve internamente el app_shop_id en cada aplicación.</div>
       <div className="form-row">
         <div>

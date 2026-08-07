@@ -23,6 +23,8 @@ interface RuleForm {
   maxFilesPerRun: number;
 }
 
+type CustomIntegrationSection = 'sftp' | 'targeted-menu' | 'cross-app';
+
 const runningStatuses = new Set(['pending', 'running']);
 
 function initialForm(kind: FileIntegrationKind): RuleForm {
@@ -61,6 +63,8 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
   const [form, setForm] = useState<RuleForm>(() => initialForm(kind));
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [customSection, setCustomSection] = useState<CustomIntegrationSection>('sftp');
+  const showSftp = !isFilter || customSection === 'sftp';
 
   const { data: rules = [], isLoading } = useQuery<FileIntegrationRule[]>({
     queryKey: ['file-integrations', kind],
@@ -122,18 +126,34 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
         <div className="page-header-info">
           <h1>{title}</h1>
           <p>{isFilter
-            ? 'Elimina filas por monto y reemplaza el archivo SFTP original mediante respaldo, verificación y sustitución controlada.'
+            ? 'Herramientas especializadas para automatizaciones SFTP y administración de menús entre tiendas y aplicaciones.'
             : 'Lee la promoción vigente más reciente por tienda, la almacena localmente y registra volumen, estado y duración.'}</p>
         </div>
-        <button className="btn btn-primary" onClick={openCreate}>+ Nueva configuración</button>
+        {showSftp && <button className="btn btn-primary" onClick={openCreate}>+ Nueva configuración</button>}
       </div>
-      <div className="alert alert-info" style={{ marginBottom: 18 }}>
+      {isFilter && <nav className="custom-integration-nav" aria-label="Herramientas de integración">
+        <button type="button" className={customSection === 'sftp' ? 'is-active' : ''} onClick={() => setCustomSection('sftp')} aria-selected={customSection === 'sftp'}>
+          <span className="custom-integration-icon">SF</span>
+          <span><strong>Procesamiento SFTP</strong><small>Filtrado, respaldo y sustitución controlada de archivos</small></span>
+          <span className="badge">{rules.length} reglas</span>
+        </button>
+        <button type="button" className={customSection === 'targeted-menu' ? 'is-active' : ''} onClick={() => setCustomSection('targeted-menu')} aria-selected={customSection === 'targeted-menu'}>
+          <span className="custom-integration-icon">TM</span>
+          <span><strong>Targeted Menu Upload</strong><small>Carga UPC seleccionados en tiendas específicas</small></span>
+        </button>
+        <button type="button" className={customSection === 'cross-app' ? 'is-active' : ''} onClick={() => setCustomSection('cross-app')} aria-selected={customSection === 'cross-app'}>
+          <span className="custom-integration-icon">CA</span>
+          <span><strong>Cross-App Menu Copy</strong><small>Copia menús entre aplicaciones y reutiliza ejecuciones</small></span>
+        </button>
+      </nav>}
+      {showSftp && <div className="alert alert-info" style={{ marginBottom: 18 }}>
         {isFilter
           ? 'El sistema registra un solo estado por archivo, procesa primero los más antiguos y conserva pendientes o fallidos para la siguiente ejecución. Antes de reemplazar, genera Antes/Después, verifica el temporal y mueve el original a /upload/.tequila-backup/<ejecución>/.'
           : 'Funciona como Auto Menu Fetch para promociones: conserva una instantánea local por App Shop ID. Las credenciales permanecen cifradas.'}
-      </div>
-      {isFilter && <TargetedMenuSection />}
-      {isFilter && <CrossAppMenuCopySection />}
+      </div>}
+      {isFilter && customSection === 'targeted-menu' && <TargetedMenuSection />}
+      {isFilter && customSection === 'cross-app' && <CrossAppMenuCopySection />}
+      {showSftp && <>
       {isLoading && <p className="text-muted">Cargando…</p>}
       {!isLoading && rules.length === 0 && <div className="empty-state"><p>No hay configuraciones.</p></div>}
       <div style={{ display: 'grid', gap: 14 }}>
@@ -201,6 +221,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           </section>;
         })}
       </div>
+      </>}
     </main>
 
     {open && <Modal title={editing ? 'Editar configuración' : 'Nueva configuración'} onClose={() => setOpen(false)} footer={<>
