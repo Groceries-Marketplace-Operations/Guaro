@@ -68,6 +68,55 @@ export class TasksController {
     response.send(Buffer.from(buffer));
   }
 
+  @Get('templates/add-shops.xlsx')
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  async addShopsTemplate(@Res() response: Response) {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Tequila 1.0';
+    const sheet = workbook.addWorksheet('Shops');
+    sheet.addRow([
+      'shop_id', 'app_shop_id', 'picking_model', 'driver_cash_blocked',
+      'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+    ]);
+    sheet.addRow([
+      '5764607795237028465', 'MX-SORIANA-001', 'store_picking', true,
+      '08:00-22:00', '08:00-22:00', '08:00-22:00', '08:00-22:00', '08:00-22:00', '08:00-22:00', 'Closed',
+    ]);
+    sheet.addRow([
+      '5764607795237028466', 'MX-SORIANA-002', 'qr_code_2in1', true,
+      '00:00-24:00', '00:00-24:00', '00:00-24:00', '00:00-24:00', '00:00-24:00', '09:00-18:00', '09:00-18:00',
+    ]);
+    const header = sheet.getRow(1);
+    header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF6200' } };
+    header.alignment = { vertical: 'middle', horizontal: 'center' };
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+    sheet.autoFilter = { from: 'A1', to: 'K1' };
+    sheet.columns.forEach((column, index) => { column.width = index < 4 ? 24 : 18; });
+    for (let row = 2; row <= 1001; row += 1) {
+      sheet.getCell(row, 3).dataValidation = {
+        type: 'list', allowBlank: false,
+        formulae: ['"store_picking,qr_code_2in1,prepaid_card_2in1"'],
+      };
+      sheet.getCell(row, 4).dataValidation = { type: 'list', allowBlank: true, formulae: ['"TRUE,FALSE"'] };
+    }
+    const instructions = workbook.addWorksheet('Instructions');
+    instructions.addRows([
+      ['Field', 'Requirement'],
+      ['shop_id', 'Required. DiDi shop_id: exactly 19 digits and begins with 57.'],
+      ['app_shop_id', 'Required. Store identifier used by the selected brand application.'],
+      ['picking_model', 'Required: store_picking, qr_code_2in1, or prepaid_card_2in1.'],
+      ['driver_cash_blocked', 'Optional. Defaults to TRUE. Use FALSE only when explicitly authorized.'],
+      ['Monday ... Sunday', 'Use HH:MM-HH:MM, comma-separated split ranges, 00:00-24:00, or Closed.'],
+    ]);
+    instructions.getRow(1).font = { bold: true };
+    instructions.columns = [{ width: 28 }, { width: 90 }];
+    const buffer = await workbook.xlsx.writeBuffer();
+    response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    response.setHeader('Content-Disposition', 'attachment; filename="tequila-add-shops-template.xlsx"');
+    response.send(Buffer.from(buffer));
+  }
+
   @Get(':id')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
   findOne(@Param('id') id: string, @CurrentUser() u: JwtUser) {

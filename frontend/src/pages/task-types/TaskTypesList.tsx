@@ -14,7 +14,7 @@ const PlusIcon = () => (
   </svg>
 );
 
-const LIMIT = 50;
+const LIMIT = 200;
 
 export default function TaskTypesList() {
   const nav = useNavigate();
@@ -60,6 +60,28 @@ export default function TaskTypesList() {
     } finally { setSaving(false); }
   };
 
+  const moveTaskType = async (taskType: TaskType, direction: -1 | 1) => {
+    const siblings = types.filter(item => item.sectionId === taskType.sectionId);
+    const index = siblings.findIndex(item => item.id === taskType.id);
+    const target = siblings[index + direction];
+    if (!target) return;
+
+    setSaving(true);
+    setErr('');
+    try {
+      const reordered = [...siblings];
+      [reordered[index], reordered[index + direction]] = [reordered[index + direction], reordered[index]];
+      await taskTypesApi.reorder(reordered.map((item, order) => ({ id: item.id, order })));
+      await qc.invalidateQueries({ queryKey: ['task-types'] });
+    } catch (ex: unknown) {
+      const error = ex as { response?: { data?: { message?: string | string[] } } };
+      const message = error.response?.data?.message;
+      setErr(Array.isArray(message) ? message.join(', ') : (message ?? 'No se pudo actualizar el orden.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const subtitle = total === 1
     ? t('pages.taskTypesList.subtitle').replace('{total}', String(total))
     : t('pages.taskTypesList.subtitlePlural').replace('{total}', String(total));
@@ -86,7 +108,10 @@ export default function TaskTypesList() {
             onChange={e => setQ(e.target.value)}
             style={{ maxWidth: 280 }}
           />
+          <span className="text-muted text-sm">Usa las flechas de cada tarjeta para ordenar las tareas dentro de su sección.</span>
         </div>
+
+        {err && !open && <div className="error-banner" style={{ marginBottom: 16 }}>{err}</div>}
 
         {isLoading ? (
           <p className="text-muted">{t('common.loading')}</p>
@@ -127,6 +152,28 @@ export default function TaskTypesList() {
                 </div>
                 <div style={{ marginTop: 8, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   {t('pages.taskTypesList.sectionLabel')}: {tp.section?.name ?? '—'}
+                </div>
+                <div style={{ marginTop: 12, display: 'flex', gap: 6 }}>
+                  {(() => {
+                    const siblings = types.filter(item => item.sectionId === tp.sectionId);
+                    const index = siblings.findIndex(item => item.id === tp.id);
+                    return <>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        aria-label={`Subir ${tp.name}`}
+                        disabled={saving || index <= 0}
+                        onClick={event => { event.stopPropagation(); void moveTaskType(tp, -1); }}
+                      >↑</button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        aria-label={`Bajar ${tp.name}`}
+                        disabled={saving || index < 0 || index >= siblings.length - 1}
+                        onClick={event => { event.stopPropagation(); void moveTaskType(tp, 1); }}
+                      >↓</button>
+                    </>;
+                  })()}
                 </div>
               </div>
             ))}

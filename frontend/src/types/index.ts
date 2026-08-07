@@ -23,6 +23,7 @@ export interface Account {
 export interface Section {
   id: string;
   name: string;
+  order: number;
   createdAt: string;
   _count?: { taskTypes: number; accounts: number };
 }
@@ -80,6 +81,7 @@ export interface TaskType {
   description?: string;
   schedulable: boolean;
   active: boolean;
+  order: number;
   sectionId: string;
   section?: Section;
   stepDefinitions?: StepDefinition[];
@@ -92,6 +94,7 @@ export interface TaskType {
 export type MenuIntegration = 'api' | 'api_whitelist' | 'sftp' | 'spreadsheets' | 'bapp';
 export type PickingMode = 'merchant_picking_bapp' | 'merchant_picking_dapp' | 'dos_en_uno';
 export type PaymentMode = 'food_mode' | 'prepaid_card' | 'qr_code';
+export type ShopPickingModel = 'store_picking' | 'qr_code_2in1' | 'prepaid_card_2in1';
 
 export interface Application {
   id: string;
@@ -135,6 +138,8 @@ export interface Shop {
   city?: string;
   address?: string;
   status: ShopStatus;
+  pickingModel?: ShopPickingModel;
+  driverCashBlocked?: boolean;
   brand?: Brand;
   brandId: string;
   latitude?: string;

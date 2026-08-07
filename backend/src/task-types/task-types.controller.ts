@@ -53,14 +53,20 @@ export class TaskTypesController {
 
   @Get(':id')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.user, AccountRole.bpo, AccountRole.director)
-  findOne(@Param('id') id: string) {
-    return this.taskTypesService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() u: JwtUser) {
+    return this.taskTypesService.findOneForUser(id, u.roles);
   }
 
   @Post()
   @Roles(AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateTaskTypeDto) {
     return this.taskTypesService.create(dto, u.roles, u.sectionId);
+  }
+
+  @Patch('reorder')
+  @Roles(AccountRole.super_admin)
+  reorder(@Body('order') order: { id: string; order: number }[]) {
+    return this.taskTypesService.reorderTaskTypes(order);
   }
 
   @Patch(':id')

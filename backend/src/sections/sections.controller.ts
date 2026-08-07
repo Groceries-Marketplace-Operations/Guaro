@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
 import { AccountRole } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
@@ -22,6 +22,24 @@ export class SectionsController {
   @Roles(AccountRole.super_admin)
   create(@Body('name') name: string) {
     return this.sectionsService.create(name);
+  }
+
+  @Get('role-access')
+  @Roles(AccountRole.super_admin)
+  roleAccess() {
+    return this.sectionsService.getRoleAccess();
+  }
+
+  @Put('role-access/:role')
+  @Roles(AccountRole.super_admin)
+  updateRoleAccess(@Param('role') role: AccountRole, @Body('sectionIds') sectionIds: string[]) {
+    return this.sectionsService.updateRoleAccess(role, sectionIds);
+  }
+
+  @Patch('reorder')
+  @Roles(AccountRole.super_admin)
+  reorder(@Body('order') order: { id: string; order: number }[]) {
+    return this.sectionsService.reorder(order);
   }
 
   @Patch(':id')

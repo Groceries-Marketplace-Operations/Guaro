@@ -1,4 +1,7 @@
 import { Logger } from '@nestjs/common';
+import { DayOfWeek, ShopPickingModel } from '@prisma/client';
+import * as ExcelJS from 'exceljs';
+import { join } from 'path';
 import { registerHandler, HandlerContext } from '../handler.processor';
 import { downloadMenu } from '../../integrations/auto-turn-off-api.util';
 import {
@@ -9,11 +12,59 @@ import {
   fetchWithEndpointContext,
   getAuthToken,
   isRawShopId,
+  isClosed,
   parseJsonKeepingIds,
+  parseScheduleString,
   sleep,
 } from './didi-food.util';
 
 const logger = new Logger('store_operations');
+
+const SHOP_DAY_COLUMNS: Array<{ header: string; day: DayOfWeek }> = [
+  { header: 'monday', day: DayOfWeek.monday },
+  { header: 'tuesday', day: DayOfWeek.tuesday },
+  { header: 'wednesday', day: DayOfWeek.wednesday },
+  { header: 'thursday', day: DayOfWeek.thursday },
+  { header: 'friday', day: DayOfWeek.friday },
+  { header: 'saturday', day: DayOfWeek.saturday },
+  { header: 'sunday', day: DayOfWeek.sunday },
+];
+
+function normalizedHeader(value: unknown) {
+  return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function cellText(row: ExcelJS.Row, column: number) {
+  return row.getCell(column).text?.trim() ?? String(row.getCell(column).value ?? '').trim();
+}
+
+function clock(minutes: number) {
+  const normalized = minutes === 1440 ? 0 : minutes;
+  return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+}
+
+function parseCashBlock(value: string) {
+  if (!value) return true;
+  const normalized = value.trim().toLowerCase();
+  if (['true', '1', 'yes', 'si', 'sí'].includes(normalized)) return true;
+  if (['false', '0', 'no'].includes(normalized)) return false;
+  throw new Error(`driver_cash_blocked must be TRUE or FALSE, received "${value}"`);
+}
+
+function parsePickingModel(value: string): ShopPickingModel {
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const aliases: Record<string, ShopPickingModel> = {
+    store_picking: ShopPickingModel.store_picking,
+    storepicking: ShopPickingModel.store_picking,
+    qr_code_2in1: ShopPickingModel.qr_code_2in1,
+    qrcode2in1: ShopPickingModel.qr_code_2in1,
+    prepaid_card_2in1: ShopPickingModel.prepaid_card_2in1,
+    prepaidcard2in1: ShopPickingModel.prepaid_card_2in1,
+  };
+  const model = aliases[normalized] ?? aliases[normalized.replace(/_/g, '')];
+  if (!model) throw new Error(`Unknown picking_model "${value}"`);
+  return model;
+}
 
 function ids(value: string | null): string[] {
   return [...new Set((value ?? '')
@@ -182,29 +233,51 @@ async function checkShopIntegration(ctx: HandlerContext) {
 }
 
 async function addShopsToIntegration(ctx: HandlerContext) {
-  const { brand, application } = requireBrand(ctx);
-  const { requested, resolved, missing: unresolved } = await resolveTargets(ctx);
-  const confirmed: typeof resolved = [];
-  const missing = [...unresolved];
-  for (const value of resolved) {
-    if (isRawShopId(value.shopId)) {
-      confirmed.push(value);
-      continue;
-    }
+  if (!ctx.brand) throw new Error('Task has no brand linked');
+  const fileKey = ctx.field('Shop Integration Excel');
+  if (!fileKey || !/^[a-f0-9-]+\.xlsx$/i.test(fileKey)) throw new Error('A validated Shop Integration Excel file is required');
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(join(process.cwd(), 'uploads', 'temp', fileKey));
+  const sheet = workbook.getWorksheet('Shops') ?? workbook.worksheets[0];
+  if (!sheet) throw new Error('The Excel workbook has no Shops worksheet');
+
+  const columns = new Map<string, number>();
+  sheet.getRow(1).eachCell((cell, column) => columns.set(normalizedHeader(cell.text), column));
+  const required = ['shopid', 'appshopid', 'pickingmodel', ...SHOP_DAY_COLUMNS.map(item => item.header)];
+  const missingHeaders = required.filter(header => !columns.has(header));
+  if (missingHeaders.length) throw new Error(`Missing Excel columns: ${missingHeaders.join(', ')}`);
+
+  const shops = [] as Parameters<HandlerContext['syncBrandShops']>[0];
+  const errors: string[] = [];
+  for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+    const row = sheet.getRow(rowNumber);
+    const shopId = cellText(row, columns.get('shopid')!);
+    const appShopId = cellText(row, columns.get('appshopid')!);
+    if (!shopId && !appShopId) continue;
     try {
-      await getAuthToken(application.appId, application.appSecret, value.appShopId);
-      confirmed.push(value);
+      if (!isRawShopId(shopId)) throw new Error('shop_id must contain 19 digits and begin with 57');
+      if (!appShopId) throw new Error('app_shop_id is required');
+      const pickingModel = parsePickingModel(cellText(row, columns.get('pickingmodel')!));
+      const cashColumn = columns.get('drivercashblocked');
+      const driverCashBlocked = parseCashBlock(cashColumn ? cellText(row, cashColumn) : '');
+      const schedules = SHOP_DAY_COLUMNS.flatMap(({ header, day }) => {
+        const value = cellText(row, columns.get(header)!);
+        if (isClosed(value)) return [];
+        return parseScheduleString(value).map(range => ({ day, openTime: clock(range.begin), closeTime: clock(range.end) }));
+      });
+      if (!schedules.length) throw new Error('at least one day must be open');
+      shops.push({ shopId, appShopId, pickingModel, driverCashBlocked, schedules });
     } catch (error) {
-      missing.push(value.shopId);
-      ctx.addNote(`✗ ${value.shopId}: ${(error as Error).message}`);
+      errors.push(`Row ${rowNumber}: ${(error as Error).message}`);
     }
   }
-  if (!confirmed.length) throw new Error('None of the requested shops belongs to the selected brand application');
-  const sync = await ctx.syncBrandShops(confirmed.map(value => ({ shopId: value.shopId, appShopId: value.appShopId })));
-  confirmed.forEach(value => ctx.addNote(`✓ ${value.shopId}: linked locally as ${value.appShopId}`));
-  unresolved.forEach(shopId => ctx.addNote(`✗ ${shopId}: not returned by POST /v1/shop/shop/list`));
-  logger.log(`Added/synced ${sync.total} shops to local integration for ${brand.brandName}`);
-  return { requested: requested.length, confirmed: confirmed.length, missingShopIds: missing, ...sync };
+  if (errors.length) throw new Error(`Shop integration Excel has ${errors.length} invalid row(s): ${errors.slice(0, 20).join('; ')}`);
+  if (!shops.length) throw new Error('Shop integration Excel has no data rows');
+
+  const sync = await ctx.syncBrandShops(shops);
+  shops.forEach(value => ctx.addNote(`✓ ${value.shopId}: ${value.appShopId}, ${value.pickingModel}, cash blocked=${value.driverCashBlocked !== false}`));
+  logger.log(`Added/synced ${sync.total} shops to local integration for ${ctx.brand.brandName}`);
+  return { requested: shops.length, cashBlockDefault: true, ...sync };
 }
 
 registerHandler('update_shop_head_image', updateShopHeadImage);

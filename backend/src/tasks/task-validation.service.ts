@@ -1,11 +1,12 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AccountRole, FormFieldTipo } from '@prisma/client';
+import { FormFieldTipo } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
 import { unlink } from 'fs/promises';
 import { extname } from 'path';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { isClosed, normalizeDate, parseScheduleString } from '../queue/handlers/didi-food.util';
+import { SectionAccessService } from '../sections/section-access.service';
 
 type CheckStatus = 'passed' | 'warning' | 'failed';
 
@@ -29,6 +30,7 @@ const KNOWN_FILE_HANDLERS = new Set([
   'stock_update',
   'library_menu_upload',
   'scheduled_targeted_menu_upload',
+  'add_shops_to_integration',
 ]);
 
 const MAX_DETAIL_ITEMS = 20;
@@ -66,6 +68,8 @@ function expectedColumns(handlerName?: string): string[] {
       return ['app_shop_id / shop_id', 'UPC', 'Stock'];
     case 'library_menu_upload':
       return ['app_shop_id / shop_id', 'UPC', 'Price', 'Discount (optional)'];
+    case 'add_shops_to_integration':
+      return ['shop_id', 'app_shop_id', 'picking_model', 'driver_cash_blocked', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     default:
       return ['Use the columns from the configured task template'];
   }
@@ -163,7 +167,7 @@ function formatExamples(
 
 @Injectable()
 export class TaskValidationService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private sectionAccess: SectionAccessService) {}
 
   async assertTaskTypeAccess(taskTypeId: string, user: JwtUser) {
     const taskType = await this.prisma.taskType.findUnique({
@@ -183,9 +187,7 @@ export class TaskValidationService {
       throw new NotFoundException('Task type is not available');
     }
 
-    const isSuperAdmin = user.roles.includes(AccountRole.super_admin);
-    const isSectionAdmin = user.roles.includes(AccountRole.admin) && !isSuperAdmin;
-    if (isSectionAdmin && taskType.sectionId !== user.sectionId) {
+    if (!(await this.sectionAccess.canAccess(user.roles, taskType.sectionId))) {
       throw new ForbiddenException('You do not have access to this task type');
     }
 
@@ -385,6 +387,7 @@ export class TaskValidationService {
       case 'schedule_update_dates': return this.validateSpecificDates(sheet);
       case 'stock_update': return this.validateStock(sheet);
       case 'library_menu_upload': return this.validateMenu(sheet);
+      case 'add_shops_to_integration': return this.validateShopOnboarding(sheet);
       default: return this.validateGeneric(sheet);
     }
   }
@@ -573,6 +576,49 @@ export class TaskValidationService {
       if (!issues.slice(before).some(issue => issue.severity !== 'warning')) validRows += 1;
     }
     return this.sheetResult(headerOk, menu ? 'Expected: app_shop_id, UPC, Price, Discount (optional).' : 'Expected: app_shop_id, UPC, Stock.', issues, validRows, totalRows);
+  }
+
+  private validateShopOnboarding(sheet: ExcelJS.Worksheet) {
+    const expected = ['shopid', 'appshopid', 'pickingmodel', 'drivercashblocked', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const header = sheet.getRow(1);
+    const headerOk = expected.every((value, index) => normalizeHeader(header.getCell(index + 1).value) === value);
+    const issues: ValidationIssue[] = [];
+    let totalRows = 0;
+    let validRows = 0;
+    const validModels = new Set(['storepicking', 'qrcode2in1', 'prepaidcard2in1']);
+    const validBooleans = new Set(['', 'true', 'false', '1', '0', 'yes', 'no', 'si']);
+
+    for (let rowNumber = 2; rowNumber <= sheet.actualRowCount; rowNumber += 1) {
+      const row = sheet.getRow(rowNumber);
+      if (isBlankRow(row)) continue;
+      totalRows += 1;
+      const before = issues.length;
+      const shopId = cellText(row.getCell(1));
+      const appShopId = cellText(row.getCell(2));
+      const pickingModel = normalizeHeader(row.getCell(3).value);
+      const cashBlock = normalizeHeader(row.getCell(4).value);
+      if (!/^57\d{17}$/.test(shopId)) pushIssue(issues, rowNumber, 'shop_id must contain 19 digits and begin with 57.');
+      if (!appShopId) pushIssue(issues, rowNumber, 'app_shop_id is required.');
+      if (!validModels.has(pickingModel)) pushIssue(issues, rowNumber, 'picking_model must be store_picking, qr_code_2in1, or prepaid_card_2in1.');
+      if (!validBooleans.has(cashBlock)) pushIssue(issues, rowNumber, 'driver_cash_blocked must be TRUE or FALSE; blank defaults to TRUE.');
+      let openDays = 0;
+      for (let column = 5; column <= 11; column += 1) {
+        const raw = cellText(row.getCell(column));
+        if (isClosed(raw)) continue;
+        openDays += 1;
+        try { parseScheduleString(raw); }
+        catch (error) { pushIssue(issues, rowNumber, `Column ${column}: ${(error as Error).message}`); }
+      }
+      if (openDays === 0) pushIssue(issues, rowNumber, 'At least one day must be open.');
+      if (issues.length === before) validRows += 1;
+    }
+    return this.sheetResult(
+      headerOk,
+      'Expected: shop_id, app_shop_id, picking_model, driver_cash_blocked, Monday ... Sunday.',
+      issues,
+      validRows,
+      totalRows,
+    );
   }
 
   private validateGeneric(sheet: ExcelJS.Worksheet) {

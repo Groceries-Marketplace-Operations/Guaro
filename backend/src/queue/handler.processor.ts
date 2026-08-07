@@ -1,7 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { StepFailureReason } from '@prisma/client';
+import { DayOfWeek, ShopPickingModel, StepFailureReason } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from '../tasks/task-engine.service';
 import { WebhookSenderService, WebhookPayload } from '../webhooks/webhook-sender.service';
@@ -46,9 +46,13 @@ export interface BrandItemExportRow {
 export interface BrandShopSyncInput {
   shopId: string;
   appShopId: string;
+  name?: string;
   city?: string;
   latitude?: string | number;
   longitude?: string | number;
+  pickingModel?: ShopPickingModel;
+  driverCashBlocked?: boolean;
+  schedules?: Array<{ day: DayOfWeek; openTime: string; closeTime: string }>;
 }
 
 export interface StorePromotionExportRow {
@@ -271,28 +275,51 @@ export class HandlerProcessor extends WorkerHost {
 
         for (let offset = 0; offset < unique.length; offset += 100) {
           const chunk = unique.slice(offset, offset + 100);
-          await this.prisma.$transaction(chunk.map(shop => this.prisma.shop.upsert({
-            where: { shopId: shop.shopId },
-            create: {
-              shopId: shop.shopId,
-              appShopId: shop.appShopId,
-              brandId: brand.id,
-              city: shop.city || null,
-              latitude: shop.latitude === undefined || shop.latitude === '' ? null : String(shop.latitude),
-              longitude: shop.longitude === undefined || shop.longitude === '' ? null : String(shop.longitude),
-              status: 'integrated',
-              createdById: task?.createdById ?? undefined,
-            },
-            update: {
-              appShopId: shop.appShopId,
-              brandId: brand.id,
-              status: 'integrated',
-              deletedAt: null,
-              ...(shop.city !== undefined && { city: shop.city || null }),
-              ...(shop.latitude !== undefined && shop.latitude !== '' && { latitude: String(shop.latitude) }),
-              ...(shop.longitude !== undefined && shop.longitude !== '' && { longitude: String(shop.longitude) }),
-            },
-          })));
+          await this.prisma.$transaction(async tx => {
+            for (const shop of chunk) {
+              const saved = await tx.shop.upsert({
+                where: { shopId: shop.shopId },
+                create: {
+                  shopId: shop.shopId,
+                  appShopId: shop.appShopId,
+                  brandId: brand.id,
+                  name: shop.name || null,
+                  city: shop.city || null,
+                  latitude: shop.latitude === undefined || shop.latitude === '' ? null : String(shop.latitude),
+                  longitude: shop.longitude === undefined || shop.longitude === '' ? null : String(shop.longitude),
+                  pickingModel: shop.pickingModel,
+                  driverCashBlocked: shop.driverCashBlocked ?? true,
+                  status: 'integrated',
+                  createdById: task?.createdById ?? undefined,
+                },
+                update: {
+                  appShopId: shop.appShopId,
+                  brandId: brand.id,
+                  status: 'integrated',
+                  deletedAt: null,
+                  ...(shop.name !== undefined && { name: shop.name || null }),
+                  ...(shop.city !== undefined && { city: shop.city || null }),
+                  ...(shop.latitude !== undefined && shop.latitude !== '' && { latitude: String(shop.latitude) }),
+                  ...(shop.longitude !== undefined && shop.longitude !== '' && { longitude: String(shop.longitude) }),
+                  ...(shop.pickingModel !== undefined && { pickingModel: shop.pickingModel }),
+                  ...(shop.driverCashBlocked !== undefined && { driverCashBlocked: shop.driverCashBlocked }),
+                },
+              });
+              if (shop.schedules !== undefined) {
+                await tx.schedule.deleteMany({ where: { shopId: saved.id } });
+                if (shop.schedules.length) {
+                  await tx.schedule.createMany({
+                    data: shop.schedules.map(schedule => ({
+                      shopId: saved.id,
+                      day: schedule.day,
+                      openTime: new Date(`1970-01-01T${schedule.openTime}:00.000Z`),
+                      closeTime: new Date(`1970-01-01T${schedule.closeTime}:00.000Z`),
+                    })),
+                  });
+                }
+              }
+            }
+          });
         }
 
         const updated = unique.filter(shop => existingIds.has(shop.shopId)).length;

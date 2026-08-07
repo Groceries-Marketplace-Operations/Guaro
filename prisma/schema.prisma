@@ -148,6 +148,12 @@ enum PaymentMode {
   qr_code
 }
 
+enum ShopPickingModel {
+  store_picking
+  qr_code_2in1
+  prepaid_card_2in1
+}
+
 enum ShopStatus {
   lead
   application
@@ -251,12 +257,14 @@ model TaskTypeTemplate {
 model Section {
   id        String   @id @default(uuid()) @db.Uuid
   name      String   @map("nombre")
+  order     Int      @default(0) @map("orden")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  accounts    Account[]
-  taskTypes   TaskType[]
-  invitations Invitation[]
+  accounts     Account[]
+  taskTypes    TaskType[]
+  invitations  Invitation[]
+  roleAccesses RoleSectionAccess[]
 
   @@map("section")
 }
@@ -268,6 +276,7 @@ model TaskType {
   descripcion String?
   schedulable Boolean   @default(false) @map("programable")
   active      Boolean   @default(true) @map("activo")
+  order       Int       @default(0) @map("orden")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
   deletedAt   DateTime? @map("deleted_at")
@@ -280,6 +289,19 @@ model TaskType {
 
   @@index([sectionId])
   @@map("task_type")
+}
+
+model RoleSectionAccess {
+  role      AccountRole @map("rol")
+  sectionId String      @map("section_id") @db.Uuid
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@id([role, sectionId])
+  @@index([sectionId])
+  @@map("role_section_access")
 }
 
 model Handler {
@@ -493,6 +515,8 @@ model Shop {
   city           String?
   address        String?    @db.Text
   status         ShopStatus @default(lead)
+  pickingModel   ShopPickingModel? @map("picking_model")
+  driverCashBlocked Boolean @default(true) @map("driver_cash_blocked")
   createdById    String?    @map("created_by") @db.Uuid
   createdAt      DateTime   @default(now()) @map("created_at")
   updatedAt      DateTime   @updatedAt @map("updated_at")

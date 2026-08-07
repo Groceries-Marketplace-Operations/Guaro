@@ -14,6 +14,7 @@ import { CreateTaskTypeDto } from './dto/create-task-type.dto';
 import { UpdateFormFieldDto } from './dto/update-form-field.dto';
 import { UpdateStepDto } from './dto/update-step.dto';
 import { UpdateTaskTypeDto } from './dto/update-task-type.dto';
+import { SectionAccessService } from '../sections/section-access.service';
 
 const TASK_TYPE_INCLUDE = {
   stepDefinitions: {
@@ -34,7 +35,7 @@ const TASK_TYPE_INCLUDE = {
 
 @Injectable()
 export class TaskTypesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private sectionAccess: SectionAccessService) {}
 
   // ── TaskType ──────────────────────────────────────────────────────────────
 
@@ -43,13 +44,11 @@ export class TaskTypesService {
     sectionId: string | null,
     { page = 1, limit = 50, q }: { page?: number; limit?: number; q?: string } = {},
   ) {
-    const restrictToSection =
-      roles.includes(AccountRole.admin) &&
-      !roles.includes(AccountRole.super_admin);
+    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds(roles);
 
     const where = {
       deletedAt: null,
-      ...(restrictToSection && { sectionId: sectionId ?? undefined }),
+      ...(allowedSectionIds !== null && { sectionId: { in: allowedSectionIds } }),
       ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
     };
 
@@ -63,11 +62,12 @@ export class TaskTypesService {
           descripcion: true,
           active: true,
           schedulable: true,
+          order: true,
           sectionId: true,
-          section: { select: { id: true, name: true } },
+          section: { select: { id: true, name: true, order: true } },
           _count: { select: { stepDefinitions: true, formFields: true, tasks: true } },
         },
-        orderBy: { name: 'asc' },
+        orderBy: [{ section: { order: 'asc' } }, { order: 'asc' }, { name: 'asc' }],
         skip,
         take: limit,
       }),
@@ -86,11 +86,20 @@ export class TaskTypesService {
     return tt;
   }
 
+  async findOneForUser(id: string, roles: AccountRole[]) {
+    const taskType = await this.findOne(id);
+    if (!(await this.sectionAccess.canAccess(roles, taskType.sectionId))) {
+      throw new ForbiddenException('You do not have access to this task type');
+    }
+    return taskType;
+  }
+
   async create(dto: CreateTaskTypeDto, roles: AccountRole[], sectionId: string | null) {
     this.assertAdminOfSection(roles, sectionId, dto.sectionId);
     const { description, ...rest } = dto;
+    const aggregate = await this.prisma.taskType.aggregate({ where: { sectionId: dto.sectionId }, _max: { order: true } });
     return this.prisma.taskType.create({
-      data: { ...rest, descripcion: description },
+      data: { ...rest, descripcion: description, order: (aggregate._max.order ?? -1) + 1 },
       include: TASK_TYPE_INCLUDE,
     });
   }
@@ -127,6 +136,7 @@ export class TaskTypesService {
     this.assertAdminOfSection(roles, sectionId, source.sectionId);
 
     return this.prisma.$transaction(async (tx) => {
+      const aggregate = await tx.taskType.aggregate({ where: { sectionId: source.sectionId }, _max: { order: true } });
       const newTT = await tx.taskType.create({
         data: {
           sectionId: source.sectionId,
@@ -134,6 +144,7 @@ export class TaskTypesService {
           descripcion: (source as any).descripcion ?? null,
           schedulable: source.schedulable,
           active: false,
+          order: (aggregate._max.order ?? -1) + 1,
         },
       });
 
@@ -199,6 +210,17 @@ export class TaskTypesService {
 
       return tx.taskType.findUnique({ where: { id: newTT.id }, include: TASK_TYPE_INCLUDE });
     });
+  }
+
+  async reorderTaskTypes(order: { id: string; order: number }[]) {
+    const uniqueIds = [...new Set(order.map(item => item.id))];
+    if (uniqueIds.length !== order.length || order.some(item => !Number.isInteger(item.order) || item.order < 0)) {
+      throw new BadRequestException('Task order must contain unique IDs and non-negative integer positions');
+    }
+    const count = await this.prisma.taskType.count({ where: { id: { in: uniqueIds }, deletedAt: null } });
+    if (count !== uniqueIds.length) throw new BadRequestException('One or more task types do not exist');
+    await this.prisma.$transaction(order.map(item => this.prisma.taskType.update({ where: { id: item.id }, data: { order: item.order } })));
+    return { updated: order.length };
   }
 
   // ── StepDefinition ────────────────────────────────────────────────────────

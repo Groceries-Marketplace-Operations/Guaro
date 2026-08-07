@@ -7,6 +7,7 @@ import { taskTypesApi, handlersApi, webhooksApi, accountsApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
 import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account } from '../../types';
+import { downloadTaskTemplate } from '../../utils/downloadTaskTemplate';
 
 const PlusIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -704,7 +705,9 @@ export default function TaskTypeDetail() {
                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
                   <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: 'var(--orange-muted)', color: 'var(--orange)', textTransform: 'uppercase', flexShrink: 0 }}>{t.tipo}</span>
                   <span style={{ fontWeight: 500, fontSize: '0.84rem', flex: 1 }}>{t.name}</span>
-                  <a href={t.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.url}</a>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadTaskTemplate(t).catch(ex => setErr(errMsg(ex)))}>
+                    Download
+                  </button>
                   <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)', flexShrink: 0 }}
                     onClick={async () => {
                       setSaving(true);

@@ -6,6 +6,7 @@ import ValidationAssistant from '../../components/tasks/ValidationAssistant';
 import { taskTypesApi, brandsApi, shopsApi, tasksApi, appConfigApi } from '../../api';
 import { useT } from '../../i18n';
 import type { TaskType, FormField, Brand, Shop, FileValidationResult } from '../../types';
+import { downloadTaskTemplate } from '../../utils/downloadTaskTemplate';
 
 type ApiError = { response?: { data?: { message?: string | string[] } } };
 function errMsg(ex: unknown) {
@@ -775,14 +776,14 @@ export default function NewTaskPage() {
                   <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: 12, color: 'var(--text-secondary)' }}>{t('pages.newTask.templatesSection')}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {selectedTT!.templates!.map(tp => (
-                      <a key={tp.id} href={tp.url} target="_blank" rel="noopener noreferrer"
-                        style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:8, background:'var(--surface-2)', border:'1px solid var(--border)', textDecoration:'none', color:'var(--text-primary)' }}>
+                      <button key={tp.id} type="button" onClick={() => downloadTaskTemplate(tp).catch(() => setErr('No se pudo descargar la plantilla.'))}
+                        style={{ display:'flex', width:'100%', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:8, background:'var(--surface-2)', border:'1px solid var(--border)', color:'var(--text-primary)', cursor:'pointer', textAlign:'left' }}>
                         <span style={{ fontSize:'0.72rem', fontWeight:700, padding:'1px 6px', borderRadius:4, background:'var(--orange-muted)', color:'var(--orange)', textTransform:'uppercase', flexShrink:0 }}>{tp.tipo}</span>
                         <span style={{ fontWeight:500, fontSize:'0.84rem' }}>{tp.name}</span>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13" style={{ marginLeft:'auto', flexShrink:0, opacity:0.4 }}>
                           <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
                         </svg>
-                      </a>
+                      </button>
                     ))}
                   </div>
                 </div>

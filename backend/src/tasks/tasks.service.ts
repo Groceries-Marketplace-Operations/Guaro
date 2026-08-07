@@ -5,6 +5,7 @@ import { TaskEngineService } from './task-engine.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { TaskValidationService } from './task-validation.service';
+import { SectionAccessService } from '../sections/section-access.service';
 
 const TASK_INCLUDE = {
   taskType: { select: { id: true, name: true, sectionId: true } },
@@ -33,6 +34,7 @@ export class TasksService {
     private prisma: PrismaService,
     private engine: TaskEngineService,
     private validation: TaskValidationService,
+    private sectionAccess: SectionAccessService,
   ) {}
 
   // ── Create task ───────────────────────────────────────────────────────────
@@ -120,6 +122,8 @@ export class TasksService {
     const skip = (page - 1) * limit;
 
     const AND: Prisma.TaskWhereInput[] = [{ deletedAt: null }];
+    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds(roles);
+    if (allowedSectionIds !== null) AND.push({ taskType: { sectionId: { in: allowedSectionIds } } });
 
     // Role-based visibility
     const isSuperAdmin = roles.includes(AccountRole.super_admin);
@@ -134,8 +138,6 @@ export class TasksService {
         AND.push({ stepInstances: { some: { assignedToId: accountId } } });
       }
       // user+bpo or director: no additional restriction
-    } else if (isAdmin && !isSuperAdmin) {
-      AND.push({ taskType: { sectionId: sectionId ?? undefined } });
     }
 
     if (status)  AND.push({ status });
@@ -181,9 +183,10 @@ export class TasksService {
           const assigned = task.stepInstances.some((s: { assignedToId: string | null }) => s.assignedToId === accountId);
           if (!assigned) throw new ForbiddenException('Task not found');
         }
-      } else if (isAdmin && !isSuperAdmin) {
-        const taskSectionId = (task as { taskType?: { sectionId?: string } }).taskType?.sectionId;
-        if (taskSectionId && taskSectionId !== sectionId) throw new ForbiddenException('Task not found');
+      }
+      const taskSectionId = (task as { taskType?: { sectionId?: string } }).taskType?.sectionId;
+      if (taskSectionId && !(await this.sectionAccess.canAccess(roles, taskSectionId))) {
+        throw new ForbiddenException('Task not found');
       }
     }
 

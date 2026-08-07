@@ -10,6 +10,9 @@ export const authApi = {
 export const sectionsApi = {
   list: () => client.get('/sections'),
   create: (data: { name: string }) => client.post('/sections', data),
+  reorder: (order: { id: string; order: number }[]) => client.patch('/sections/reorder', { order }),
+  roleAccess: () => client.get('/sections/role-access'),
+  updateRoleAccess: (role: string, sectionIds: string[]) => client.put(`/sections/role-access/${role}`, { sectionIds }),
 };
 
 /* ── Handlers ───────────────────────────────────────────────── */
@@ -34,6 +37,7 @@ export const taskTypesApi = {
   update: (id: string, data: object) => client.patch(`/task-types/${id}`, data),
   delete: (id: string) => client.delete(`/task-types/${id}`),
   toggleActive: (id: string) => client.patch(`/task-types/${id}/toggle-active`),
+  reorder: (order: { id: string; order: number }[]) => client.patch('/task-types/reorder', { order }),
   addStep: (id: string, data: object) => client.post(`/task-types/${id}/steps`, data),
   updateStep: (id: string, stepId: string, data: object) => client.patch(`/task-types/${id}/steps/${stepId}`, data),
   reorderSteps: (id: string, order: { id: string; order: number }[]) => client.patch(`/task-types/${id}/steps/reorder`, { order }),
@@ -141,6 +145,12 @@ export const tasksApi = {
     client.post<import('../types').FileValidationResult>('/tasks/upload-image', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
+  downloadTemplate: (url: string) => {
+    const apiMarker = '/api/';
+    const markerIndex = url.indexOf(apiMarker);
+    const apiPath = markerIndex >= 0 ? `/${url.slice(markerIndex + apiMarker.length)}` : url;
+    return client.get<Blob>(apiPath, { responseType: 'blob' });
+  },
 };
 
 export const sftpApplicationsApi = {
