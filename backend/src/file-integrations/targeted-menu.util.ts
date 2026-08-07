@@ -77,6 +77,9 @@ export function selectMenuUpcs(menu: JsonObject, requestedUpcs: string[]) {
   const nestedCategoryIds = new Set(
     categories.flatMap(category => stringArray(category.sub_category_ids)),
   );
+  const uploadCategories = categories.filter(
+    category => stringArray(category.sub_category_ids).length === 0,
+  );
 
   const menus = (Array.isArray(menu.menus) ? menu.menus : []).flatMap(value => {
     if (!value || typeof value !== 'object') return [];
@@ -97,7 +100,7 @@ export function selectMenuUpcs(menu: JsonObject, requestedUpcs: string[]) {
 
   return {
     menus,
-    categories,
+    categories: uploadCategories,
     items,
     modifierGroups,
     foundUpcs: [...foundUpcs],
