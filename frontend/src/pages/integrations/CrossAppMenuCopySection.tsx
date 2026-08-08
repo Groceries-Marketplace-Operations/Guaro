@@ -30,6 +30,7 @@ const stepLabels: Record<string, string> = {
   resolving_target_shop: 'Resolviendo tienda destino',
   downloading_source_menu: 'Descargando menú origen',
   uploading_target_menu: 'Subiendo menú destino',
+  verifying_target_menu: 'Verificando menú destino',
   completed: 'Completado',
 };
 

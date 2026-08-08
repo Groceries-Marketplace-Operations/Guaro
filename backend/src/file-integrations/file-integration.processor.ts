@@ -1,7 +1,7 @@
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { FileIntegrationKind, Prisma } from '@prisma/client';
+import { FileIntegrationKind, FileIntegrationRule, Prisma } from '@prisma/client';
 import { Job } from 'bullmq';
 import { createHash } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
@@ -9,9 +9,11 @@ import { posix, resolve } from 'path';
 import SftpClient = require('ssh2-sftp-client');
 import { PrismaService } from '../prisma/prisma.service';
 import { detectDelimiter, looksLikeCityClub, parseAmount, wildcardToRegExp } from './file-integration.util';
+import { lastTimestampDate, localDateKey, transformDailyStatusCsv } from './daily-status-activation.util';
 import { parsePromotionLines, promotionShopIdFromFileName } from './promotion-file.util';
 import { SftpConnectionService } from './sftp-connection.service';
 import { StorePromotionStorageService } from './store-promotion-storage.service';
+import { extractStoreFileDate, pickStoreFileCandidate, splitStoreFile } from './store-file-splitter.util';
 
 class FileIntegrationCancelledError extends Error {}
 class SftpOperationTimeoutError extends Error {}
@@ -42,6 +44,8 @@ interface FileResult {
   remoteReplaced?: boolean;
   promotionsStored?: number;
   invalidRows?: number;
+  rowsChanged?: number;
+  alreadyActiveLines?: number;
   skipped?: string;
   error?: string;
 }
@@ -71,6 +75,12 @@ export class FileIntegrationProcessor extends WorkerHost {
     });
     if (!execution) return;
     const { rule } = execution;
+    if (rule.kind === FileIntegrationKind.store_file_splitter) {
+      return this.processStoreFileSplitter(executionId, rule, started);
+    }
+    if (rule.kind === FileIntegrationKind.daily_status_activation) {
+      return this.processDailyStatusActivation(executionId, rule, started);
+    }
     const storeArtifacts = rule.kind === FileIntegrationKind.price_filter
       && this.config.get('FILE_INTEGRATIONS_STORE_ARTIFACTS', 'false').toLowerCase() === 'true';
 
@@ -325,6 +335,248 @@ export class FileIntegrationProcessor extends WorkerHost {
     }
   }
 
+  private async processStoreFileSplitter(executionId: string, rule: FileIntegrationRule, started: number) {
+    let filesScanned = 0;
+    let rowsRead = 0;
+    let rowsKept = 0;
+    let rowsRemoved = 0;
+    let bytesRead = BigInt(0);
+    let sourceFile: string | null = null;
+    const uploaded: Array<{ file: string; records: number; remotePath: string }> = [];
+
+    try {
+      await this.sftp.withClient(rule.sftpApplicationId, async (client, rootPath) => {
+        await this.ensureActive(executionId);
+        const matcher = wildcardToRegExp(rule.filePattern);
+        const files = (await this.withSftpTimeout(client, client.list(rootPath), 'SFTP directory listing'))
+          .filter(file => file.type === '-' && matcher.test(file.name) && !/^preciosdidi_suc_/i.test(file.name));
+        filesScanned = files.length;
+        const selected = pickStoreFileCandidate(files, rule.sourceScope);
+        if (!selected) throw new Error(`No file matching ${rule.filePattern} was found in ${rootPath}`);
+        sourceFile = selected.name;
+        const date = extractStoreFileDate(selected.name);
+        if (!date) throw new Error(`The source file name does not contain _YYYYMMDD_: ${selected.name}`);
+
+        await this.prisma.fileIntegrationExecution.update({
+          where: { id: executionId },
+          data: { filesScanned, currentFile: selected.name },
+        });
+        const remotePath = this.sftp.safeRemotePath(rootPath, selected.name);
+        const value = await this.withSftpTimeout(client, client.get(remotePath), `download of ${selected.name}`);
+        await this.ensureActive(executionId);
+        const buffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+        bytesRead = BigInt(buffer.length);
+        const split = splitStoreFile(buffer.toString('utf8'), date);
+        rowsRead = split.totalLines;
+        rowsKept = split.totalLines - split.malformed;
+        rowsRemoved = split.malformed;
+
+        const remoteWriteEnabled = this.config.get('STORE_FILE_SPLITTER_REMOTE_WRITE_ENABLED', 'false') === 'true'
+          || this.config.get('FILE_INTEGRATIONS_REMOTE_WRITE_ENABLED', 'false') === 'true';
+        if (!remoteWriteEnabled) {
+          throw new Error('Remote upload is disabled in this environment');
+        }
+        for (const output of split.outputs) {
+          await this.ensureActive(executionId);
+          const outputPath = this.sftp.safeRemotePath(rootPath, output.fileName);
+          const outputBuffer = Buffer.from(output.content, 'utf8');
+          await this.withSftpTimeout(client, client.put(outputBuffer, outputPath), `upload of ${output.fileName}`);
+          const verification = await this.withSftpTimeout(client, client.get(outputPath), `verification of ${output.fileName}`);
+          const verifiedBuffer = Buffer.isBuffer(verification) ? verification : Buffer.from(String(verification));
+          if (this.sha256(outputBuffer) !== this.sha256(verifiedBuffer)) {
+            throw new Error(`Remote verification failed for ${output.fileName}`);
+          }
+          uploaded.push({ file: output.fileName, records: output.count, remotePath: outputPath });
+        }
+
+        const finishedAt = new Date();
+        await this.prisma.$transaction([
+          this.prisma.fileIntegrationExecution.update({
+            where: { id: executionId },
+            data: {
+              status: 'done', finishedAt, durationMs: Date.now() - started,
+              filesScanned, filesProcessed: 1, rowsRead, rowsKept, rowsRemoved, bytesRead, currentFile: null,
+              result: {
+                sourceFile: selected.name,
+                sourceModifiedAt: new Date(selected.modifyTime).toISOString(),
+                malformed: split.malformed,
+                outputs: uploaded,
+              } as unknown as Prisma.InputJsonValue,
+            },
+          }),
+          this.prisma.fileIntegrationRule.update({
+            where: { id: rule.id },
+            data: { lastRunAt: finishedAt, lastRemoteModifiedAt: new Date(selected.modifyTime) },
+          }),
+        ]);
+      });
+    } catch (error) {
+      await this.prisma.fileIntegrationExecution.updateMany({
+        where: { id: executionId, status: 'running' },
+        data: {
+          status: error instanceof FileIntegrationCancelledError ? 'cancelled' : 'failed',
+          finishedAt: new Date(), durationMs: Date.now() - started,
+          filesScanned, filesProcessed: 0, rowsRead, rowsKept, rowsRemoved, bytesRead, currentFile: null,
+          errorMessage: error instanceof FileIntegrationCancelledError ? 'Stopped manually' : this.safeError(error),
+          result: { sourceFile, outputs: uploaded } as unknown as Prisma.InputJsonValue,
+        },
+      });
+      if (!(error instanceof FileIntegrationCancelledError)) throw error;
+    }
+  }
+
+  private async processDailyStatusActivation(executionId: string, rule: FileIntegrationRule, started: number) {
+    const results: FileResult[] = [];
+    let filesScanned = 0;
+    let filesProcessed = 0;
+    let rowsRead = 0;
+    let rowsKept = 0;
+    let rowsChanged = 0;
+    let bytesRead = BigInt(0);
+    const matchedDate = localDateKey(new Date(), rule.timezone);
+
+    try {
+      await this.sftp.withClientPool(rule.sftpApplicationId, rule.parallelism, async (clients, rootPath) => {
+        await this.ensureActive(executionId);
+        const matcher = wildcardToRegExp(rule.filePattern);
+        const allFiles = (await this.withSftpTimeout(clients[0], clients[0].list(rootPath), 'SFTP directory listing'))
+          .filter(file => file.type === '-' && matcher.test(file.name));
+        filesScanned = allFiles.length;
+        const candidates = allFiles
+          .filter(file => lastTimestampDate(file.name) === matchedDate)
+          .sort((left, right) => left.modifyTime - right.modifyTime || left.name.localeCompare(right.name))
+          .slice(0, rule.maxFilesPerRun);
+        await this.prisma.fileIntegrationExecution.update({
+          where: { id: executionId },
+          data: { filesScanned },
+        });
+
+        const queues = clients.map(async (client, clientIndex) => {
+          for (let index = clientIndex; index < candidates.length; index += clients.length) {
+            const file = candidates[index];
+            await this.ensureActive(executionId);
+            await this.prisma.fileIntegrationExecution.update({
+              where: { id: executionId },
+              data: { currentFile: file.name },
+            });
+            const base: FileResult = {
+              fileName: file.name,
+              size: file.size,
+              modifiedAt: new Date(file.modifyTime).toISOString(),
+              rowsRead: 0,
+              rowsKept: 0,
+              rowsRemoved: 0,
+              rowsChanged: 0,
+              alreadyActiveLines: 0,
+              invalidAmounts: 0,
+              delimiter: '|',
+            };
+            try {
+              const remotePath = this.sftp.safeRemotePath(rootPath, file.name);
+              const value = await this.withSftpTimeout(client, client.get(remotePath), `download of ${file.name}`);
+              await this.ensureActive(executionId);
+              const buffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+              bytesRead += BigInt(buffer.length);
+              const transformed = transformDailyStatusCsv(buffer);
+              base.rowsRead = transformed.totalLines;
+              base.rowsChanged = transformed.changedLines;
+              base.rowsRemoved = transformed.changedLines;
+              base.rowsKept = Math.max(0, transformed.totalLines - transformed.changedLines);
+              base.alreadyActiveLines = transformed.alreadyActiveLines;
+              if (transformed.changedLines > 0) {
+                const replacement = await this.replaceRemoteFile(
+                  client,
+                  rootPath,
+                  file.name,
+                  transformed.output,
+                  executionId,
+                );
+                base.remoteReplaced = true;
+                base.backupRemotePath = replacement.backupPath;
+              } else {
+                base.remoteReplaced = false;
+                base.skipped = 'No lines ending in |M were found';
+              }
+              filesProcessed += 1;
+              rowsRead += base.rowsRead;
+              rowsKept += base.rowsKept;
+              rowsChanged += transformed.changedLines;
+              results.push(base);
+            } catch (error) {
+              if (error instanceof FileIntegrationCancelledError) throw error;
+              base.error = this.safeError(error);
+              results.push(base);
+              this.logger.warn(`Daily status activation ${executionId} failed for ${file.name}: ${base.error}`);
+            }
+            await this.prisma.fileIntegrationExecution.update({
+              where: { id: executionId },
+              data: { filesProcessed, rowsRead, rowsKept, rowsRemoved: rowsChanged, bytesRead },
+            });
+          }
+        });
+        const settled = await Promise.allSettled(queues);
+        const rejection = settled.find(value => value.status === 'rejected') as PromiseRejectedResult | undefined;
+        if (rejection) throw rejection.reason;
+      });
+
+      results.sort((left, right) => left.fileName.localeCompare(right.fileName));
+      const failed = results.filter(value => value.error).length;
+      const status = failed === 0 ? 'done' : filesProcessed > 0 ? 'partial_success' : 'failed';
+      const finishedAt = new Date();
+      await this.prisma.$transaction([
+        this.prisma.fileIntegrationExecution.update({
+          where: { id: executionId },
+          data: {
+            status,
+            finishedAt,
+            durationMs: Date.now() - started,
+            filesScanned,
+            filesProcessed,
+            rowsRead,
+            rowsKept,
+            rowsRemoved: rowsChanged,
+            bytesRead,
+            currentFile: null,
+            errorMessage: failed ? `${failed} file(s) failed; see execution details` : null,
+            result: {
+              files: results,
+              matchedDate,
+              poolSize: rule.parallelism,
+              changedLines: rowsChanged,
+            } as unknown as Prisma.InputJsonValue,
+          },
+        }),
+        this.prisma.fileIntegrationRule.update({
+          where: { id: rule.id },
+          data: { lastRunAt: finishedAt },
+        }),
+      ]);
+      this.logger.log(
+        `Daily status activation ${rule.name}: ${status}; ${filesProcessed}/${results.length} files; ${rowsChanged} lines changed`,
+      );
+    } catch (error) {
+      const cancelled = error instanceof FileIntegrationCancelledError;
+      await this.prisma.fileIntegrationExecution.updateMany({
+        where: { id: executionId, status: 'running' },
+        data: {
+          status: cancelled ? 'cancelled' : 'failed',
+          finishedAt: new Date(),
+          durationMs: Date.now() - started,
+          filesScanned,
+          filesProcessed,
+          rowsRead,
+          rowsKept,
+          rowsRemoved: rowsChanged,
+          bytesRead,
+          currentFile: null,
+          errorMessage: cancelled ? 'Stopped manually' : this.safeError(error),
+          result: { files: results, matchedDate, poolSize: rule.parallelism } as unknown as Prisma.InputJsonValue,
+        },
+      });
+      if (!cancelled) throw error;
+    }
+  }
+
   private async priceFilterCandidates(
     ruleId: string,
     initializedAt: Date | null,
@@ -527,7 +779,13 @@ export class FileIntegrationProcessor extends WorkerHost {
     const backupDirectory = posix.join(rootPath, '.tequila-backup', executionId);
     const backupPath = posix.join(backupDirectory, fileName);
     const temporaryPath = posix.join(rootPath, `.${fileName}.${executionId}.tmp`);
-    await this.withSftpTimeout(client, client.mkdir(backupDirectory, true), `creation of ${backupDirectory}`);
+    try {
+      await this.withSftpTimeout(client, client.mkdir(backupDirectory, true), `creation of ${backupDirectory}`);
+    } catch (error) {
+      // Parallel workers can race while creating the shared execution backup directory.
+      const existing = await this.withSftpTimeout(client, client.exists(backupDirectory), `verification of ${backupDirectory}`);
+      if (existing !== 'd') throw error;
+    }
     await this.withSftpTimeout(client, client.put(filtered, temporaryPath), `upload of ${fileName}`);
     const verification = await this.withSftpTimeout(
       client,

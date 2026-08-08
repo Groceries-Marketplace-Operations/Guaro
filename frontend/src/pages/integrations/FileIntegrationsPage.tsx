@@ -8,6 +8,8 @@ import type { FileIntegrationKind, FileIntegrationRule, Paginated, SftpApplicati
 import TargetedMenuSection from './TargetedMenuSection';
 import CrossAppMenuCopySection from './CrossAppMenuCopySection';
 import OfferMenuUploadSection from './OfferMenuUploadSection';
+import StoreFileSplitterSection from './StoreFileSplitterSection';
+import DailyStatusActivationSection from './DailyStatusActivationSection';
 
 interface RuleForm {
   name: string;
@@ -24,7 +26,7 @@ interface RuleForm {
   maxFilesPerRun: number;
 }
 
-type CustomIntegrationSection = 'sftp' | 'offer-menu' | 'targeted-menu' | 'cross-app';
+type CustomIntegrationSection = 'sftp' | 'daily-activation' | 'store-splitter' | 'offer-menu' | 'targeted-menu' | 'cross-app';
 
 const runningStatuses = new Set(['pending', 'running']);
 
@@ -142,6 +144,14 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           <span className="custom-integration-icon">TM</span>
           <span><strong>Targeted Menu Upload</strong><small>Carga UPC seleccionados en tiendas específicas</small></span>
         </button>
+        <button type="button" className={customSection === 'store-splitter' ? 'is-active' : ''} onClick={() => setCustomSection('store-splitter')} aria-selected={customSection === 'store-splitter'}>
+          <span className="custom-integration-icon">ST</span>
+          <span><strong>Split CSV por tienda</strong><small>Divide preciosdidi por sucursal y publica los archivos resultantes</small></span>
+        </button>
+        <button type="button" className={customSection === 'daily-activation' ? 'is-active' : ''} onClick={() => setCustomSection('daily-activation')} aria-selected={customSection === 'daily-activation'}>
+          <span className="custom-integration-icon">MA</span>
+          <span><strong>Activación diaria M → A</strong><small>Actualiza los CSV fechados del día a las 08:15 UTC−06:00</small></span>
+        </button>
         <button type="button" className={customSection === 'offer-menu' ? 'is-active' : ''} onClick={() => setCustomSection('offer-menu')} aria-selected={customSection === 'offer-menu'}>
           <span className="custom-integration-icon">OF</span>
           <span><strong>SFTP Offer Menu</strong><small>Procesa offer*.csv y programa cargas grocery por tienda</small></span>
@@ -157,6 +167,8 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           : 'Funciona como Auto Menu Fetch para promociones: conserva una instantánea local por App Shop ID. Las credenciales permanecen cifradas.'}
       </div>}
       {isFilter && customSection === 'targeted-menu' && <TargetedMenuSection />}
+      {isFilter && customSection === 'store-splitter' && <StoreFileSplitterSection />}
+      {isFilter && customSection === 'daily-activation' && <DailyStatusActivationSection />}
       {isFilter && customSection === 'offer-menu' && <OfferMenuUploadSection />}
       {isFilter && customSection === 'cross-app' && <CrossAppMenuCopySection />}
       {showSftp && <>

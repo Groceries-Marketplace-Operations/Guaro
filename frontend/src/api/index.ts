@@ -189,7 +189,7 @@ export const sftpApplicationsApi = {
 };
 
 export const fileIntegrationsApi = {
-  list: (kind: 'complex_promotion_reader' | 'price_filter') => client.get(`/integrations/file-integrations/rules/${kind}`),
+  list: (kind: 'complex_promotion_reader' | 'price_filter' | 'store_file_splitter' | 'daily_status_activation') => client.get(`/integrations/file-integrations/rules/${kind}`),
   create: (data: object) => client.post('/integrations/file-integrations/rules', data),
   update: (id: string, data: object) => client.patch(`/integrations/file-integrations/rules/${id}`, data),
   delete: (id: string) => client.delete(`/integrations/file-integrations/rules/${id}`),

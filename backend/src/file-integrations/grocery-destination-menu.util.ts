@@ -43,6 +43,36 @@ export function sanitizeGroceryDestinationItem(item: JsonObject): JsonObject {
   );
 }
 
+export function isGroceryDestinationItemUploadable(item: JsonObject) {
+  return Boolean(text(item.app_item_id) && text(item.upc));
+}
+
+export function countMatchingGroceryDestinationItems(
+  expectedItems: JsonObject[],
+  actualItems: JsonObject[],
+) {
+  return expectedItems.length - findGroceryDestinationItemMismatches(expectedItems, actualItems).length;
+}
+
+export function findGroceryDestinationItemMismatches(
+  expectedItems: JsonObject[],
+  actualItems: JsonObject[],
+) {
+  const actualById = new Map(
+    actualItems
+      .map(item => [text(item.app_item_id), item] as const)
+      .filter(([appItemId]) => Boolean(appItemId)),
+  );
+  return expectedItems.filter(expected => {
+    const actual = actualById.get(text(expected.app_item_id));
+    if (!actual || text(actual.upc) !== text(expected.upc)) return true;
+    const sameFields = DESTINATION_ITEM_FIELDS
+      .filter(field => field !== 'app_item_id' && field !== 'upc' && Object.prototype.hasOwnProperty.call(expected, field))
+      .every(field => text(actual[field]) === text(expected[field]));
+    return !sameFields;
+  });
+}
+
 export function buildFlatGroceryUploads(
   sourceMenu: JsonObject,
   selectedItems: JsonObject[],
@@ -66,6 +96,9 @@ export function buildFlatGroceryUploads(
     const itemIds = items.map(item => text(item.app_item_id));
     if (itemIds.some(id => !id)) {
       throw new Error(`Destination category ${categoryId} contains an item without app_item_id`);
+    }
+    if (items.some(item => !text(item.upc))) {
+      throw new Error(`Destination category ${categoryId} contains an item without UPC`);
     }
 
     uploads.push({

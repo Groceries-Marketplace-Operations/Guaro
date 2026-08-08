@@ -12,7 +12,7 @@ import { once } from 'events';
 import { finished } from 'stream/promises';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
-import { DIDI_BASE, fetchWithEndpointContext, getAuthToken, parseJsonKeepingIds, sleep } from '../queue/handlers/didi-food.util';
+import { getAuthToken } from '../queue/handlers/didi-food.util';
 import { wildcardToRegExp } from './file-integration.util';
 import { GroceryItemFailure, uploadGroceryBatch } from './grocery-menu-upload.util';
 import { buildOfferMenuRequest, OfferMenuItem, streamOfferMenuCsv } from './offer-menu-upload.util';
@@ -269,16 +269,17 @@ export class OfferMenuUploadProcessor extends WorkerHost {
       };
       const request = buildOfferMenuRequest(rule, appShopId, items);
       await this.ensureActive(executionId);
-      const upload = await uploadGroceryBatch(authToken, request, 'uploadGrocery', rule.mergePolicy);
-      const completion = await this.waitForOfferUpload(
+      const upload = await uploadGroceryBatch(
         authToken,
-        upload.referenceId,
+        request,
+        'uploadGrocery',
+        rule.mergePolicy,
         () => this.ensureActive(executionId),
         refresh,
       );
       taskIds.push(upload.referenceId);
-      failedItems.push(...completion.failedItems);
-      uploadedItems = Math.max(0, request.items.length - completion.failedItems.length);
+      failedItems.push(...upload.failedItems);
+      uploadedItems = upload.acceptedCount;
       return {
         storeId,
         appShopId,
@@ -321,62 +322,6 @@ export class OfferMenuUploadProcessor extends WorkerHost {
       result.set(shop.appShopId, shop.appShopId);
     }
     return result;
-  }
-
-  private async waitForOfferUpload(
-    authToken: string,
-    taskId: string,
-    ensureActive: () => Promise<void>,
-    refreshAuthToken: () => Promise<string>,
-  ): Promise<{ failedItems: GroceryItemFailure[] }> {
-    const endpoint = 'POST /v3/item/item/getGroceryMenuTaskInfo';
-    const startedAt = Date.now();
-    let pollingToken = authToken;
-    while (Date.now() - startedAt < 30 * 60_000) {
-      await ensureActive();
-      const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/getGroceryMenuTaskInfo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auth_token: pollingToken, task_id: taskId }),
-      });
-      const body = parseJsonKeepingIds(await response.text()) as Record<string, any>;
-      if (body.errno === 10005 || /task\s*not found/i.test(String(body.errmsg ?? ''))) {
-        await sleep(6000);
-        continue;
-      }
-      if (body.errno === 10102) {
-        pollingToken = await refreshAuthToken();
-        continue;
-      }
-      if (!response.ok || body.errno !== 0) {
-        throw new Error(`${endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
-      }
-      const status = Number(body.data?.status);
-      const failedItems = this.offerTaskIssues(body.data?.operationList);
-      if (status === 1 || status === 5) return { failedItems };
-      if (status === 2) {
-        const detail = failedItems.slice(0, 10).map(item => `${item.appItemId}: ${item.reason}`).join('; ');
-        throw new Error(`${endpoint} reported failed upload task ${taskId}${detail ? `: ${detail}` : ''}`);
-      }
-      await sleep(6000);
-    }
-    throw new Error(`${endpoint} task ${taskId} is still processing after 30 minutes`);
-  }
-
-  private offerTaskIssues(operations: unknown): GroceryItemFailure[] {
-    if (!Array.isArray(operations)) return [];
-    const issues = operations.flatMap((operation: Record<string, unknown>) => [
-      ...(Array.isArray(operation.warningList) ? operation.warningList : []),
-      ...(Array.isArray(operation.failedList) ? operation.failedList : []),
-    ]).flatMap((entry: unknown) => {
-      if (!entry || typeof entry !== 'object') return [];
-      const issue = entry as Record<string, unknown>;
-      const appItemId = issue.appItemID ?? issue.app_item_id ?? issue.ext_id;
-      const reason = issue.message ?? issue.msg ?? issue.reason;
-      if (!appItemId && !reason && issue.operationType) return [];
-      return [{ appItemId: String(appItemId ?? 'unknown'), reason: String(reason ?? JSON.stringify(issue)) }];
-    });
-    return [...new Map(issues.map(issue => [`${issue.appItemId}:${issue.reason}`, issue])).values()];
   }
 
   private async mapWithConcurrency<T>(values: T[], concurrency: number, action: (value: T) => Promise<void>) {

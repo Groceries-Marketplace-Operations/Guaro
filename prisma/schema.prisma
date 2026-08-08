@@ -192,6 +192,8 @@ enum AutoFetchKind {
 enum FileIntegrationKind {
   complex_promotion_reader
   price_filter
+  store_file_splitter
+  daily_status_activation
 }
 
 enum PromotionApiMode {
@@ -1014,6 +1016,9 @@ model FileIntegrationRule {
   sftpApplicationId      String              @map("sftp_application_id") @db.Uuid
   active                 Boolean             @default(false)
   intervalMinutes        Int?                @map("interval_minutes")
+  dailyTime              String?             @map("daily_time")
+  timezone               String              @default("Etc/GMT+6")
+  parallelism            Int                 @default(1)
   nextRunAt              DateTime?           @map("next_run_at") @db.Timestamptz
   lastRunAt              DateTime?           @map("last_run_at") @db.Timestamptz
   lastRemoteModifiedAt   DateTime?           @map("last_remote_modified_at") @db.Timestamptz

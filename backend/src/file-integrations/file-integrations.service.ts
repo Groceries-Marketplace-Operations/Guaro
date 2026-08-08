@@ -5,6 +5,11 @@ import { Queue } from 'bullmq';
 import { existsSync, readFileSync } from 'fs';
 import { basename, resolve, sep } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  DAILY_STATUS_ACTIVATION_TIME,
+  DAILY_STATUS_ACTIVATION_TIMEZONE,
+  nextDailyFileIntegrationRun,
+} from './daily-status-activation.util';
 import { UpsertFileIntegrationRuleDto } from './dto/upsert-file-integration-rule.dto';
 
 const PROMOTION_SHOPS_PER_RUN_LIMIT = 20;
@@ -163,18 +168,63 @@ export class FileIntegrationsService {
       }
       if (!dto.intervalMinutes) throw new BadRequestException('A recurrence interval is required for price filters');
     }
+    if (dto.kind === FileIntegrationKind.store_file_splitter) {
+      if (!dto.dailyTime && !dto.intervalMinutes) {
+        throw new BadRequestException('A daily time or recurrence interval is required for store file splitters');
+      }
+      if (!['mtime', 'nameDate'].includes(dto.sourceScope ?? 'mtime')) {
+        throw new BadRequestException('Store file selection must use mtime or nameDate');
+      }
+    }
+    const dailyTime = dto.kind === FileIntegrationKind.daily_status_activation
+      ? dto.dailyTime?.trim() || DAILY_STATUS_ACTIVATION_TIME
+      : dto.kind === FileIntegrationKind.store_file_splitter
+        ? dto.dailyTime?.trim() || null
+        : null;
+    const timezone = dto.timezone?.trim() || (dto.kind === FileIntegrationKind.store_file_splitter
+      ? 'Etc/GMT+6'
+      : DAILY_STATUS_ACTIVATION_TIMEZONE);
+    if (dailyTime) {
+      try {
+        nextDailyFileIntegrationRun(dailyTime, timezone);
+      } catch (error) {
+        throw new BadRequestException(error instanceof Error ? error.message : 'Invalid daily schedule');
+      }
+    }
+    if (dto.kind === FileIntegrationKind.price_filter && (dto.maxFilesPerRun ?? 250) > 1000) {
+      throw new BadRequestException('Price filters support at most 1000 files per execution');
+    }
     const active = dto.active ?? false;
+    const nextRunAt = !active
+      ? null
+      : dailyTime
+        ? nextDailyFileIntegrationRun(dailyTime, timezone)
+        : dto.intervalMinutes ? new Date(Date.now() + dto.intervalMinutes * 60_000) : null;
     return {
       name: dto.name.trim(), kind: dto.kind, country: dto.country ?? null,
       sftpApplicationId: dto.sftpApplicationId, active,
-      intervalMinutes: dto.intervalMinutes ?? null,
-      nextRunAt: active && dto.intervalMinutes ? new Date(Date.now() + dto.intervalMinutes * 60_000) : null,
-      filePattern: dto.filePattern?.trim() || '*', sourceScope: dto.sourceScope?.trim() || 'all',
+      intervalMinutes: dailyTime ? null : dto.intervalMinutes ?? null,
+      dailyTime,
+      timezone,
+      parallelism: dto.kind === FileIntegrationKind.daily_status_activation ? dto.parallelism ?? 3 : 1,
+      nextRunAt,
+      filePattern: dto.filePattern?.trim() || (dto.kind === FileIntegrationKind.daily_status_activation ? '*.csv' : '*'),
+      sourceScope: dto.kind === FileIntegrationKind.store_file_splitter
+        ? dto.sourceScope?.trim() || 'mtime'
+        : dto.kind === FileIntegrationKind.daily_status_activation
+          ? 'filename_date_today'
+          : dto.sourceScope?.trim() || 'all',
       thresholdAmount: dto.thresholdAmount === undefined ? null : new Prisma.Decimal(dto.thresholdAmount),
-      delimiter: dto.delimiter?.trim() || null, priceColumn: dto.priceColumn ?? null,
+      delimiter: dto.kind === FileIntegrationKind.store_file_splitter
+        || dto.kind === FileIntegrationKind.daily_status_activation
+        ? '|'
+        : dto.delimiter?.trim() || null,
+      priceColumn: dto.priceColumn ?? null,
       maxFilesPerRun: dto.kind === FileIntegrationKind.complex_promotion_reader
         ? Math.min(dto.maxFilesPerRun ?? PROMOTION_SHOPS_PER_RUN_LIMIT, PROMOTION_SHOPS_PER_RUN_LIMIT)
-        : dto.maxFilesPerRun ?? 250,
+        : dto.kind === FileIntegrationKind.store_file_splitter ? 1
+          : dto.kind === FileIntegrationKind.daily_status_activation ? dto.maxFilesPerRun ?? 1000
+            : dto.maxFilesPerRun ?? 250,
     };
   }
 

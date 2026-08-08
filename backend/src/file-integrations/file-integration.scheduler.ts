@@ -1,6 +1,11 @@
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  DAILY_STATUS_ACTIVATION_TIME,
+  DAILY_STATUS_ACTIVATION_TIMEZONE,
+  nextDailyFileIntegrationRun,
+} from './daily-status-activation.util';
 import { FileIntegrationsService } from './file-integrations.service';
 
 @Injectable()
@@ -56,12 +61,17 @@ export class FileIntegrationScheduler implements OnModuleInit {
   async scheduleDueRules() {
     const now = new Date();
     const rules = await this.prisma.fileIntegrationRule.findMany({
-      where: { active: true, deletedAt: null, intervalMinutes: { not: null }, nextRunAt: { lte: now } },
+      where: { active: true, deletedAt: null, nextRunAt: { lte: now } },
       orderBy: { nextRunAt: 'asc' },
     });
     for (const rule of rules) {
-      const interval = Math.max(rule.intervalMinutes ?? 5, 5);
-      const nextRunAt = new Date(now.getTime() + interval * 60_000);
+      const nextRunAt = rule.dailyTime
+        ? nextDailyFileIntegrationRun(
+            rule.dailyTime ?? DAILY_STATUS_ACTIVATION_TIME,
+            rule.timezone || DAILY_STATUS_ACTIVATION_TIMEZONE,
+            now,
+          )
+        : new Date(now.getTime() + Math.max(rule.intervalMinutes ?? 5, 5) * 60_000);
       const claimed = await this.prisma.fileIntegrationRule.updateMany({
         where: { id: rule.id, active: true, nextRunAt: { lte: now } }, data: { nextRunAt },
       });

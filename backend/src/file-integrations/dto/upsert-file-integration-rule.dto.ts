@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, Min, MinLength } from 'class-validator';
 import { Country, FileIntegrationKind } from '@prisma/client';
 
 export class UpsertFileIntegrationRuleDto {
@@ -30,6 +30,22 @@ export class UpsertFileIntegrationRuleDto {
 
   @IsOptional()
   @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
+  dailyTime?: string;
+
+  @IsOptional()
+  @IsString()
+  timezone?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  parallelism?: number;
+
+  @IsOptional()
+  @IsString()
   filePattern?: string;
 
   @IsOptional()
@@ -57,6 +73,6 @@ export class UpsertFileIntegrationRuleDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(1000)
+  @Max(5000)
   maxFilesPerRun?: number;
 }

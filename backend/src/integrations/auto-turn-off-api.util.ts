@@ -52,6 +52,7 @@ export function isMenuTaskPending(body: Record<string, unknown>) {
 export async function downloadMenu(
   authToken: string,
   ensureActive: () => Promise<void>,
+  refreshAuthToken?: () => Promise<string>,
 ): Promise<{
   taskId: string;
   items: Array<Record<string, unknown>>;
@@ -80,6 +81,7 @@ export async function downloadMenu(
   let downloadUrl = '';
   let pollAttempts = 0;
   let lastStatus: number | undefined;
+  let pollingToken = authToken;
   while (Date.now() - startedAt < timeoutMs) {
     await ensureActive();
     if (pollAttempts > 0) {
@@ -96,11 +98,15 @@ export async function downloadMenu(
       {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auth_token: authToken, task_id: taskId }),
+      body: JSON.stringify({ auth_token: pollingToken, task_id: taskId }),
       },
     );
     const taskBody = parseJsonKeepingIds(await taskResponse.text());
     if (isMenuTaskPending(taskBody)) continue;
+    if (taskBody.errno === 10102 && refreshAuthToken) {
+      pollingToken = await refreshAuthToken();
+      continue;
+    }
     if (!taskResponse.ok || taskBody.errno !== 0) {
       throw new Error(
         `${taskEndpoint} failed: ${taskBody.errmsg ?? `HTTP ${taskResponse.status}`}`

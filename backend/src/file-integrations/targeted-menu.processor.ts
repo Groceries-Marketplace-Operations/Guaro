@@ -90,7 +90,11 @@ export class TargetedMenuProcessor extends WorkerHost {
         }
         try {
           const authToken = await getAuthToken(application.appId, appSecret, target.appShopId);
-          const downloaded = await downloadMenu(authToken, () => this.ensureActive(executionId));
+          const downloaded = await downloadMenu(
+            authToken,
+            () => this.ensureActive(executionId),
+            () => getAuthToken(application.appId, appSecret, target.appShopId!),
+          );
           const sourceMenu = parseJsonKeepingIds(downloaded.rawJson) as Record<string, unknown>;
           const uploadTaskIds: string[] = [];
           const failedItems: GroceryItemFailure[] = [];
@@ -103,7 +107,14 @@ export class TargetedMenuProcessor extends WorkerHost {
           for (let index = 0; index < uploads.length; index++) {
             await this.ensureActive(executionId);
             const mergePolicy = groceryMergePolicyForBatch(rule.mergePolicy, index);
-            const upload = await uploadGroceryBatch(authToken, uploads[index], rule.uploadEndpoint, mergePolicy);
+            const upload = await uploadGroceryBatch(
+              authToken,
+              uploads[index],
+              rule.uploadEndpoint,
+              mergePolicy,
+              () => this.ensureActive(executionId),
+              () => getAuthToken(application.appId, appSecret, target.appShopId!),
+            );
             uploadTaskIds.push(upload.referenceId);
             failedItems.push(...upload.failedItems);
             acceptedCount += upload.acceptedCount;

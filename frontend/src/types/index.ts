@@ -429,7 +429,7 @@ export interface SftpApplication {
   updatedAt: string;
 }
 
-export type FileIntegrationKind = 'complex_promotion_reader' | 'price_filter';
+export type FileIntegrationKind = 'complex_promotion_reader' | 'price_filter' | 'store_file_splitter' | 'daily_status_activation';
 
 export interface FileIntegrationFileResult {
   fileName: string;
@@ -447,6 +447,8 @@ export interface FileIntegrationFileResult {
   remoteReplaced?: boolean;
   promotionsStored?: number;
   invalidRows?: number;
+  rowsChanged?: number;
+  alreadyActiveLines?: number;
   skipped?: string;
   error?: string;
 }
@@ -466,7 +468,17 @@ export interface FileIntegrationExecution {
   bytesRead: string;
   currentFile?: string;
   errorMessage?: string;
-  result?: { files?: FileIntegrationFileResult[]; newFiles?: number; pendingFiles?: number };
+  result?: {
+    files?: FileIntegrationFileResult[];
+    newFiles?: number;
+    pendingFiles?: number;
+    sourceFile?: string;
+    malformed?: number;
+    outputs?: Array<{ file: string; records: number; remotePath: string }>;
+    matchedDate?: string;
+    poolSize?: number;
+    changedLines?: number;
+  };
   createdAt: string;
 }
 
@@ -477,6 +489,9 @@ export interface FileIntegrationRule {
   country?: string;
   active: boolean;
   intervalMinutes?: number;
+  dailyTime?: string;
+  timezone: string;
+  parallelism: number;
   nextRunAt?: string;
   lastRunAt?: string;
   lastRemoteModifiedAt?: string;

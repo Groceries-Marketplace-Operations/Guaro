@@ -14,27 +14,36 @@ export class SftpConnectionService {
   }
 
   async withClient<T>(applicationId: string, action: (client: SftpClient, rootPath: string) => Promise<T>): Promise<T> {
+    return this.withClientPool(applicationId, 1, (clients, rootPath) => action(clients[0], rootPath));
+  }
+
+  async withClientPool<T>(
+    applicationId: string,
+    size: number,
+    action: (clients: SftpClient[], rootPath: string) => Promise<T>,
+  ): Promise<T> {
     const application = await this.prisma.sftpApplication.findFirst({
       where: { id: applicationId, active: true, deletedAt: null },
     });
     if (!application) throw new NotFoundException('Active SFTP application not found');
-
-    const client = new SftpClient(`tequila-${application.id}`);
+    const poolSize = Math.min(Math.max(Math.trunc(size), 1), 5);
+    const clients = Array.from({ length: poolSize }, (_, index) => new SftpClient(`tequila-${application.id}-${index + 1}`));
+    const password = decrypt(application.password, this.encryptionKey);
     try {
-      await client.connect({
+      await Promise.all(clients.map(client => client.connect({
         host: application.host,
         port: application.port,
         username: application.username,
-        password: decrypt(application.password, this.encryptionKey),
+        password,
         readyTimeout: 30_000,
         keepaliveInterval: 10_000,
         keepaliveCountMax: 3,
         retries: 2,
         retry_minTimeout: 1500,
-      });
-      return await action(client, this.normalizeRoot(application.rootPath));
+      })));
+      return await action(clients, this.normalizeRoot(application.rootPath));
     } finally {
-      await client.end().catch(() => false);
+      await Promise.all(clients.map(client => client.end().catch(() => false)));
     }
   }
 
