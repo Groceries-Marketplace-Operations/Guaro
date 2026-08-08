@@ -1,8 +1,7 @@
 import { BadRequestException, Body, Controller, DefaultValuePipe, Delete, ForbiddenException, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { AccountRole, FileIntegrationKind } from '@prisma/client';
+import { FileIntegrationKind } from '@prisma/client';
 import { PermissionAccessService } from '../access-control/permission-access.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { JwtUser } from '../auth/types/jwt-user.interface';
@@ -12,7 +11,6 @@ import { FileIntegrationsService } from './file-integrations.service';
 
 @Controller('integrations/file-integrations')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(AccountRole.admin, AccountRole.super_admin)
 export class FileIntegrationsController {
   constructor(
     private readonly service: FileIntegrationsService,

@@ -13,17 +13,19 @@ export class RolesGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const required = this.reflector.getAllAndOverride<AccountRole[]>(ROLES_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
     const { user } = context.switchToHttp().getRequest();
-    if (required?.length && !required.some((role) => user?.roles?.includes(role))) return false;
-
     const permissions = this.reflector.getAllAndOverride<string[]>(PERMISSIONS_KEY, [
       context.getHandler(),
       context.getClass(),
     ]) ?? [];
-    return this.permissionAccess.can(user, permissions);
+    // An explicit permission is authoritative. This lets a user receive one
+    // specific capability without having to promote the account to Admin.
+    if (permissions.length) return this.permissionAccess.can(user, permissions);
+
+    const required = this.reflector.getAllAndOverride<AccountRole[]>(ROLES_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    return !required?.length || required.some((role) => user?.roles?.includes(role));
   }
 }

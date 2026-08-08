@@ -122,24 +122,22 @@ function BaseRolePanel({ matrix }: { matrix: MatrixResponse }) {
     </div>
     {readOnly && <div className="alert alert-info">Super Admin tiene acceso total permanente y no acepta restricciones.</div>}
     {groups.map(([group, items]) => {
-      const eligible = items.filter(item => item.allowedRoles.includes(selectedRole));
-      const allSelected = eligible.length > 0 && eligible.every(item => permissions.includes(item.key));
+      const allSelected = items.length > 0 && items.every(item => permissions.includes(item.key));
       return <section className="card" key={group} style={{ padding: 18 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
           <div><strong>{group}</strong><p className="text-muted text-sm" style={{ marginTop: 3 }}>{items.length} permisos</p></div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12 }}>
-            <input type="checkbox" checked={allSelected} disabled={readOnly || !eligible.length} onChange={() => {
-              const keys = eligible.map(item => item.key);
+            <input type="checkbox" checked={allSelected} disabled={readOnly} onChange={() => {
+              const keys = items.map(item => item.key);
               setPermissions(allSelected ? permissions.filter(key => !keys.includes(key)) : [...new Set([...permissions, ...keys])]);
             }} /> Todo el grupo
           </label>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(270px, 1fr))', gap: 10 }}>
           {items.map(item => {
-            const available = readOnly || item.allowedRoles.includes(selectedRole);
-            return <label key={item.key} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, display: 'flex', gap: 10, opacity: available ? 1 : 0.5 }}>
-              <input type="checkbox" checked={permissions.includes(item.key)} disabled={readOnly || !available} onChange={() => toggle(item.key, permissions, setPermissions)} />
-              <span><strong style={{ display: 'block', fontSize: 13 }}>{item.label}</strong><span className="text-muted" style={{ fontSize: 11 }}>{item.description}</span>{!available && <small className="text-muted" style={{ display: 'block', marginTop: 4 }}>No disponible para este rol.</small>}</span>
+            return <label key={item.key} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, display: 'flex', gap: 10 }}>
+              <input type="checkbox" checked={permissions.includes(item.key)} disabled={readOnly} onChange={() => toggle(item.key, permissions, setPermissions)} />
+              <span><strong style={{ display: 'block', fontSize: 13 }}>{item.label}</strong><span className="text-muted" style={{ fontSize: 11 }}>{item.description}</span></span>
             </label>;
           })}
         </div>
@@ -158,8 +156,14 @@ function SectionSelector({ sections, selected, disabled, onChange, title }: {
   onChange: (next: string[]) => void;
   title: string;
 }) {
+  const allSelected = sections.length > 0 && sections.every(section => selected.includes(section.id));
   return <section className="card" style={{ padding: 18 }}>
-    <strong>{title}</strong>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <strong>{title}</strong>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12 }}>
+        <input type="checkbox" checked={allSelected} disabled={disabled} onChange={() => onChange(allSelected ? [] : sections.map(section => section.id))} /> Todas las secciones
+      </label>
+    </div>
     <p className="text-muted text-sm" style={{ margin: '4px 0 12px' }}>Controla los Task Types y tareas que forman parte del alcance de datos.</p>
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
       {sections.map(section => <label key={section.id} style={{ border: '1px solid var(--border)', borderRadius: 999, padding: '7px 12px', display: 'flex', gap: 7, opacity: disabled ? 0.65 : 1 }}>
@@ -169,7 +173,7 @@ function SectionSelector({ sections, selected, disabled, onChange, title }: {
   </section>;
 }
 
-function LayeredPolicyEditor({ catalog, sections, inheritedPermissions, inheritedSectionIds, initialOverrides, initialCustomSections, initialSectionIds, eligibleRoles, immutable, onSave }: {
+function LayeredPolicyEditor({ catalog, sections, inheritedPermissions, inheritedSectionIds, initialOverrides, initialCustomSections, initialSectionIds, immutable, onSave }: {
   catalog: CatalogItem[];
   sections: SectionItem[];
   inheritedPermissions: string[];
@@ -177,7 +181,6 @@ function LayeredPolicyEditor({ catalog, sections, inheritedPermissions, inherite
   initialOverrides: PermissionOverride[];
   initialCustomSections: boolean;
   initialSectionIds: string[];
-  eligibleRoles: AccountRole[];
   immutable?: boolean;
   onSave: (payload: LayeredPolicyPayload) => Promise<unknown>;
 }) {
@@ -219,17 +222,38 @@ function LayeredPolicyEditor({ catalog, sections, inheritedPermissions, inherite
       <SummaryPill tone="deny">{Object.values(overrides).filter(value => value === 'deny').length} denegados explícitamente</SummaryPill>
       <SummaryPill>{effectivePermissions.length} efectivos</SummaryPill>
     </div>
-    {groups.map(([group, items]) => <section className="card" key={group} style={{ padding: 18 }}>
-      <strong>{group}</strong>
+    {groups.map(([group, items]) => {
+      const effects = items.map(item => overrides[item.key] ?? 'inherit');
+      const groupValue = effects.every(effect => effect === effects[0]) ? effects[0] : 'mixed';
+      return <section className="card" key={group} style={{ padding: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <strong>{group}</strong>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+          Todo el grupo
+          <select className="form-select" style={{ width: 130, margin: 0 }} value={groupValue} disabled={immutable} onChange={event => {
+            const effect = event.target.value as 'inherit' | 'allow' | 'deny';
+            const next = { ...overrides };
+            for (const item of items) {
+              if (effect === 'inherit') delete next[item.key];
+              else next[item.key] = effect;
+            }
+            setOverrides(next);
+          }}>
+            {groupValue === 'mixed' && <option value="mixed">Mixto</option>}
+            <option value="inherit">Heredar</option>
+            <option value="allow">Permitir</option>
+            <option value="deny">Denegar</option>
+          </select>
+        </label>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 10, marginTop: 12 }}>
         {items.map(item => {
-          const available = immutable || eligibleRoles.some(role => item.allowedRoles.includes(role));
           const inherited = inheritedPermissions.includes(item.key);
           const value = overrides[item.key] ?? 'inherit';
-          return <div key={item.key} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, opacity: available ? 1 : 0.48 }}>
+          return <div key={item.key} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
               <span><strong style={{ display: 'block', fontSize: 13 }}>{item.label}</strong><span className="text-muted" style={{ fontSize: 11 }}>{item.description}</span></span>
-              <select className="form-select" style={{ width: 122, margin: 0, flexShrink: 0 }} value={value} disabled={immutable || !available} onChange={event => {
+              <select className="form-select" style={{ width: 122, margin: 0, flexShrink: 0 }} value={value} disabled={immutable} onChange={event => {
                 const next = { ...overrides };
                 if (event.target.value === 'inherit') delete next[item.key];
                 else next[item.key] = event.target.value as 'allow' | 'deny';
@@ -243,7 +267,7 @@ function LayeredPolicyEditor({ catalog, sections, inheritedPermissions, inherite
           </div>;
         })}
       </div>
-    </section>)}
+    </section>})}
     <section className="card" style={{ padding: 18 }}>
       <strong>Alcance de secciones</strong>
       <div style={{ display: 'flex', gap: 18, margin: '12px 0' }}>
@@ -288,7 +312,6 @@ function RoleSectionPanel({ matrix }: { matrix: MatrixResponse }) {
       initialOverrides={profile.data.permissionOverrides}
       initialCustomSections={profile.data.customSectionAccess}
       initialSectionIds={profile.data.sectionIds}
-      eligibleRoles={[role]}
       onSave={payload => accessControlApi.updateRoleSectionProfile(role, sectionId, payload).then(response => {
         qc.setQueryData(['access-role-section', role, sectionId], response.data);
         void qc.invalidateQueries({ queryKey: ['access-control-matrix'] });
@@ -343,7 +366,6 @@ function UserPanel({ matrix }: { matrix: MatrixResponse }) {
         initialOverrides={profile.data.permissionOverrides}
         initialCustomSections={profile.data.customSectionAccess}
         initialSectionIds={profile.data.sectionIds}
-        eligibleRoles={profile.data.account.roles}
         immutable={profile.data.immutable}
         onSave={payload => accessControlApi.updateAccountProfile(selectedId, payload).then(response => {
           qc.setQueryData(['access-account-profile', selectedId], response.data);

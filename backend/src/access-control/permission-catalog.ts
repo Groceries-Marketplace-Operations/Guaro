@@ -1,9 +1,11 @@
 import { AccountRole } from '@prisma/client';
 
 const ALL_EDITABLE = [AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.director];
-const ADMIN = [AccountRole.admin];
-const ADMIN_DIRECTOR = [AccountRole.admin, AccountRole.director];
-const BPO_ADMIN = [AccountRole.bpo, AccountRole.admin];
+// Every editable role can receive any permission explicitly. The defaults remain
+// conservative, but the access matrix is the source of truth for customization.
+const ADMIN = ALL_EDITABLE;
+const ADMIN_DIRECTOR = ALL_EDITABLE;
+const BPO_ADMIN = ALL_EDITABLE;
 
 export const PERMISSION_CATALOG = [
   { key: 'dashboard.view', group: 'General', label: 'Dashboard', description: 'Ver el resumen principal.', allowedRoles: ALL_EDITABLE },
@@ -12,7 +14,7 @@ export const PERMISSION_CATALOG = [
   { key: 'brands.update', group: 'Catálogo', label: 'Editar brands', description: 'Modificar marcas, responsables y reglas de asignación.', allowedRoles: ADMIN },
   { key: 'brands.delete', group: 'Catálogo', label: 'Eliminar brands', description: 'Eliminar una marca y sus relaciones permitidas.', allowedRoles: ADMIN },
   { key: 'tasks.view', group: 'Tareas', label: 'Tareas', description: 'Consultar tareas de acuerdo con el alcance del rol y sus secciones.', allowedRoles: ALL_EDITABLE },
-  { key: 'tasks.create', group: 'Tareas', label: 'Crear tareas', description: 'Iniciar tareas y usar el asistente de validación.', allowedRoles: [AccountRole.user, AccountRole.bpo, AccountRole.admin] },
+  { key: 'tasks.create', group: 'Tareas', label: 'Crear tareas', description: 'Iniciar tareas y usar el asistente de validación.', allowedRoles: ALL_EDITABLE },
   { key: 'tasks.execute', group: 'Tareas', label: 'Ejecutar pasos', description: 'Iniciar, completar, fallar, bloquear y reintentar pasos.', allowedRoles: BPO_ADMIN },
   { key: 'tasks.assign', group: 'Tareas', label: 'Asignar tareas', description: 'Asignar pasos de tareas a integrantes BPO.', allowedRoles: ADMIN },
   { key: 'task_types.manage', group: 'Tareas', label: 'Task Types', description: 'Configurar tipos, pasos, campos y handlers de tareas.', allowedRoles: ADMIN },
@@ -57,8 +59,8 @@ export const PERMISSION_CATALOG = [
   { key: 'config.users.delete', group: 'Configuración', label: 'Eliminar usuarios', description: 'Desactivar cuentas dentro del alcance permitido.', allowedRoles: ADMIN },
   { key: 'sections.view', group: 'Configuración', label: 'Consultar secciones', description: 'Usar secciones en filtros, usuarios y tareas.', allowedRoles: ADMIN_DIRECTOR },
   { key: 'sections.manage', group: 'Configuración', label: 'Secciones', description: 'Crear, ordenar y asignar secciones.', allowedRoles: ADMIN },
-  { key: 'settings.manage', group: 'Configuración', label: 'Settings', description: 'Administrar catálogos y reglas globales. Exclusivo de Super Admin.', allowedRoles: [] },
-  { key: 'system.manage', group: 'Configuración', label: 'System Panel', description: 'Acceder a diagnósticos y controles del sistema. Exclusivo de Super Admin.', allowedRoles: [] },
+  { key: 'settings.manage', group: 'Configuración', label: 'Settings', description: 'Administrar catálogos y reglas globales.', allowedRoles: ALL_EDITABLE },
+  { key: 'system.manage', group: 'Configuración', label: 'System Panel', description: 'Acceder a diagnósticos y controles del sistema.', allowedRoles: ALL_EDITABLE },
 ] as const;
 
 export type PermissionKey = typeof PERMISSION_CATALOG[number]['key'];
