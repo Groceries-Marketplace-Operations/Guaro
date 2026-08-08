@@ -54,6 +54,21 @@ export class AccessControlController {
     return this.service.accounts(query, page, limit);
   }
 
+  @Get('area-access')
+  areaAccess() {
+    return this.service.areaAccess();
+  }
+
+  @Put('area-access/:area/:accountId')
+  updateAreaAccess(
+    @Param('area') area: string,
+    @Param('accountId') accountId: string,
+    @Body('permissions') permissions: unknown[],
+    @CurrentUser() actor: JwtUser,
+  ) {
+    return this.service.updateAreaAccess(area, accountId, permissions, actor.id);
+  }
+
   @Get('accounts/:accountId')
   accountProfile(@Param('accountId') accountId: string) {
     return this.service.accountProfile(accountId);

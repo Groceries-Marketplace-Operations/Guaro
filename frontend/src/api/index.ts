@@ -96,6 +96,9 @@ export const brandsApi = {
 
 export const accessControlApi = {
   matrix: () => client.get('/access-control/matrix'),
+  areaAccess: () => client.get('/access-control/area-access'),
+  updateAreaAccess: (area: string, accountId: string, permissions: string[]) =>
+    client.put(`/access-control/area-access/${area}/${accountId}`, { permissions }),
   updateRole: (role: string, data: { permissions: string[]; sectionIds: string[] }) =>
     client.put(`/access-control/roles/${role}`, data),
   roleSectionProfile: (role: string, sectionId: string) =>

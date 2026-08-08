@@ -16,6 +16,45 @@ const EDITABLE_ROLES: readonly AccountRole[] = [
   AccountRole.director,
 ];
 
+const ACCESS_AREAS = {
+  admin: {
+    name: 'Admin',
+    visibilityPermissions: [
+      'applications.manage', 'sftp_applications.manage', 'bpo.team', 'sections.manage',
+      'settings.manage', 'system.manage', 'config.handlers', 'config.webhooks',
+      'config.invitations', 'config.users',
+    ],
+    permissions: [
+      'applications.manage', 'applications.create', 'applications.update', 'applications.delete',
+      'sftp_applications.manage', 'sftp_applications.update', 'sftp_applications.test',
+      'bpo.team', 'sections.view', 'sections.manage', 'settings.manage', 'system.manage',
+      'config.handlers', 'config.webhooks', 'config.webhooks.update',
+      'config.invitations', 'config.invitations.update',
+      'config.users', 'config.users.update', 'config.users.delete',
+    ],
+  },
+  integrations: {
+    name: 'Integrations',
+    visibilityPermissions: [
+      'integrations.forced_open', 'integrations.auto_stores_fetch', 'integrations.auto_menu_fetch',
+      'integrations.auto_turn_off', 'integrations.emergencies', 'integrations.promotions_sftp',
+      'integrations.custom', 'integrations.promotion_api',
+    ],
+    permissions: [
+      'integrations.forced_open', 'integrations.forced_open.configure', 'integrations.forced_open.execute',
+      'integrations.auto_stores_fetch', 'integrations.auto_stores_fetch.configure', 'integrations.auto_stores_fetch.execute',
+      'integrations.auto_menu_fetch', 'integrations.auto_menu_fetch.configure', 'integrations.auto_menu_fetch.execute',
+      'integrations.auto_turn_off', 'integrations.auto_turn_off.configure', 'integrations.auto_turn_off.execute',
+      'integrations.emergencies', 'integrations.emergencies.execute',
+      'integrations.promotions_sftp', 'integrations.promotions_sftp.configure', 'integrations.promotions_sftp.execute',
+      'integrations.custom', 'integrations.custom.configure', 'integrations.custom.execute',
+      'integrations.promotion_api', 'integrations.promotion_api.execute',
+    ],
+  },
+} as const;
+
+type AccessAreaKey = keyof typeof ACCESS_AREAS;
+
 export interface PermissionOverrideInput {
   permission: string;
   allowed: boolean;
@@ -183,6 +222,97 @@ export class AccessControlService {
       this.prisma.account.count({ where }),
     ]);
     return { data, total, page: safePage, limit: safeLimit };
+  }
+
+  async areaAccess() {
+    const [accounts, rolePermissions, sectionOverrides, accountOverrides] = await Promise.all([
+      this.prisma.account.findMany({
+        where: { deletedAt: null },
+        orderBy: [{ name: 'asc' }, { email: 'asc' }],
+        select: {
+          id: true, name: true, email: true, roles: true, sectionId: true,
+          section: { select: { id: true, name: true } },
+        },
+      }),
+      this.prisma.rolePermission.findMany({ select: { role: true, permission: true } }),
+      this.prisma.roleSectionPermissionOverride.findMany({
+        select: { role: true, sectionId: true, permission: true, allowed: true },
+      }),
+      this.prisma.accountPermissionOverride.findMany({
+        select: { accountId: true, permission: true, allowed: true },
+      }),
+    ]);
+    const effectiveByAccount = new Map(accounts.map(account => {
+      if (account.roles.includes(AccountRole.super_admin)) return [account.id, [...ALL_PERMISSION_KEYS]];
+      const roleBase = [...new Set(rolePermissions
+        .filter(row => account.roles.includes(row.role))
+        .map(row => row.permission))];
+      const sectionLayer = account.sectionId
+        ? sectionOverrides.filter(row => row.sectionId === account.sectionId && account.roles.includes(row.role))
+        : [];
+      const inherited = this.applyOverrides(roleBase, sectionLayer);
+      const individual = accountOverrides.filter(row => row.accountId === account.id);
+      return [account.id, this.applyOverrides(inherited, individual)];
+    }));
+    const catalogByKey = new Map(PERMISSION_CATALOG.map(item => [item.key, item]));
+
+    return {
+      accounts: accounts.map(account => ({
+        ...account,
+        immutable: account.roles.includes(AccountRole.super_admin),
+      })),
+      areas: (Object.entries(ACCESS_AREAS) as Array<[AccessAreaKey, typeof ACCESS_AREAS[AccessAreaKey]]>).map(([key, area]) => ({
+        key,
+        name: area.name,
+        permissions: area.permissions.map(permission => ({
+          key: permission,
+          label: catalogByKey.get(permission)?.label ?? permission,
+        })),
+        members: accounts.flatMap(account => {
+          const effectivePermissions = effectiveByAccount.get(account.id) ?? [];
+          const visible = area.visibilityPermissions.some(permission => effectivePermissions.includes(permission));
+          const permissions = area.permissions.filter(permission => effectivePermissions.includes(permission));
+          return visible ? [{
+            account,
+            immutable: account.roles.includes(AccountRole.super_admin),
+            permissions,
+          }] : [];
+        }),
+      })),
+    };
+  }
+
+  async updateAreaAccess(areaKey: string, accountId: string, permissions: unknown[], actorId: string) {
+    const area = this.requireAccessArea(areaKey);
+    if (!Array.isArray(permissions) || permissions.some(permission => typeof permission !== 'string')) {
+      throw new BadRequestException('permissions must be an array of strings');
+    }
+    const desired = [...new Set(permissions as string[])];
+    const invalid = desired.filter(permission => !(area.permissions as readonly string[]).includes(permission));
+    if (invalid.length) throw new BadRequestException(`Permissions outside ${area.name}: ${invalid.join(', ')}`);
+    if (desired.length && !area.visibilityPermissions.some(permission => desired.includes(permission))) {
+      throw new BadRequestException(`Select at least one visible ${area.name} module`);
+    }
+
+    const profile = await this.accountProfile(accountId);
+    if (profile.immutable) {
+      throw new BadRequestException('Super Admin has permanent access and cannot be changed');
+    }
+    const areaPermissions = new Set<string>(area.permissions);
+    const inherited = new Set<string>(profile.inheritedPermissions);
+    const desiredSet = new Set(desired);
+    const retained = profile.permissionOverrides.filter(item => !areaPermissions.has(item.permission));
+    const areaOverrides = area.permissions.flatMap(permission => {
+      const shouldAllow = desiredSet.has(permission);
+      const inheritedAllows = inherited.has(permission);
+      return shouldAllow === inheritedAllows ? [] : [{ permission, allowed: shouldAllow }];
+    });
+
+    return this.updateAccountProfile(accountId, {
+      permissionOverrides: [...retained, ...areaOverrides],
+      customSectionAccess: profile.customSectionAccess,
+      sectionIds: profile.sectionIds,
+    }, actorId);
   }
 
   async accountProfile(accountId: string) {
@@ -368,6 +498,11 @@ export class AccessControlService {
     if (!EDITABLE_ROLES.includes(role)) {
       throw new BadRequestException('Super Admin has implicit full access and cannot be restricted');
     }
+  }
+
+  private requireAccessArea(value: string) {
+    if (!(value in ACCESS_AREAS)) throw new BadRequestException(`Unknown access area: ${value}`);
+    return ACCESS_AREAS[value as AccessAreaKey];
   }
 
   private async requireSection(id: string) {

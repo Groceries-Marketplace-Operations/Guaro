@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import { accessControlApi } from '../../api';
+import AreaAccessPanel from './AreaAccessPanel';
 import type { AccountRole, Paginated } from '../../types';
 
 interface CatalogItem {
@@ -71,6 +72,32 @@ const ROLE_LABELS: Record<AccountRole, string> = {
 };
 const EDITABLE_ROLES: AccountRole[] = ['user', 'bpo', 'admin', 'director'];
 
+const GROUP_THEMES: Record<string, { accent: string; border: string; background: string; itemBackground: string }> = {
+  'General': { accent: '#475569', border: '#cbd5e1', background: '#f8fafc', itemBackground: '#ffffff' },
+  'Catálogo': { accent: '#2563eb', border: '#bfdbfe', background: '#eff6ff', itemBackground: '#f8fbff' },
+  'Tareas': { accent: '#ea580c', border: '#fed7aa', background: '#fff7ed', itemBackground: '#fffaf5' },
+  'Task Types': { accent: '#7c3aed', border: '#ddd6fe', background: '#f5f3ff', itemBackground: '#faf9ff' },
+  'BPO': { accent: '#0891b2', border: '#a5f3fc', background: '#ecfeff', itemBackground: '#f7feff' },
+  'Integraciones': { accent: '#059669', border: '#a7f3d0', background: '#ecfdf5', itemBackground: '#f7fefb' },
+  'Administración': { accent: '#4f46e5', border: '#c7d2fe', background: '#eef2ff', itemBackground: '#f8f9ff' },
+  'Configuración': { accent: '#c026d3', border: '#f5d0fe', background: '#fdf4ff', itemBackground: '#fffaff' },
+};
+
+const DEFAULT_GROUP_THEME = { accent: '#64748b', border: '#cbd5e1', background: '#f8fafc', itemBackground: '#ffffff' };
+
+function groupTheme(group: string) {
+  return GROUP_THEMES[group] ?? DEFAULT_GROUP_THEME;
+}
+
+function permissionSelectStyle(value: string, inherited = false): React.CSSProperties {
+  if (value === 'allow') return { background: '#ecfdf3', borderColor: '#86efac', color: '#087443', fontWeight: 700 };
+  if (value === 'deny') return { background: '#fff1f0', borderColor: '#fca5a5', color: '#b42318', fontWeight: 700 };
+  if (value === 'mixed') return { background: '#fffbeb', borderColor: '#fde68a', color: '#92400e', fontWeight: 700 };
+  return inherited
+    ? { background: '#eff6ff', borderColor: '#bfdbfe', color: '#1d4ed8', fontWeight: 700 }
+    : { background: '#f8fafc', borderColor: '#cbd5e1', color: '#475569', fontWeight: 700 };
+}
+
 function groupedCatalog(catalog: CatalogItem[]) {
   const groups = new Map<string, CatalogItem[]>();
   for (const item of catalog) groups.set(item.group, [...(groups.get(item.group) ?? []), item]);
@@ -123,9 +150,10 @@ function BaseRolePanel({ matrix }: { matrix: MatrixResponse }) {
     {readOnly && <div className="alert alert-info">Super Admin tiene acceso total permanente y no acepta restricciones.</div>}
     {groups.map(([group, items]) => {
       const allSelected = items.length > 0 && items.every(item => permissions.includes(item.key));
-      return <section className="card" key={group} style={{ padding: 18 }}>
+      const theme = groupTheme(group);
+      return <section className="card" key={group} style={{ padding: 18, borderColor: theme.border, borderLeft: `5px solid ${theme.accent}`, background: `linear-gradient(135deg, ${theme.background} 0%, #ffffff 72%)` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-          <div><strong>{group}</strong><p className="text-muted text-sm" style={{ marginTop: 3 }}>{items.length} permisos</p></div>
+          <div><strong style={{ color: theme.accent }}>{group}</strong><p className="text-muted text-sm" style={{ marginTop: 3 }}>{items.length} permisos</p></div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12 }}>
             <input type="checkbox" checked={allSelected} disabled={readOnly} onChange={() => {
               const keys = items.map(item => item.key);
@@ -135,7 +163,7 @@ function BaseRolePanel({ matrix }: { matrix: MatrixResponse }) {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(270px, 1fr))', gap: 10 }}>
           {items.map(item => {
-            return <label key={item.key} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, display: 'flex', gap: 10 }}>
+            return <label key={item.key} style={{ border: `1px solid ${theme.border}`, background: theme.itemBackground, borderRadius: 10, padding: 12, display: 'flex', gap: 10 }}>
               <input type="checkbox" checked={permissions.includes(item.key)} disabled={readOnly} onChange={() => toggle(item.key, permissions, setPermissions)} />
               <span><strong style={{ display: 'block', fontSize: 13 }}>{item.label}</strong><span className="text-muted" style={{ fontSize: 11 }}>{item.description}</span></span>
             </label>;
@@ -225,12 +253,14 @@ function LayeredPolicyEditor({ catalog, sections, inheritedPermissions, inherite
     {groups.map(([group, items]) => {
       const effects = items.map(item => overrides[item.key] ?? 'inherit');
       const groupValue = effects.every(effect => effect === effects[0]) ? effects[0] : 'mixed';
-      return <section className="card" key={group} style={{ padding: 18 }}>
+      const theme = groupTheme(group);
+      const inheritedGroup = items.some(item => inheritedPermissions.includes(item.key));
+      return <section className="card" key={group} style={{ padding: 18, borderColor: theme.border, borderLeft: `5px solid ${theme.accent}`, background: `linear-gradient(135deg, ${theme.background} 0%, #ffffff 72%)` }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <strong>{group}</strong>
+        <strong style={{ color: theme.accent }}>{group}</strong>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
           Todo el grupo
-          <select className="form-select" style={{ width: 130, margin: 0 }} value={groupValue} disabled={immutable} onChange={event => {
+          <select className="form-select" style={{ width: 130, margin: 0, ...permissionSelectStyle(groupValue, inheritedGroup) }} value={groupValue} disabled={immutable} onChange={event => {
             const effect = event.target.value as 'inherit' | 'allow' | 'deny';
             const next = { ...overrides };
             for (const item of items) {
@@ -250,10 +280,10 @@ function LayeredPolicyEditor({ catalog, sections, inheritedPermissions, inherite
         {items.map(item => {
           const inherited = inheritedPermissions.includes(item.key);
           const value = overrides[item.key] ?? 'inherit';
-          return <div key={item.key} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12 }}>
+          return <div key={item.key} style={{ border: `1px solid ${theme.border}`, background: theme.itemBackground, borderRadius: 10, padding: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
               <span><strong style={{ display: 'block', fontSize: 13 }}>{item.label}</strong><span className="text-muted" style={{ fontSize: 11 }}>{item.description}</span></span>
-              <select className="form-select" style={{ width: 122, margin: 0, flexShrink: 0 }} value={value} disabled={immutable} onChange={event => {
+              <select className="form-select" style={{ width: 122, margin: 0, flexShrink: 0, ...permissionSelectStyle(value, inherited) }} value={value} disabled={immutable} onChange={event => {
                 const next = { ...overrides };
                 if (event.target.value === 'inherit') delete next[item.key];
                 else next[item.key] = event.target.value as 'allow' | 'deny';
@@ -394,7 +424,7 @@ function AuditPanel() {
 }
 
 export default function RoleAccessPage() {
-  const [mode, setMode] = useState<'role' | 'role_section' | 'user' | 'audit'>('role');
+  const [mode, setMode] = useState<'areas' | 'role' | 'role_section' | 'user' | 'audit'>('areas');
   const matrix = useQuery<MatrixResponse>({
     queryKey: ['access-control-matrix'],
     queryFn: () => accessControlApi.matrix().then(response => response.data),
@@ -407,6 +437,7 @@ export default function RoleAccessPage() {
         <SummaryPill>1. Rol base</SummaryPill><span>→</span><SummaryPill>2. Rol + Sección</SummaryPill><span>→</span><SummaryPill>3. Usuario</SummaryPill><span className="text-muted text-sm">La capa más específica prevalece.</span>
       </div>
       <div className="tabs" style={{ marginBottom: 18 }}>
+        <button className={`tab ${mode === 'areas' ? 'active' : ''}`} onClick={() => setMode('areas')}>Admin e Integrations</button>
         <button className={`tab ${mode === 'role' ? 'active' : ''}`} onClick={() => setMode('role')}>Por rol</button>
         <button className={`tab ${mode === 'role_section' ? 'active' : ''}`} onClick={() => setMode('role_section')}>Rol + sección</button>
         <button className={`tab ${mode === 'user' ? 'active' : ''}`} onClick={() => setMode('user')}>Por usuario {matrix.data?.userOverrideCount ? `(${matrix.data.userOverrideCount})` : ''}</button>
@@ -414,6 +445,7 @@ export default function RoleAccessPage() {
       </div>
       {matrix.isLoading && <p className="text-muted">Cargando control de accesos…</p>}
       {matrix.isError && <div className="error-banner">No se pudo cargar la matriz.</div>}
+      {mode === 'areas' && <AreaAccessPanel />}
       {matrix.data && mode === 'role' && <BaseRolePanel matrix={matrix.data} />}
       {matrix.data && mode === 'role_section' && <RoleSectionPanel matrix={matrix.data} />}
       {matrix.data && mode === 'user' && <UserPanel matrix={matrix.data} />}
