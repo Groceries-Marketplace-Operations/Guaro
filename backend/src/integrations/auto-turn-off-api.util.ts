@@ -4,6 +4,20 @@ import {
   parseJsonKeepingIds,
   sleep,
 } from '../queue/handlers/didi-food.util';
+import { withGroceryTaskStatusRateLimit } from '../file-integrations/grocery-task-status-limiter';
+
+export interface MenuDownloadProgress {
+  phase: 'requested' | 'waiting' | 'downloading';
+  taskId: string;
+  pollAttempts: number;
+  status?: number;
+  rateLimited?: boolean;
+}
+
+export interface DownloadMenuOptions {
+  existingTaskId?: string;
+  onProgress?: (progress: MenuDownloadProgress) => Promise<void>;
+}
 
 export type StockEndpoint = 'setStock' | 'setstockSync';
 
@@ -53,6 +67,7 @@ export async function downloadMenu(
   authToken: string,
   ensureActive: () => Promise<void>,
   refreshAuthToken?: () => Promise<string>,
+  options: DownloadMenuOptions = {},
 ): Promise<{
   taskId: string;
   items: Array<Record<string, unknown>>;
@@ -65,18 +80,22 @@ export async function downloadMenu(
   const timeoutMs = 20 * 60_000;
   const pollIntervalMs = 6000;
   await ensureActive();
-  const createEndpoint = 'POST /v3/item/item/menu';
-  const createResponse = await fetchWithEndpointContext(createEndpoint, `${DIDI_BASE}/v3/item/item/menu`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ auth_token: authToken }),
-  });
-  const createBody = parseJsonKeepingIds(await createResponse.text());
-  if (!createResponse.ok || createBody.errno !== 0) {
-    throw new Error(`${createEndpoint} failed: ${createBody.errmsg ?? `HTTP ${createResponse.status}`}`);
+  let taskId = options.existingTaskId ?? '';
+  if (!taskId) {
+    const createEndpoint = 'POST /v3/item/item/menu';
+    const createResponse = await fetchWithEndpointContext(createEndpoint, `${DIDI_BASE}/v3/item/item/menu`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auth_token: authToken }),
+    });
+    const createBody = parseJsonKeepingIds(await createResponse.text());
+    if (!createResponse.ok || createBody.errno !== 0) {
+      throw new Error(`${createEndpoint} failed: ${createBody.errmsg ?? `HTTP ${createResponse.status}`}`);
+    }
+    taskId = String(createBody.data?.taskID ?? createBody.data?.taskId ?? '');
+    if (!taskId) throw new Error('Menu export did not return a taskID');
+    await options.onProgress?.({ phase: 'requested', taskId, pollAttempts: 0 });
   }
-  const taskId = String(createBody.data?.taskID ?? createBody.data?.taskId ?? '');
-  if (!taskId) throw new Error('Menu export did not return a taskID');
 
   let downloadUrl = '';
   let pollAttempts = 0;
@@ -92,17 +111,23 @@ export async function downloadMenu(
     }
     pollAttempts += 1;
     const taskEndpoint = 'POST /v3/item/item/getGroceryMenuTaskInfo';
-    const taskResponse = await fetchWithEndpointContext(
+    const taskResponse = await withGroceryTaskStatusRateLimit(() => fetchWithEndpointContext(
       taskEndpoint,
       `${DIDI_BASE}/v3/item/item/getGroceryMenuTaskInfo`,
       {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auth_token: pollingToken, task_id: taskId }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auth_token: pollingToken, task_id: taskId }),
       },
-    );
+    ));
     const taskBody = parseJsonKeepingIds(await taskResponse.text());
-    if (isMenuTaskPending(taskBody)) continue;
+    if (isMenuTaskPending(taskBody)) {
+      await options.onProgress?.({
+        phase: 'waiting', taskId, pollAttempts,
+        rateLimited: /frequency|limit|window/i.test(String(taskBody.errmsg ?? '')),
+      });
+      continue;
+    }
     if (taskBody.errno === 10102 && refreshAuthToken) {
       pollingToken = await refreshAuthToken();
       continue;
@@ -116,6 +141,7 @@ export async function downloadMenu(
 
     const status = Number(taskBody.data?.status);
     lastStatus = status;
+    await options.onProgress?.({ phase: 'waiting', taskId, pollAttempts, status });
     const operations = Array.isArray(taskBody.data?.operationList) ? taskBody.data.operationList : [];
     const completed = operations.find((operation: Record<string, unknown>) => operation.operationType === 'menuExportDone');
     const successList = completed && Array.isArray(completed.successList) ? completed.successList : [];
@@ -153,6 +179,7 @@ export async function downloadMenu(
   }
 
   await ensureActive();
+  await options.onProgress?.({ phase: 'downloading', taskId, pollAttempts, status: lastStatus });
   const url = new URL(downloadUrl);
   if (!['http:', 'https:'].includes(url.protocol)
     || (url.hostname !== 'didiglobal.com' && !url.hostname.endsWith('.didiglobal.com'))) {

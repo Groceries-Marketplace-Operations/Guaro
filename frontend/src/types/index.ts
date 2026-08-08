@@ -533,7 +533,19 @@ export interface TargetedMenuExecution {
   failedShops: number;
   currentShopId?: string;
   errorMessage?: string;
-  result?: { shops?: TargetedMenuShopResult[] };
+  result?: {
+    shops?: TargetedMenuShopResult[];
+    progress?: {
+      shopId: string;
+      phase: 'resolving_shop' | 'downloading_menu' | 'matching_upcs' | 'submitting_menu' | 'confirming_upload';
+      message: string;
+      exportTaskId?: string;
+      exportPollAttempts?: number;
+      exportStatus?: number;
+      currentBatch?: number;
+      totalBatches?: number;
+    };
+  };
   createdAt: string;
 }
 

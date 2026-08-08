@@ -17,30 +17,38 @@ export class TargetedMenuScheduler implements OnModuleInit {
 
   async onModuleInit() {
     const interrupted = await this.prisma.targetedMenuExecution.findMany({
-      where: { status: { in: ['pending', 'running'] } }, select: { id: true, ruleId: true, cancelRequested: true },
+      where: { status: { in: ['pending', 'running'] } },
+      select: { id: true, ruleId: true, cancelRequested: true, rule: { select: { name: true } } },
     });
     if (!interrupted.length) return;
     const now = new Date();
-    await this.prisma.$transaction([
+    const cancelled = interrupted.filter(value => value.cancelRequested);
+    const resumable = interrupted.filter(value => !value.cancelRequested);
+    if (cancelled.length) await this.prisma.targetedMenuExecution.updateMany({
+      where: { id: { in: cancelled.map(value => value.id) } },
+      data: {
+        status: 'cancelled',
+        finishedAt: now,
+        currentShopId: null,
+        errorMessage: 'Stopped before service restart',
+      },
+    });
+    if (resumable.length) await this.prisma.$transaction([
       this.prisma.targetedMenuExecution.updateMany({
-        where: { id: { in: interrupted.map(value => value.id) } },
+        where: { id: { in: resumable.map(value => value.id) } },
         data: {
-          status: 'cancelled',
-          finishedAt: now,
-          currentShopId: null,
-          errorMessage: 'Interrupted by service restart',
+          status: 'pending',
+          finishedAt: null,
+          errorMessage: 'Resuming after service restart',
         },
-      }),
-      this.prisma.targetedMenuRule.updateMany({
-        where: {
-          id: { in: [...new Set(interrupted.filter(value => !value.cancelRequested).map(value => value.ruleId))] },
-          active: true,
-          deletedAt: null,
-        },
-        data: { nextRunAt: now },
       }),
     ]);
-    this.logger.warn(`Recovered ${interrupted.length} interrupted targeted menu execution(s)`);
+    for (const execution of resumable) {
+      await this.service.resume(execution.id, execution.rule.name);
+    }
+    this.logger.warn(
+      `Resumed ${resumable.length} interrupted targeted menu execution(s); cancelled ${cancelled.length}`,
+    );
   }
 
   @Cron(CronExpression.EVERY_MINUTE)

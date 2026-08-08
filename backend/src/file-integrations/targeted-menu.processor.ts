@@ -5,7 +5,7 @@ import { AutoOpenStatus, Prisma } from '@prisma/client';
 import { Job } from 'bullmq';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
-import { downloadMenu } from '../integrations/auto-turn-off-api.util';
+import { downloadMenu, MenuDownloadProgress } from '../integrations/auto-turn-off-api.util';
 import {
   fetchShopIdMap,
   getAuthToken,
@@ -13,7 +13,12 @@ import {
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
 import { buildFlatGroceryUploads, groceryMergePolicyForBatch } from './grocery-destination-menu.util';
-import { GroceryItemFailure, uploadGroceryBatch } from './grocery-menu-upload.util';
+import {
+  GroceryBatchUploadResult,
+  GroceryItemFailure,
+  resolveGroceryBatchSubmission,
+  submitGroceryBatch,
+} from './grocery-menu-upload.util';
 import { selectMenuUpcs } from './targeted-menu.util';
 
 class TargetedMenuCancelledError extends Error {}
@@ -32,6 +37,31 @@ interface ShopUploadResult {
   error?: string;
 }
 
+interface TargetedUploadBatchProgress {
+  referenceId: string;
+  itemCount: number;
+  status: 'submitted' | 'done';
+  acceptedCount?: number;
+  failedItems?: GroceryItemFailure[];
+}
+
+interface TargetedMenuProgress {
+  shopId: string;
+  phase: 'resolving_shop' | 'downloading_menu' | 'matching_upcs' | 'submitting_menu' | 'confirming_upload';
+  message: string;
+  exportTaskId?: string;
+  exportPollAttempts?: number;
+  exportStatus?: number;
+  currentBatch?: number;
+  totalBatches?: number;
+  uploadBatches?: TargetedUploadBatchProgress[];
+}
+
+interface TargetedMenuExecutionResult {
+  shops?: ShopUploadResult[];
+  progress?: TargetedMenuProgress;
+}
+
 @Injectable()
 @Processor('targeted-menu', { concurrency: 3 })
 export class TargetedMenuProcessor extends WorkerHost {
@@ -44,9 +74,12 @@ export class TargetedMenuProcessor extends WorkerHost {
 
   async process(job: Job<{ executionId: string }>) {
     const executionId = job.data.executionId;
+    const existingExecution = await this.prisma.targetedMenuExecution.findUnique({
+      where: { id: executionId }, select: { startedAt: true },
+    });
     const claimed = await this.prisma.targetedMenuExecution.updateMany({
       where: { id: executionId, status: 'pending', cancelRequested: false },
-      data: { status: 'running', startedAt: new Date(), errorMessage: null },
+      data: { status: 'running', startedAt: existingExecution?.startedAt ?? new Date(), errorMessage: null },
     });
     if (!claimed.count) return;
 
@@ -61,7 +94,9 @@ export class TargetedMenuProcessor extends WorkerHost {
       await this.fail(executionId, 'The selected brand has no DiDi application linked', []);
       return;
     }
-    const results: ShopUploadResult[] = [];
+    const savedState = (execution.result ?? {}) as unknown as TargetedMenuExecutionResult;
+    const results: ShopUploadResult[] = [...(savedState.shops ?? [])];
+    let activeProgress = savedState.progress;
     try {
       const encryptionKey = this.config.getOrThrow<string>('APP_SECRET_ENCRYPTION_KEY');
       let appSecret: string;
@@ -72,9 +107,21 @@ export class TargetedMenuProcessor extends WorkerHost {
       }
       const targets = await this.resolveTargets(rule.brandId, rule.shopIds, application.appId, appSecret);
       for (const target of targets) {
+        if (results.some(result => result.shopId === target.shopId)) continue;
         await this.ensureActive(executionId);
+        activeProgress = activeProgress?.shopId === target.shopId
+          ? activeProgress
+          : {
+            shopId: target.shopId,
+            phase: 'resolving_shop',
+            message: 'Resolving shop credentials',
+          };
         await this.prisma.targetedMenuExecution.update({
-          where: { id: executionId }, data: { currentShopId: target.shopId },
+          where: { id: executionId },
+          data: {
+            currentShopId: target.shopId,
+            result: { shops: results, progress: activeProgress } as unknown as Prisma.InputJsonValue,
+          },
         });
         if (!target.appShopId) {
           results.push({
@@ -85,17 +132,50 @@ export class TargetedMenuProcessor extends WorkerHost {
             missingUpcs: rule.upcs,
             error: 'shop_id was not found locally or in POST /v1/shop/shop/list',
           });
+          activeProgress = undefined;
           await this.progress(executionId, results);
           continue;
         }
         try {
           const authToken = await getAuthToken(application.appId, appSecret, target.appShopId);
+          activeProgress = {
+            ...activeProgress,
+            shopId: target.shopId,
+            phase: 'downloading_menu',
+            message: activeProgress?.exportTaskId ? 'Resuming menu export' : 'Requesting the store menu export',
+          };
+          await this.progress(executionId, results, activeProgress);
           const downloaded = await downloadMenu(
             authToken,
             () => this.ensureActive(executionId),
             () => getAuthToken(application.appId, appSecret, target.appShopId!),
+            {
+              existingTaskId: activeProgress.exportTaskId,
+              onProgress: async (downloadProgress: MenuDownloadProgress) => {
+                activeProgress = {
+                  ...activeProgress!,
+                  phase: 'downloading_menu',
+                  message: downloadProgress.phase === 'downloading'
+                    ? 'Downloading the exported menu'
+                    : downloadProgress.rateLimited
+                      ? 'Waiting for the shared DiDi task-status window'
+                      : 'Waiting for DiDi to prepare the menu export',
+                  exportTaskId: downloadProgress.taskId,
+                  exportPollAttempts: downloadProgress.pollAttempts,
+                  exportStatus: downloadProgress.status,
+                };
+                await this.progress(executionId, results, activeProgress);
+              },
+            },
           );
           const sourceMenu = parseJsonKeepingIds(downloaded.rawJson) as Record<string, unknown>;
+          activeProgress = {
+            ...activeProgress,
+            phase: 'matching_upcs',
+            message: `Matching ${rule.upcs.length} requested UPCs against the exported menu`,
+            exportTaskId: downloaded.taskId,
+          };
+          await this.progress(executionId, results, activeProgress);
           const uploadTaskIds: string[] = [];
           const failedItems: GroceryItemFailure[] = [];
           let acceptedCount = 0;
@@ -104,17 +184,93 @@ export class TargetedMenuProcessor extends WorkerHost {
             throw new Error(`None of the ${rule.upcs.length} requested UPCs exist in the downloaded menu`);
           }
           const uploads = buildFlatGroceryUploads(sourceMenu, selected.items);
+          const savedBatches = activeProgress.uploadBatches ?? [];
           for (let index = 0; index < uploads.length; index++) {
             await this.ensureActive(executionId);
             const mergePolicy = groceryMergePolicyForBatch(rule.mergePolicy, index);
-            const upload = await uploadGroceryBatch(
-              authToken,
-              uploads[index],
-              rule.uploadEndpoint,
-              mergePolicy,
-              () => this.ensureActive(executionId),
-              () => getAuthToken(application.appId, appSecret, target.appShopId!),
-            );
+            let batchProgress = savedBatches[index];
+            let upload: GroceryBatchUploadResult;
+            if (batchProgress?.status === 'done') {
+              upload = {
+                referenceId: batchProgress.referenceId,
+                successfulItemIds: [],
+                failedItems: batchProgress.failedItems ?? [],
+                acceptedCount: batchProgress.acceptedCount ?? 0,
+              };
+            } else {
+              if (!batchProgress) {
+                activeProgress = {
+                  ...activeProgress,
+                  phase: 'submitting_menu',
+                  message: `Submitting menu batch ${index + 1} of ${uploads.length}`,
+                  currentBatch: index + 1,
+                  totalBatches: uploads.length,
+                  uploadBatches: savedBatches,
+                };
+                await this.progress(executionId, results, activeProgress);
+                const submission = await submitGroceryBatch(authToken, uploads[index], rule.uploadEndpoint, mergePolicy);
+                if ('acceptedCount' in submission) {
+                  upload = submission;
+                  batchProgress = {
+                    referenceId: submission.referenceId,
+                    itemCount: uploads[index].items.length,
+                    status: 'done',
+                    acceptedCount: submission.acceptedCount,
+                    failedItems: submission.failedItems,
+                  };
+                } else {
+                  batchProgress = {
+                    referenceId: submission.referenceId,
+                    itemCount: uploads[index].items.length,
+                    status: 'submitted',
+                  };
+                  savedBatches[index] = batchProgress;
+                  activeProgress = {
+                    ...activeProgress,
+                    phase: 'confirming_upload',
+                    message: `Waiting for DiDi confirmation for batch ${index + 1} of ${uploads.length}`,
+                    currentBatch: index + 1,
+                    totalBatches: uploads.length,
+                    uploadBatches: savedBatches,
+                  };
+                  await this.progress(executionId, results, activeProgress);
+                  upload = await resolveGroceryBatchSubmission(
+                    authToken,
+                    submission.referenceId,
+                    uploads[index].items.length,
+                    () => this.ensureActive(executionId),
+                    () => getAuthToken(application.appId, appSecret, target.appShopId!),
+                  );
+                }
+              } else {
+                activeProgress = {
+                  ...activeProgress,
+                  phase: 'confirming_upload',
+                  message: `Resuming DiDi confirmation for batch ${index + 1} of ${uploads.length}`,
+                  currentBatch: index + 1,
+                  totalBatches: uploads.length,
+                  uploadBatches: savedBatches,
+                };
+                await this.progress(executionId, results, activeProgress);
+                upload = await resolveGroceryBatchSubmission(
+                  authToken,
+                  batchProgress.referenceId,
+                  uploads[index].items.length,
+                  () => this.ensureActive(executionId),
+                  () => getAuthToken(application.appId, appSecret, target.appShopId!),
+                );
+              }
+              batchProgress = {
+                referenceId: upload.referenceId,
+                itemCount: uploads[index].items.length,
+                status: 'done',
+                acceptedCount: upload.acceptedCount,
+                failedItems: upload.failedItems,
+              };
+              savedBatches[index] = batchProgress;
+              activeProgress = { ...activeProgress!, uploadBatches: savedBatches };
+              await this.progress(executionId, results, activeProgress);
+            }
             uploadTaskIds.push(upload.referenceId);
             failedItems.push(...upload.failedItems);
             acceptedCount += upload.acceptedCount;
@@ -144,6 +300,7 @@ export class TargetedMenuProcessor extends WorkerHost {
             error: (error as Error).message,
           });
         }
+        activeProgress = undefined;
         await this.progress(executionId, results);
       }
 
@@ -222,14 +379,18 @@ export class TargetedMenuProcessor extends WorkerHost {
     }
   }
 
-  private async progress(executionId: string, results: ShopUploadResult[]) {
+  private async progress(
+    executionId: string,
+    results: ShopUploadResult[],
+    progress?: TargetedMenuProgress,
+  ) {
     await this.prisma.targetedMenuExecution.update({
       where: { id: executionId },
       data: {
         processedShops: results.length,
         successfulShops: results.filter(result => result.status !== 'failed').length,
         failedShops: results.filter(result => result.status === 'failed').length,
-        result: { shops: results } as unknown as Prisma.InputJsonValue,
+        result: { shops: results, ...(progress ? { progress } : {}) } as unknown as Prisma.InputJsonValue,
       },
     });
   }

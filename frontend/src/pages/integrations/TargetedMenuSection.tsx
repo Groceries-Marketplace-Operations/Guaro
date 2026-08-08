@@ -141,6 +141,7 @@ export default function TargetedMenuSection() {
         const latest = rule.executions[0];
         const running = latest && activeStatuses.has(latest.status);
         const shops = latest?.result?.shops ?? [];
+        const progress = latest?.result?.progress;
         return <article key={rule.id} className="card" style={{ padding: 18 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
             <div>
@@ -179,6 +180,12 @@ export default function TargetedMenuSection() {
               {latest.currentShopId && <span>Procesando {latest.currentShopId}</span>}
               {shops.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(expanded === latest.id ? null : latest.id)}>{expanded === latest.id ? 'Ocultar detalle' : 'Ver tiendas'}</button>}
             </div>
+            {progress && <div style={{ marginTop: 9, padding: '9px 11px', borderRadius: 8, background: 'var(--orange-muted)', color: 'var(--orange-dark)', fontSize: 12 }}>
+              <strong>{progress.message}</strong>
+              {progress.exportTaskId && <span className="td-mono"> · Export task {progress.exportTaskId}</span>}
+              {!!progress.exportPollAttempts && <span> · consulta {progress.exportPollAttempts}</span>}
+              {progress.currentBatch && <span> · bloque {progress.currentBatch}/{progress.totalBatches}</span>}
+            </div>}
             <ExecutionTiming startedAt={latest.startedAt} finishedAt={latest.finishedAt} />
             {latest.errorMessage && <p style={{ color: 'var(--red)', marginTop: 8 }}>{latest.errorMessage}</p>}
             {expanded === latest.id && <div className="table-wrap" style={{ marginTop: 12 }}><table>

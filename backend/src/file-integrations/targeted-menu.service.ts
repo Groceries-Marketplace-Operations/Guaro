@@ -98,6 +98,19 @@ export class TargetedMenuService {
     return { executionId, name };
   }
 
+  async resume(executionId: string, name: string) {
+    // Use a distinct BullMQ id because the pre-restart active job can remain
+    // locked in Redis until the stalled-job check runs. The DB claim ensures
+    // that only one of the old/new jobs can continue the execution.
+    await this.queue.add('targeted-menu-upload', { executionId }, {
+      jobId: `${executionId}-resume-${Date.now()}`,
+      attempts: 1,
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    });
+    return { executionId, name };
+  }
+
   private async normalize(dto: UpsertTargetedMenuRuleDto) {
     const brand = await this.prisma.brand.findFirst({
       where: { id: dto.brandId, deletedAt: null },

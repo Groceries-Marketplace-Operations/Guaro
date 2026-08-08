@@ -6,6 +6,7 @@ import {
   submitGroceryBatch,
 } from '../src/file-integrations/grocery-menu-upload.util';
 import { FlatGroceryUpload } from '../src/file-integrations/grocery-destination-menu.util';
+import { downloadMenu } from '../src/integrations/auto-turn-off-api.util';
 
 const batch: FlatGroceryUpload = {
   menus: [{ app_menu_id: 'menu_1', menu_name: 'Menu 1', app_category_ids: ['category_0'] }],
@@ -63,4 +64,39 @@ test('DiDi task-info frequency errors remain pending instead of failing the stor
   assert.equal(result.rateLimited, true);
   assert.equal(result.status, undefined);
   assert.deepEqual(result.failedItems, []);
+});
+
+test('menu export resumes an existing task and reports its progress without creating another export', async t => {
+  const originalFetch = global.fetch;
+  const calls: string[] = [];
+  const progress: string[] = [];
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = async input => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes('getGroceryMenuTaskInfo')) {
+      return new Response(JSON.stringify({
+        errno: 0,
+        errmsg: 'ok',
+        data: {
+          status: 1,
+          operationList: [{ operationType: 'menuExportDone', successList: ['https://menu.didiglobal.com/export.json'] }],
+        },
+      }), { status: 200 });
+    }
+    if (url === 'https://menu.didiglobal.com/export.json') {
+      return new Response(JSON.stringify({ items: [{ upc: '7501', app_item_id: 'item-1' }] }), { status: 200 });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+
+  const result = await downloadMenu('token', async () => undefined, undefined, {
+    existingTaskId: 'export-task-1',
+    onProgress: async value => { progress.push(value.phase); },
+  });
+
+  assert.equal(result.taskId, 'export-task-1');
+  assert.equal(result.items.length, 1);
+  assert.equal(calls.filter(url => /\/v3\/item\/item\/menu$/.test(url)).length, 0);
+  assert.deepEqual(progress, ['waiting', 'downloading']);
 });

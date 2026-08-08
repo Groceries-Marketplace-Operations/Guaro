@@ -5,6 +5,8 @@ import {
   sleep,
 } from '../queue/handlers/didi-food.util';
 import { FlatGroceryUpload } from './grocery-destination-menu.util';
+import { withGroceryTaskStatusRateLimit } from './grocery-task-status-limiter';
+export { GROCERY_TASK_STATUS_MIN_INTERVAL_MS } from './grocery-task-status-limiter';
 
 export const GROCERY_UPLOAD_ENDPOINTS = ['uploadGrocery', 'updateItemsync'] as const;
 export type GroceryUploadEndpoint = typeof GROCERY_UPLOAD_ENDPOINTS[number];
@@ -32,12 +34,6 @@ export interface GroceryUploadTaskCheckResult {
   terminal: boolean;
   rateLimited: boolean;
 }
-
-// DiDi applies this limit to the task-info endpoint across the application,
-// not per shop/token. Keep every caller in this Node process on one queue.
-export const GROCERY_TASK_STATUS_MIN_INTERVAL_MS = 5_250;
-let groceryTaskStatusTail = Promise.resolve();
-let nextGroceryTaskStatusPollAt = 0;
 
 export class GroceryUploadPendingError extends Error {
   constructor(
@@ -72,17 +68,6 @@ function taskIssues(operations: unknown): GroceryItemFailure[] {
     }];
   });
   return [...new Map(issues.map(issue => [`${issue.appItemId}:${issue.reason}`, issue])).values()];
-}
-
-async function withGroceryTaskStatusRateLimit<T>(action: () => Promise<T>): Promise<T> {
-  const scheduled = groceryTaskStatusTail.then(async () => {
-    const waitMs = Math.max(0, nextGroceryTaskStatusPollAt - Date.now());
-    if (waitMs > 0) await sleep(waitMs);
-    nextGroceryTaskStatusPollAt = Date.now() + GROCERY_TASK_STATUS_MIN_INTERVAL_MS;
-    return action();
-  });
-  groceryTaskStatusTail = scheduled.then(() => undefined, () => undefined);
-  return scheduled;
 }
 
 export async function checkGroceryUploadTaskOnce(
