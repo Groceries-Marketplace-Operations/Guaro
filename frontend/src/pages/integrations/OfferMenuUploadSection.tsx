@@ -57,6 +57,33 @@ function hours(value: string) {
   return [...new Set(value.split(/[,;\s]+/).map(item => Number(item)).filter(item => Number.isInteger(item) && item >= 0 && item <= 23))].sort((a, b) => a - b);
 }
 
+function percent(value: number, total: number) {
+  if (total <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round((value / total) * 100)));
+}
+
+function PhaseStep({ number, title, state, detail, progress }: {
+  number: number;
+  title: string;
+  state: 'pending' | 'running' | 'done';
+  detail: string;
+  progress: number;
+}) {
+  const color = state === 'done' ? 'var(--green)' : state === 'running' ? 'var(--orange)' : 'var(--text-muted)';
+  const label = state === 'done' ? 'Terminado' : state === 'running' ? 'En curso' : 'Pendiente';
+  return <div style={{ flex: '1 1 330px', minWidth: 0, padding: 12, border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface)' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+      <strong style={{ fontSize: 13 }}>{number}. {title}</strong>
+      <span style={{ color, fontSize: 11, fontWeight: 700 }}>{label}</span>
+    </div>
+    <p className="text-muted" style={{ marginTop: 7, fontSize: 12 }}>{detail}</p>
+    <div style={{ height: 7, marginTop: 9, overflow: 'hidden', borderRadius: 999, background: 'var(--border)' }}>
+      <div style={{ width: `${progress}%`, height: '100%', borderRadius: 999, background: color, transition: 'width .35s ease' }} />
+    </div>
+    <div className="text-muted" style={{ marginTop: 5, textAlign: 'right', fontSize: 11 }}>{progress}%</div>
+  </div>;
+}
+
 export default function OfferMenuUploadSection() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -137,11 +164,15 @@ export default function OfferMenuUploadSection() {
         const running = latest && activeStatuses.has(latest.status);
         const stores = latest?.result?.stores ?? [];
         const phase = latest?.result?.phase;
-        const phaseLabel = phase === 'submitting'
-          ? `Enviando menús: ${latest?.result?.submissionProcessedStores ?? 0}/${latest?.totalStores ?? 0}`
-          : phase === 'checking_status'
-            ? `Consultando taskID: ${latest?.result?.checkedStores ?? 0}/${latest?.result?.submittedStores ?? 0}`
-            : phase === 'complete' ? 'Carga y verificación terminadas' : null;
+        const totalStores = latest?.result?.totalStores ?? latest?.totalStores ?? 0;
+        const submissionProcessed = latest?.result?.submissionProcessedStores ?? (phase === 'complete' ? totalStores : 0);
+        const submittedStores = latest?.result?.submittedStores ?? 0;
+        const checkedStores = latest?.result?.checkedStores ?? (phase === 'complete' ? submittedStores : 0);
+        const pendingStatusChecks = latest?.result?.pendingStatusChecks ?? Math.max(0, submittedStores - checkedStores);
+        const submissionFailures = Math.max(0, submissionProcessed - submittedStores);
+        const submissionDone = phase === 'checking_status' || phase === 'complete';
+        const statusDone = phase === 'complete';
+        const isDryRun = latest?.result?.dryRun ?? rule.dryRun;
         return <article key={rule.id} className="card" style={{ padding: 18 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
             <div>
@@ -169,9 +200,31 @@ export default function OfferMenuUploadSection() {
             </div>
           </div>
           {latest && <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-            {phaseLabel && <div className="alert alert-info" style={{ marginBottom: 10, padding: '9px 12px' }}>
-              <strong>{phaseLabel}</strong>
-              {phase === 'checking_status' && <span> · {latest.result?.submittedStores ?? 0} payloads enviados · {latest.result?.checkedStores ?? 0} resultados confirmados · {latest.result?.pendingStatusChecks ?? Math.max(0, (latest.result?.submittedStores ?? 0) - (latest.result?.checkedStores ?? 0))} pendientes.</span>}
+            {phase && <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+              <PhaseStep
+                number={1}
+                title={isDryRun ? 'Validar menús' : 'Enviar todos los menús'}
+                state={submissionDone ? 'done' : phase === 'submitting' ? 'running' : 'pending'}
+                progress={percent(submissionProcessed, totalStores)}
+                detail={isDryRun
+                  ? `${submissionProcessed.toLocaleString()} de ${totalStores.toLocaleString()} tiendas validadas.`
+                  : `${submissionProcessed.toLocaleString()} de ${totalStores.toLocaleString()} tiendas procesadas · ${submittedStores.toLocaleString()} taskID recibidos${submissionFailures ? ` · ${submissionFailures.toLocaleString()} sin taskID` : ''}.`}
+              />
+              <PhaseStep
+                number={2}
+                title="Consultar estados de los taskID"
+                state={isDryRun || statusDone ? 'done' : phase === 'checking_status' ? 'running' : 'pending'}
+                progress={isDryRun ? 100 : percent(checkedStores, submittedStores)}
+                detail={isDryRun
+                  ? 'No aplica: la simulación no envía menús a DiDi.'
+                  : phase === 'submitting'
+                    ? 'Comenzará después de enviar todos los menús; no bloquea los envíos.'
+                    : `${checkedStores.toLocaleString()} de ${submittedStores.toLocaleString()} taskID con resultado terminal · ${pendingStatusChecks.toLocaleString()} pendientes · ${latest.result?.statusPolls ?? 0} consultas realizadas.`}
+              />
+            </div>}
+            {phase === 'checking_status' && <div className="alert alert-info" style={{ marginBottom: 10, padding: '9px 12px' }}>
+              <strong>Todos los menús ya fueron procesados para envío.</strong> Ahora el sistema solo consulta los taskID pendientes; no vuelve a subir los menús.
+              {!!latest.result?.rateLimitedPolls && <span> · Esperas por límite de DiDi: {latest.result.rateLimitedPolls}.</span>}
             </div>}
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
               <span>{latest.processedStores}/{latest.totalStores} tiendas</span><span>{latest.totalItems.toLocaleString()} ítems</span>
