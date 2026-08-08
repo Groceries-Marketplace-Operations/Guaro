@@ -22,6 +22,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { AdminModule } from './admin/admin.module';
 import { SftpApplicationsModule } from './sftp-applications/sftp-applications.module';
 import { FileIntegrationsModule } from './file-integrations/file-integrations.module';
+import { AccessControlModule } from './access-control/access-control.module';
 
 const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
 
@@ -29,6 +30,7 @@ const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../.env'] }),
     PrismaModule,
+    AccessControlModule,
     AuthModule,
     InvitationsModule,
     HandlersModule,

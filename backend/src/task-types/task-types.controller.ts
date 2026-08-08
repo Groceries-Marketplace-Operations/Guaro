@@ -24,6 +24,7 @@ import { JwtUser } from '../auth/types/jwt-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Permissions } from '../access-control/permissions.decorator';
 import { AddStepWebhookDto } from './dto/add-step-webhook.dto';
 import { CreateFormFieldDto } from './dto/create-form-field.dto';
 import { CreateStepDto } from './dto/create-step.dto';
@@ -34,6 +35,7 @@ import { UpdateTaskTypeDto } from './dto/update-task-type.dto';
 import { TaskTypesService } from './task-types.service';
 
 @Controller('task-types')
+@Permissions('task_types.manage')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class TaskTypesController {
   constructor(private taskTypesService: TaskTypesService) {}
@@ -41,6 +43,7 @@ export class TaskTypesController {
   // ── TaskType ──────────────────────────────────────────────────────────────
 
   @Get()
+  @Permissions('tasks.view')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.user, AccountRole.bpo, AccountRole.director)
   findAll(
     @CurrentUser() u: JwtUser,
@@ -52,6 +55,7 @@ export class TaskTypesController {
   }
 
   @Get(':id')
+  @Permissions('tasks.view')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.user, AccountRole.bpo, AccountRole.director)
   findOne(@Param('id') id: string, @CurrentUser() u: JwtUser) {
     return this.taskTypesService.findOneForUser(id, u.roles);

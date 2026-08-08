@@ -8,6 +8,7 @@ import { brandsApi, applicationsApi, webhooksApi, appConfigApi } from '../../api
 import type { AppConfigOption } from '../../types';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
+import { hasPermission } from '../../auth/permissions';
 import type { Brand, Country, KaType, MenuIntegration, PickingMode, PaymentMode, Paginated, Application, Webhook } from '../../types';
 
 const COUNTRIES: Country[] = ['MX', 'CO', 'CR'];
@@ -70,8 +71,7 @@ export default function BrandsList() {
   const { account } = useAuth();
   const t = useT();
   const isBpo = account?.roles.includes('bpo') && !account?.roles.includes('admin') && !account?.roles.includes('super_admin');
-  const isAdmin = account?.roles.includes('admin') || account?.roles.includes('super_admin');
-  const canCreateBrand = isAdmin || (isBpo && (account?.bpoPermissions ?? []).includes('create_brand'));
+  const canCreateBrand = hasPermission(account, 'brands.create');
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [dq, setDq] = useState('');

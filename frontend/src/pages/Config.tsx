@@ -7,6 +7,7 @@ import { handlersApi, webhooksApi, invitationsApi, sectionsApi, accountsApi } fr
 import { useAuth } from '../auth/AuthContext';
 import { useT } from '../i18n';
 import type { Handler, Webhook, Section, AccountRole, Paginated } from '../types';
+import { hasPermission } from '../auth/permissions';
 
 interface InvitationRow {
   id: string;
@@ -54,29 +55,17 @@ const CopyIcon = () => (
   </svg>
 );
 
-const ADMIN_MODULES = [
-  { key: 'applications',  label: 'Applications' },
-  { key: 'bpo_team',      label: 'BPO Team' },
-  { key: 'integrations',  label: 'Integrations' },
-  { key: 'webhooks',      label: 'Webhooks (Config)' },
-  { key: 'handlers',      label: 'Handlers (Config)' },
-] as const;
-
-const BPO_PERMISSIONS = [
-  { key: 'create_brand',       label: 'Create Brand' },
-  { key: 'create_application', label: 'Create Application' },
-] as const;
-
 export default function Config() {
   const qc = useQueryClient();
   const { account } = useAuth();
   const t = useT();
   const isSuperAdmin = account?.roles.includes('super_admin') ?? false;
   const isAdmin = account?.roles.includes('admin') ?? false;
-  const adminMods = account?.adminModules ?? [];
-  const canSeeHandlers = isSuperAdmin || adminMods.includes('handlers');
-  const canSeeWebhooks = isSuperAdmin || adminMods.includes('webhooks');
-  const defaultTab = canSeeHandlers ? 'handlers' : canSeeWebhooks ? 'webhooks' : 'invitations';
+  const canSeeHandlers = hasPermission(account, 'config.handlers');
+  const canSeeWebhooks = hasPermission(account, 'config.webhooks');
+  const canSeeInvitations = hasPermission(account, 'config.invitations');
+  const canSeeUsers = hasPermission(account, 'config.users');
+  const defaultTab = canSeeHandlers ? 'handlers' : canSeeWebhooks ? 'webhooks' : canSeeInvitations ? 'invitations' : 'users';
   const [tab, setTab] = useState<'handlers' | 'webhooks' | 'invitations' | 'users'>(defaultTab);
 
   const [openHandler, setOpenHandler] = useState(false);
@@ -106,30 +95,32 @@ export default function Config() {
   const [editingUser, setEditingUser] = useState<AccountRow | null>(null);
   const [editUserSection, setEditUserSection] = useState('');
   const [editUserRoles, setEditUserRoles] = useState<string[]>([]);
-  const [editUserModules, setEditUserModules] = useState<string[]>([]);
-  const [editBpoPermissions, setEditBpoPermissions] = useState<string[]>([]);
 
   useEffect(() => {
     const timer = setTimeout(() => { setDUserQ(userQ); setUserPage(1); }, 300);
     return () => clearTimeout(timer);
   }, [userQ]);
 
-  const { data: handlers = [] } = useQuery<Handler[]>({ queryKey: ['handlers'], queryFn: () => handlersApi.list().then(r => r.data) });
-  const { data: webhooks = [] } = useQuery<Webhook[]>({ queryKey: ['webhooks'], queryFn: () => webhooksApi.list().then(r => r.data) });
+  const { data: handlers = [] } = useQuery<Handler[]>({ queryKey: ['handlers'], queryFn: () => handlersApi.list().then(r => r.data), enabled: canSeeHandlers });
+  const { data: webhooks = [] } = useQuery<Webhook[]>({ queryKey: ['webhooks'], queryFn: () => webhooksApi.list().then(r => r.data), enabled: canSeeWebhooks });
   const { data: invResult } = useQuery<Paginated<InvitationRow>>({
     queryKey: ['invitations', { page: invPage, limit: INV_LIMIT }],
     queryFn: () => invitationsApi.list({ page: invPage, limit: INV_LIMIT }).then(r => r.data as Paginated<InvitationRow>),
-    enabled: tab === 'invitations',
+    enabled: canSeeInvitations && tab === 'invitations',
   });
   const invitations = invResult?.data ?? [];
   const invTotal = invResult?.total ?? 0;
 
-  const { data: sections = [] } = useQuery<Section[]>({ queryKey: ['sections'], queryFn: () => sectionsApi.list().then(r => r.data) });
+  const { data: sections = [] } = useQuery<Section[]>({
+    queryKey: ['sections'],
+    queryFn: () => sectionsApi.list().then(r => r.data),
+    enabled: canSeeUsers || canSeeInvitations,
+  });
   const usersParams = { page: userPage, limit: USER_LIMIT };
   const { data: usersResult } = useQuery<Paginated<AccountRow>>({
     queryKey: ['accounts-all', usersParams],
     queryFn: () => accountsApi.list(usersParams).then(r => r.data as Paginated<AccountRow>),
-    enabled: tab === 'users',
+    enabled: canSeeUsers && tab === 'users',
   });
   const usersRaw: AccountRow[] = usersResult?.data ?? [];
   const usersTotal = usersResult?.total ?? 0;
@@ -138,21 +129,15 @@ export default function Config() {
     setEditingUser(u);
     setEditUserSection(u.sectionId ?? '');
     setEditUserRoles([...u.roles]);
-    setEditUserModules([...(u.adminModules ?? [])]);
-    setEditBpoPermissions([...(u.bpoPermissions ?? [])]);
     setErr('');
   };
 
   const saveEditUser = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
     try {
-      const isTargetAdmin = editingUser!.roles.includes('admin');
-      const isTargetBpo = editingUser!.roles.includes('bpo');
       await accountsApi.update(editingUser!.id, {
         sectionId: editUserSection || null,
         roles: editUserRoles,
-        ...(isSuperAdmin && isTargetAdmin ? { adminModules: editUserModules } : {}),
-        ...(isSuperAdmin && isTargetBpo ? { bpoPermissions: editBpoPermissions } : {}),
       });
       qc.invalidateQueries({ queryKey: ['accounts-all'] });
       setEditingUser(null);
@@ -282,10 +267,10 @@ export default function Config() {
           {canSeeWebhooks && (
             <div className={`tab ${tab === 'webhooks' ? 'active' : ''}`} onClick={() => setTab('webhooks')}>{t('pages.config.tabWebhooks')} ({webhooks.length})</div>
           )}
-          <div className={`tab ${tab === 'invitations' ? 'active' : ''}`} onClick={() => setTab('invitations')}>
+          {canSeeInvitations && <div className={`tab ${tab === 'invitations' ? 'active' : ''}`} onClick={() => setTab('invitations')}>
             {t('pages.config.tabInvitations')}
-          </div>
-          <div className={`tab ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>{t('pages.config.tabUsers')}</div>
+          </div>}
+          {canSeeUsers && <div className={`tab ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>{t('pages.config.tabUsers')}</div>}
         </div>
 
         {tab === 'handlers' && (
@@ -744,50 +729,7 @@ export default function Config() {
             </div>
             {editUserRoles.length === 0 && <p style={{ fontSize: '0.75rem', color: 'var(--red)', marginTop: 4 }}>{t('pages.config.editUserRolesRequired')}</p>}
           </div>
-          {isSuperAdmin && editingUser?.roles.includes('admin') && (
-            <div className="form-group">
-              <label className="form-label">{t('pages.config.editUserModulesLabel')}</label>
-              <p className="form-hint" style={{ marginBottom: 8 }}>{t('pages.config.editUserModulesHint')}</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8 }}>
-                {ADMIN_MODULES.map(({ key, label }) => (
-                  <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
-                    <input
-                      type="checkbox"
-                      checked={editUserModules.includes(key)}
-                      onChange={e => {
-                        if (e.target.checked) setEditUserModules(m => [...m, key]);
-                        else setEditUserModules(m => m.filter(x => x !== key));
-                      }}
-                      style={{ accentColor: 'var(--orange)', width: 15, height: 15 }}
-                    />
-                    <span style={{ fontWeight: 500 }}>{label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-          {isSuperAdmin && editingUser?.roles.includes('bpo') && (
-            <div className="form-group">
-              <label className="form-label">{t('pages.config.editUserBpoPermsLabel')}</label>
-              <p className="form-hint" style={{ marginBottom: 8 }}>{t('pages.config.editUserBpoPermsHint')}</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8 }}>
-                {BPO_PERMISSIONS.map(({ key, label }) => (
-                  <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
-                    <input
-                      type="checkbox"
-                      checked={editBpoPermissions.includes(key)}
-                      onChange={e => {
-                        if (e.target.checked) setEditBpoPermissions(p => [...p, key]);
-                        else setEditBpoPermissions(p => p.filter(x => x !== key));
-                      }}
-                      style={{ accentColor: 'var(--orange)', width: 15, height: 15 }}
-                    />
-                    <span style={{ fontWeight: 500 }}>{label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
+          {isSuperAdmin && <div className="alert alert-info">Los accesos se administran por rol desde <strong>Roles y permisos</strong>. Las cuentas con varios roles reciben la unión de ambos.</div>}
         </Modal>
       )}
     </>

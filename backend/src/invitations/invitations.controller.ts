@@ -5,11 +5,13 @@ import { JwtUser } from '../auth/types/jwt-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Permissions } from '../access-control/permissions.decorator';
 import { CreateInvitationDto } from './dto/create-invitation.dto';
 import { UseInvitationDto } from './dto/use-invitation.dto';
 import { InvitationsService } from './invitations.service';
 
 @Controller('invitations')
+@Permissions('config.invitations')
 export class InvitationsController {
   constructor(private invitationsService: InvitationsService) {}
 

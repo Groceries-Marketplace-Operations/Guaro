@@ -4,12 +4,14 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Permissions } from '../access-control/permissions.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { CreateSftpApplicationDto } from './dto/create-sftp-application.dto';
 import { UpdateSftpApplicationDto } from './dto/update-sftp-application.dto';
 import { SftpApplicationsService } from './sftp-applications.service';
 
 @Controller('sftp-applications')
+@Permissions('sftp_applications.manage')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(AccountRole.admin, AccountRole.super_admin)
 export class SftpApplicationsController {

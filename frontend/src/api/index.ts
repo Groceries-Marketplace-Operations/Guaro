@@ -92,6 +92,12 @@ export const brandsApi = {
   promotions: (id: string, params?: object) => client.get(`/brands/${id}/promotions`, { params }),
 };
 
+export const accessControlApi = {
+  matrix: () => client.get('/access-control/matrix'),
+  updateRole: (role: string, data: { permissions: string[]; sectionIds: string[] }) =>
+    client.put(`/access-control/roles/${role}`, data),
+};
+
 /* ── Shops ──────────────────────────────────────────────────── */
 export const shopsApi = {
   list: (params?: object) => client.get('/shops', { params }),

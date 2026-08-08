@@ -308,6 +308,17 @@ model RoleSectionAccess {
   @@map("role_section_access")
 }
 
+model RolePermission {
+  role       AccountRole @map("rol")
+  permission String      @map("permiso")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  @@id([role, permission])
+  @@index([permission])
+  @@map("role_permission")
+}
+
 model Handler {
   id        String   @id @default(uuid()) @db.Uuid
   name      String   @unique @map("nombre")

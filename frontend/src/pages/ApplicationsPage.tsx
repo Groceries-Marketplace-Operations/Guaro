@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Navigate } from 'react-router-dom';
 import Topbar from '../components/layout/Topbar';
 import Modal from '../components/ui/Modal';
 import Paginator from '../components/ui/Paginator';
@@ -8,6 +7,7 @@ import { applicationsApi } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useT } from '../i18n';
 import type { Application, Country, Paginated } from '../types';
+import { hasPermission } from '../auth/permissions';
 
 const COUNTRY_EMOJI: Record<Country, string> = { MX: '🇲🇽', CO: '🇨🇴', CR: '🇨🇷' };
 const COUNTRIES: Country[] = ['MX', 'CO', 'CR'];
@@ -34,11 +34,7 @@ export default function ApplicationsPage() {
   const qc = useQueryClient();
   const { account } = useAuth();
   const t = useT();
-  const isAdmin = account?.roles.includes('admin') || account?.roles.includes('super_admin');
-  const isBpoOnly = account?.roles.includes('bpo') && !isAdmin;
-  const hasAppPermission = (account?.bpoPermissions ?? []).includes('create_application');
-  const canAccessApps = isAdmin || (isBpoOnly && hasAppPermission);
-  const canCreateApp = canAccessApps;
+  const canCreateApp = hasPermission(account, 'applications.manage');
 
   const [q, setQ] = useState('');
   const [country, setCountry] = useState<Country | ''>('');
@@ -110,8 +106,6 @@ export default function ApplicationsPage() {
       qc.invalidateQueries({ queryKey: ['applications'] });
     } catch { /* ignore */ }
   };
-
-  if (!canAccessApps) return <Navigate to="/" replace />;
 
   const subtitle = total === 1
     ? t('pages.applications.subtitle').replace('{total}', String(total))

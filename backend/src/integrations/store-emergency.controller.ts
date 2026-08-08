@@ -4,11 +4,13 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Permissions } from '../access-control/permissions.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { CreateStoreEmergencyDto } from './dto/create-store-emergency.dto';
 import { StoreEmergencyService } from './store-emergency.service';
 
 @Controller('integrations/store-emergencies')
+@Permissions('integrations.emergencies')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(AccountRole.admin, AccountRole.super_admin)
 export class StoreEmergencyController {

@@ -6,6 +6,7 @@ import { JwtUser } from '../auth/types/jwt-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Permissions } from '../access-control/permissions.decorator';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { CreateShopDto } from './dto/create-shop.dto';
 import { CreateShopsBatchDto } from './dto/create-shops-batch.dto';
@@ -13,6 +14,7 @@ import { UpdateShopDto } from './dto/update-shop.dto';
 import { ShopsService } from './shops.service';
 
 @Controller('shops')
+@Permissions('brands.view')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ShopsController {
   constructor(private shopsService: ShopsService) {}

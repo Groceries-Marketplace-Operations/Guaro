@@ -5,15 +5,18 @@ import { JwtUser } from '../auth/types/jwt-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Permissions } from '../access-control/permissions.decorator';
 import { BpoManagementService } from './bpo-management.service';
 
 @Controller('bpo-management')
+@Permissions('bpo.team')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class BpoManagementController {
   constructor(private bpoManagementService: BpoManagementService) {}
 
   // BPO: mis tareas activas
   @Get('my-tasks')
+  @Permissions('bpo.queue')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   myActiveTasks(@CurrentUser() u: JwtUser) {
     return this.bpoManagementService.myActiveTasks(u.id);
@@ -21,6 +24,7 @@ export class BpoManagementController {
 
   // BPO: mi performance
   @Get('my-performance')
+  @Permissions('bpo.queue')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   myPerformance(@CurrentUser() u: JwtUser) {
     return this.bpoManagementService.myPerformance(u.id);

@@ -6,11 +6,13 @@ import { AccountRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Permissions } from '../access-control/permissions.decorator';
 import { AdminService } from './admin.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(AccountRole.super_admin)
 @Controller('admin')
+@Permissions('system.manage')
 export class AdminController {
   constructor(private svc: AdminService) {}
 

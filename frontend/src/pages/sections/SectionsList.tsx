@@ -4,16 +4,7 @@ import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { sectionsApi } from '../../api';
 import { useT } from '../../i18n';
-import type { AccountRole, Section } from '../../types';
-
-type RoleAccessResponse = {
-  sections: Array<Pick<Section, 'id' | 'name' | 'order'>>;
-  roles: Array<{ role: AccountRole; implicitAll: boolean; sectionIds: string[] }>;
-};
-
-const ROLE_LABELS: Record<AccountRole, string> = {
-  user: 'User', bpo: 'BPO', admin: 'Admin', director: 'Director', super_admin: 'Super Admin',
-};
+import type { Section } from '../../types';
 
 const PlusIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -33,10 +24,6 @@ export default function SectionsList() {
     queryKey: ['sections'],
     queryFn: () => sectionsApi.list().then(r => r.data),
   });
-  const { data: roleAccess } = useQuery<RoleAccessResponse>({
-    queryKey: ['section-role-access'],
-    queryFn: () => sectionsApi.roleAccess().then(r => r.data),
-  });
 
   const moveSection = async (index: number, direction: -1 | 1) => {
     const target = index + direction;
@@ -48,28 +35,11 @@ export default function SectionsList() {
       await sectionsApi.reorder(reordered.map((section, order) => ({ id: section.id, order })));
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['sections'] }),
-        qc.invalidateQueries({ queryKey: ['section-role-access'] }),
         qc.invalidateQueries({ queryKey: ['task-types'] }),
       ]);
     } catch (ex: unknown) {
       const e2 = ex as { response?: { data?: { message?: string } } };
       setErr(e2.response?.data?.message ?? 'No se pudo actualizar el orden.');
-    } finally { setSaving(false); }
-  };
-
-  const toggleRoleSection = async (role: AccountRole, sectionId: string) => {
-    const current = roleAccess?.roles.find(item => item.role === role);
-    if (!current || current.implicitAll) return;
-    const sectionIds = current.sectionIds.includes(sectionId)
-      ? current.sectionIds.filter(id => id !== sectionId)
-      : [...current.sectionIds, sectionId];
-    setSaving(true); setErr('');
-    try {
-      await sectionsApi.updateRoleAccess(role, sectionIds);
-      await qc.invalidateQueries({ queryKey: ['section-role-access'] });
-    } catch (ex: unknown) {
-      const e2 = ex as { response?: { data?: { message?: string } } };
-      setErr(e2.response?.data?.message ?? 'No se pudieron actualizar los permisos.');
     } finally { setSaving(false); }
   };
 
@@ -129,28 +99,7 @@ export default function SectionsList() {
           </table>
         </div>
 
-        <div className="card" style={{ marginTop: 20 }}>
-          <div className="card-header"><div>
-            <div className="card-title">Acceso de secciones por rol</div>
-            <p className="text-muted text-sm" style={{ marginTop: 4 }}>Activa las secciones que cada rol puede consultar y usar al crear tasks. Super Admin siempre conserva acceso total.</p>
-          </div></div>
-          {err && <div className="error-banner" style={{ marginBottom: 12 }}>{err}</div>}
-          <div className="table-wrap" style={{ border: 0 }}><table>
-            <thead><tr><th>Rol</th>{roleAccess?.sections.map(section => <th key={section.id}>{section.name}</th>)}</tr></thead>
-            <tbody>{roleAccess?.roles.map(role => <tr key={role.role}>
-              <td style={{ fontWeight: 700 }}>{ROLE_LABELS[role.role]}</td>
-              {roleAccess.sections.map(section => <td key={section.id}>
-                <input
-                  type="checkbox"
-                  checked={role.implicitAll || role.sectionIds.includes(section.id)}
-                  disabled={saving || role.implicitAll}
-                  onChange={() => toggleRoleSection(role.role, section.id)}
-                  aria-label={`${ROLE_LABELS[role.role]} · ${section.name}`}
-                />
-              </td>)}
-            </tr>)}</tbody>
-          </table></div>
-        </div>
+        {err && <div className="error-banner" style={{ marginTop: 16 }}>{err}</div>}
       </main>
 
       {open && (

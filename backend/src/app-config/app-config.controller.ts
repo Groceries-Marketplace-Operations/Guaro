@@ -3,6 +3,7 @@ import { AccountRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Permissions } from '../access-control/permissions.decorator';
 import { AppConfigService } from './app-config.service';
 import { PatchOptionDto } from './dto/patch-option.dto';
 import { UpsertOptionDto } from './dto/upsert-option.dto';
@@ -27,18 +28,21 @@ export class AppConfigController {
   }
 
   @Post()
+  @Permissions('settings.manage')
   @Roles(AccountRole.super_admin)
   upsert(@Body() dto: UpsertOptionDto) {
     return this.svc.upsert(dto);
   }
 
   @Patch(':id')
+  @Permissions('settings.manage')
   @Roles(AccountRole.super_admin)
   patch(@Param('id') id: string, @Body() dto: PatchOptionDto) {
     return this.svc.patch(id, dto);
   }
 
   @Delete(':id')
+  @Permissions('settings.manage')
   @Roles(AccountRole.super_admin)
   remove(@Param('id') id: string) {
     return this.svc.remove(id);

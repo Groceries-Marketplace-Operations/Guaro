@@ -20,9 +20,11 @@ import { JwtUser } from '../auth/types/jwt-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Permissions } from '../access-control/permissions.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('accounts')
+@Permissions('config.users')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AccountsController {
   constructor(private prisma: PrismaService) {}

@@ -47,6 +47,7 @@ export class AuthService {
       email: account.email,
       roles: account.roles,
       sectionId: account.sectionId,
+      adminModules: account.adminModules,
       bpoPermissions: account.bpoPermissions,
     };
     return this.jwt.sign(payload);

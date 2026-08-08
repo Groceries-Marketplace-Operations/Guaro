@@ -3,9 +3,11 @@ import { AccountRole } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Permissions } from '../access-control/permissions.decorator';
 import { HandlersService } from './handlers.service';
 
 @Controller('handlers')
+@Permissions('config.handlers')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class HandlersController {
   constructor(private handlersService: HandlersService) {}

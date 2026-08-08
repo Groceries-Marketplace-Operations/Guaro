@@ -8,6 +8,7 @@ import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { JwtUser } from './types/jwt-user.interface';
+import { PermissionAccessService } from '../access-control/permission-access.service';
 
 @Catch(HttpException)
 class OAuthFailureFilter implements ExceptionFilter {
@@ -20,7 +21,10 @@ class OAuthFailureFilter implements ExceptionFilter {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private permissionAccess: PermissionAccessService,
+  ) {}
 
   @Get('google')
   @UseGuards(AuthGuard('google'))
@@ -44,7 +48,8 @@ export class AuthController {
     if (!account) return user;
     // Re-issue JWT so role/permission changes take effect without requiring logout
     const token = this.authService.issueToken(account);
-    return { id: account.id, name: account.name, email: account.email, roles: account.roles, sectionId: account.sectionId, adminModules: account.adminModules, bpoPermissions: account.bpoPermissions, token };
+    const permissions = await this.permissionAccess.permissionsForRoles(account.roles);
+    return { id: account.id, name: account.name, email: account.email, roles: account.roles, sectionId: account.sectionId, adminModules: account.adminModules, bpoPermissions: account.bpoPermissions, permissions, token };
   }
 
   // Only available in development — issues JWT by email without going through Google

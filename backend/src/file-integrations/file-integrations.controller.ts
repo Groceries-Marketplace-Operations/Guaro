@@ -1,10 +1,12 @@
-import { BadRequestException, Body, Controller, DefaultValuePipe, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Delete, ForbiddenException, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AccountRole, FileIntegrationKind } from '@prisma/client';
+import { PermissionAccessService } from '../access-control/permission-access.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { JwtUser } from '../auth/types/jwt-user.interface';
+import { PrismaService } from '../prisma/prisma.service';
 import { UpsertFileIntegrationRuleDto } from './dto/upsert-file-integration-rule.dto';
 import { FileIntegrationsService } from './file-integrations.service';
 
@@ -12,41 +14,83 @@ import { FileIntegrationsService } from './file-integrations.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(AccountRole.admin, AccountRole.super_admin)
 export class FileIntegrationsController {
-  constructor(private readonly service: FileIntegrationsService) {}
+  constructor(
+    private readonly service: FileIntegrationsService,
+    private readonly prisma: PrismaService,
+    private readonly permissionAccess: PermissionAccessService,
+  ) {}
 
   @Get('rules/:kind')
-  list(@Param('kind') value: string) {
+  async list(@Param('kind') value: string, @CurrentUser() user: JwtUser) {
     const kind = value as FileIntegrationKind;
     if (!Object.values(FileIntegrationKind).includes(kind)) throw new BadRequestException('Invalid integration kind');
+    await this.assertKindAccess(user, kind);
     return this.service.list(kind);
   }
 
   @Post('rules')
-  create(@Body() dto: UpsertFileIntegrationRuleDto, @CurrentUser() user: JwtUser) {
+  async create(@Body() dto: UpsertFileIntegrationRuleDto, @CurrentUser() user: JwtUser) {
+    await this.assertKindAccess(user, dto.kind);
     return this.service.create(dto, user.id);
   }
 
   @Patch('rules/:id')
-  update(@Param('id') id: string, @Body() dto: UpsertFileIntegrationRuleDto) {
+  async update(@Param('id') id: string, @Body() dto: UpsertFileIntegrationRuleDto, @CurrentUser() user: JwtUser) {
+    await this.assertRuleAccess(user, id);
+    await this.assertKindAccess(user, dto.kind);
     return this.service.update(id, dto);
   }
 
   @Delete('rules/:id')
-  remove(@Param('id') id: string) { return this.service.remove(id); }
+  async remove(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    await this.assertRuleAccess(user, id);
+    return this.service.remove(id);
+  }
 
   @Post('rules/:id/run')
-  run(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.service.run(id, user.id); }
+  async run(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    await this.assertRuleAccess(user, id);
+    return this.service.run(id, user.id);
+  }
 
   @Post('rules/:id/stop')
-  stop(@Param('id') id: string) { return this.service.stop(id); }
+  async stop(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    await this.assertRuleAccess(user, id);
+    return this.service.stop(id);
+  }
 
   @Get('rules/:id/executions')
-  executions(@Param('id') id: string, @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number) {
+  async executions(@Param('id') id: string, @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number, @CurrentUser() user: JwtUser) {
+    await this.assertRuleAccess(user, id);
     return this.service.executions(id, page);
   }
 
   @Get('executions/:executionId/files/:fileName')
-  download(@Param('executionId') executionId: string, @Param('fileName') fileName: string) {
+  async download(@Param('executionId') executionId: string, @Param('fileName') fileName: string, @CurrentUser() user: JwtUser) {
+    const execution = await this.prisma.fileIntegrationExecution.findUnique({
+      where: { id: executionId },
+      select: { rule: { select: { kind: true, deletedAt: true } } },
+    });
+    if (!execution?.rule || execution.rule.deletedAt) throw new BadRequestException('Integration execution not found');
+    await this.assertKindAccess(user, execution.rule.kind);
     return this.service.download(executionId, fileName);
+  }
+
+  private async assertRuleAccess(user: JwtUser, ruleId: string) {
+    const rule = await this.prisma.fileIntegrationRule.findFirst({
+      where: { id: ruleId, deletedAt: null },
+      select: { kind: true },
+    });
+    if (!rule) throw new BadRequestException('File integration rule not found');
+    await this.assertKindAccess(user, rule.kind);
+  }
+
+  private async assertKindAccess(user: JwtUser, kind: FileIntegrationKind) {
+    const permission = kind === FileIntegrationKind.complex_promotion_reader
+      ? 'integrations.promotions_sftp'
+      : 'integrations.custom';
+    if (!(await this.permissionAccess.can(user.roles, [permission]))) {
+      throw new ForbiddenException('You do not have permission to access this file integration');
+    }
   }
 }

@@ -17,6 +17,7 @@ export interface Account {
   section?: { id: string; name: string };
   adminModules?: string[];
   bpoPermissions?: string[];
+  permissions?: string[];
   createdAt: string;
 }
 

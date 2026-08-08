@@ -13,6 +13,7 @@ import { JwtUser } from '../auth/types/jwt-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Permissions } from '../access-control/permissions.decorator';
 import { BlockStepDto } from './dto/block-step.dto';
 import { AssignStepDto } from './dto/assign-step.dto';
 import { CompleteStepDto } from './dto/complete-step.dto';
@@ -22,6 +23,7 @@ import { TasksService } from './tasks.service';
 import { TaskValidationService } from './task-validation.service';
 
 @Controller('tasks')
+@Permissions('tasks.view')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class TasksController {
   constructor(
@@ -43,6 +45,7 @@ export class TasksController {
   }
 
   @Get('templates/grocery-menu.xlsx')
+  @Permissions('tasks.create')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   async groceryMenuTemplate(@Res() response: Response) {
     const workbook = new ExcelJS.Workbook();
@@ -69,6 +72,7 @@ export class TasksController {
   }
 
   @Get('templates/add-shops.xlsx')
+  @Permissions('tasks.create')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   async addShopsTemplate(@Res() response: Response) {
     const workbook = new ExcelJS.Workbook();
@@ -124,18 +128,21 @@ export class TasksController {
   }
 
   @Post()
+  @Permissions('tasks.create')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateTaskDto) {
     return this.tasksService.create(dto, u);
   }
 
   @Get('validation-assistant/:taskTypeId/context')
+  @Permissions('tasks.create')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   assistantContext(@Param('taskTypeId') taskTypeId: string, @CurrentUser() u: JwtUser) {
     return this.taskValidation.getContext(taskTypeId, u);
   }
 
   @Post('validation-assistant/:taskTypeId/message')
+  @Permissions('tasks.create')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   assistantMessage(
     @Param('taskTypeId') taskTypeId: string,
@@ -239,6 +246,7 @@ export class TasksController {
   }
 
   @Post('upload-excel')
+  @Permissions('tasks.create')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   @UseInterceptors(FileInterceptor('file', {
     storage: diskStorage({
@@ -266,6 +274,7 @@ export class TasksController {
   }
 
   @Post('upload-image')
+  @Permissions('tasks.create')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   @UseInterceptors(FileInterceptor('file', {
     storage: diskStorage({

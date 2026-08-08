@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
-import type { AccountRole } from '../../types';
+import { hasAnyPermission, hasPermission } from '../../auth/permissions';
 
 const IconGrid = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -70,22 +70,25 @@ const IconPlus = () => (
   </svg>
 );
 
-function hasAny(roles: AccountRole[], ...check: AccountRole[]) {
-  return check.some((r) => roles.includes(r));
-}
-
 export default function Sidebar() {
   const { account, logout } = useAuth();
   const t = useT();
   const roles = account?.roles ?? [];
 
-  const isAdmin    = hasAny(roles, 'admin', 'super_admin');
-  const isBpo      = hasAny(roles, 'bpo');
   const isSA       = roles.includes('super_admin');
   const isDirector = roles.includes('director');
-  const canCreate  = !isDirector;
-  const adminMods  = account?.adminModules ?? [];
-  const canSeeModule = (mod: string) => isSA || adminMods.includes(mod);
+  const can = (permission: string) => hasPermission(account, permission);
+  const integrationPermissions = [
+    'integrations.forced_open', 'integrations.auto_stores_fetch', 'integrations.auto_menu_fetch',
+    'integrations.auto_turn_off', 'integrations.emergencies', 'integrations.promotions_sftp',
+    'integrations.custom', 'integrations.promotion_api',
+  ];
+  const configPermissions = ['config.handlers', 'config.webhooks', 'config.invitations', 'config.users'];
+  const canCreate = can('tasks.create') && !isDirector;
+  const showAdmin = hasAnyPermission(account, [
+    'applications.manage', 'sftp_applications.manage', 'bpo.team', 'sections.manage',
+    'settings.manage', 'system.manage', ...configPermissions,
+  ]);
 
   return (
     <aside className="sidebar">
@@ -109,106 +112,104 @@ export default function Sidebar() {
       )}
 
       <nav className="sidebar-scroll" aria-label={t('nav.mainNavigation')}>
-        <div className="sidebar-section">
+        {can('dashboard.view') && <div className="sidebar-section">
         <div className="sidebar-section-label">{t('nav.overview')}</div>
         <NavLink to="/" end className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
           <IconGrid /> {t('nav.dashboard')}
         </NavLink>
-        </div>
+        </div>}
 
-        <div className="sidebar-section">
+        {can('brands.view') && <div className="sidebar-section">
         <div className="sidebar-section-label">{t('nav.catalog')}</div>
         <NavLink to="/brands" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
           <IconTag /> {t('nav.brands')}
         </NavLink>
-        </div>
+        </div>}
 
-        <div className="sidebar-section">
+        {(can('tasks.view') || can('task_types.manage')) && <div className="sidebar-section">
         <div className="sidebar-section-label">{t('nav.tasks')}</div>
-        <NavLink to="/tasks" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+        {can('tasks.view') && <NavLink to="/tasks" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
           <IconClipboard /> {t('nav.tasks')}
-        </NavLink>
-        {isAdmin && (
+        </NavLink>}
+        {can('task_types.manage') && (
           <NavLink to="/task-types" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconLayers /> {t('nav.taskTypes')}
           </NavLink>
         )}
-        </div>
+        </div>}
 
-      {isBpo && (
+      {can('bpo.queue') && (
         <div className="sidebar-section">
           <div className="sidebar-section-label">{t('nav.bpo')}</div>
           <NavLink to="/bpo" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> {t('nav.myQueue')}
           </NavLink>
-          {canSeeModule('create_application') && (
-            <NavLink to="/applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-              <IconApp /> {t('nav.applications')}
-            </NavLink>
-          )}
         </div>
       )}
 
-      {(isSA || canSeeModule('integrations')) && (
+      {hasAnyPermission(account, integrationPermissions) && (
         <div className="sidebar-section">
           <div className="sidebar-section-label">{t('nav.integrations')}</div>
-          <NavLink to="/integrations/forced-open" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          {can('integrations.forced_open') && <NavLink to="/integrations/forced-open" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> {t('nav.forcedOpenStores')}
-          </NavLink>
-          <NavLink to="/integrations/auto-stores-fetch" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          </NavLink>}
+          {can('integrations.auto_stores_fetch') && <NavLink to="/integrations/auto-stores-fetch" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> Auto Stores Fetch
-          </NavLink>
-          <NavLink to="/integrations/auto-menu-fetch" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          </NavLink>}
+          {can('integrations.auto_menu_fetch') && <NavLink to="/integrations/auto-menu-fetch" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconLayers /> Auto Menu Fetch
-          </NavLink>
-          <NavLink to="/integrations/auto-turn-off" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          </NavLink>}
+          {can('integrations.auto_turn_off') && <NavLink to="/integrations/auto-turn-off" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> {t('nav.autoTurnOffItems')}
-          </NavLink>
-          <NavLink to="/integrations/emergencies" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          </NavLink>}
+          {can('integrations.emergencies') && <NavLink to="/integrations/emergencies" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> Emergencias
-          </NavLink>
-          <NavLink to="/integrations/complex-promotions-sftp" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          </NavLink>}
+          {can('integrations.promotions_sftp') && <NavLink to="/integrations/complex-promotions-sftp" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconLayers /> Promociones SFTP
-          </NavLink>
-          <NavLink to="/integrations/custom" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          </NavLink>}
+          {can('integrations.custom') && <NavLink to="/integrations/custom" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconSettings /> Custom integrations
-          </NavLink>
-          <NavLink to="/integrations/promotion-api" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          </NavLink>}
+          {can('integrations.promotion_api') && <NavLink to="/integrations/promotion-api" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconApp /> Promociones API
-          </NavLink>
+          </NavLink>}
         </div>
       )}
 
-      {isAdmin && (
+      {showAdmin && (
         <div className="sidebar-section">
           <div className="sidebar-section-label">{t('nav.admin')}</div>
-          {canSeeModule('applications') && (
+          {can('applications.manage') && (
             <NavLink to="/applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
               <IconApp /> {t('nav.applications')}
             </NavLink>
           )}
-          <NavLink to="/sftp-applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          {can('sftp_applications.manage') && <NavLink to="/sftp-applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconApp /> Aplicaciones SFTP
-          </NavLink>
-          {canSeeModule('bpo_team') && (
+          </NavLink>}
+          {can('bpo.team') && (
             <NavLink to="/bpo-management" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
               <IconBriefcase /> {t('nav.bpoTeam')}
             </NavLink>
           )}
-          {isSA && (
+          {can('sections.manage') && (
             <NavLink to="/sections" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
               <IconUsers /> {t('nav.sections')}
             </NavLink>
           )}
-          <NavLink to="/config" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          {hasAnyPermission(account, configPermissions) && <NavLink to="/config" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconSettings /> {t('nav.config')}
-          </NavLink>
-          {isSA && (
+          </NavLink>}
+          {isSA && <NavLink to="/role-access" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconUsers /> Roles y permisos
+          </NavLink>}
+          {can('settings.manage') && (
             <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
               <IconGrid /> {t('nav.settings')}
             </NavLink>
           )}
-          {isSA && (
+          {can('system.manage') && (
             <NavLink to="/admin" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
               <IconTerminal /> {t('nav.systemPanel')}
             </NavLink>

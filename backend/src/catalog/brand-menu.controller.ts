@@ -4,11 +4,13 @@ import { AccountRole } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Permissions } from '../access-control/permissions.decorator';
 import { CatalogSyncService } from './catalog-sync.service';
 import { BrandMenuCategoryService } from './brand-menu-category.service';
 import { ReplaceBrandMenuCategoriesDto } from './dto/replace-brand-menu-categories.dto';
 
 @Controller('brands/:brandId/menu')
+@Permissions('brands.view')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class BrandMenuController {
   constructor(
