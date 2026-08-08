@@ -26,7 +26,7 @@ export class MenuCopyService implements OnModuleInit {
 
   list() {
     return this.prisma.menuCopyExecution.findMany({
-      take: 50,
+      take: 500,
       orderBy: { createdAt: 'desc' },
       include: {
         sourceApplication: { select: { id: true, appId: true, appName: true, country: true } },
@@ -45,31 +45,46 @@ export class MenuCopyService implements OnModuleInit {
     const target = applications.find(application => application.id === dto.targetApplicationId);
     if (!source) throw new BadRequestException('Source application not found');
     if (!target) throw new BadRequestException('Target application not found');
-    if (source.id === target.id) throw new BadRequestException('Source and target applications must be different');
 
-    const execution = await this.prisma.menuCopyExecution.create({
-      data: {
-        sourceApplicationId: dto.sourceApplicationId,
-        sourceShopId: dto.sourceShopId,
-        targetApplicationId: dto.targetApplicationId,
-        targetShopId: dto.targetShopId,
-        mergePolicy: dto.mergePolicy,
-        uploadEndpoint: dto.uploadEndpoint ?? 'uploadGrocery',
-        currentStep: 'queued',
-        createdById: accountId,
-      },
-    });
+    const targetShopIds = [...new Set([
+      ...(dto.targetShopIds ?? []),
+      ...(dto.targetShopId ? [dto.targetShopId] : []),
+    ])];
+    if (!targetShopIds.length) throw new BadRequestException('At least one target shop_id is required');
+    if (targetShopIds.length > 500) throw new BadRequestException('A menu copy can include at most 500 target shop_id values');
+    if (dto.sourceApplicationId === dto.targetApplicationId && targetShopIds.includes(dto.sourceShopId)) {
+      throw new BadRequestException('The source shop cannot also be a target when both use the same application');
+    }
+
+    const executions = await this.prisma.$transaction(targetShopIds.map(targetShopId =>
+      this.prisma.menuCopyExecution.create({
+        data: {
+          sourceApplicationId: dto.sourceApplicationId,
+          sourceShopId: dto.sourceShopId,
+          targetApplicationId: dto.targetApplicationId,
+          targetShopId,
+          mergePolicy: dto.mergePolicy,
+          uploadEndpoint: dto.uploadEndpoint ?? 'uploadGrocery',
+          currentStep: 'queued',
+          createdById: accountId,
+        },
+      }),
+    ));
     try {
-      await this.queue.add('copy-menu-across-apps', { executionId: execution.id }, {
-        jobId: execution.id,
-        attempts: 1,
-        removeOnComplete: 100,
-        removeOnFail: 100,
-      });
-      return execution;
+      await this.queue.addBulk(executions.map(execution => ({
+        name: 'copy-menu-across-apps',
+        data: { executionId: execution.id },
+        opts: {
+          jobId: execution.id,
+          attempts: 1,
+          removeOnComplete: 100,
+          removeOnFail: 100,
+        },
+      })));
+      return { created: executions.length, executions };
     } catch (error) {
-      await this.prisma.menuCopyExecution.update({
-        where: { id: execution.id },
+      await this.prisma.menuCopyExecution.updateMany({
+        where: { id: { in: executions.map(execution => execution.id) } },
         data: { status: 'failed', finishedAt: new Date(), currentStep: null, errorMessage: (error as Error).message },
       });
       throw error;

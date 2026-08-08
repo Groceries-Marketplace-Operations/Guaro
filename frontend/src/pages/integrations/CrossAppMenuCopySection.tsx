@@ -12,7 +12,7 @@ interface FormState {
   sourceShopId: string;
   targetApplicationId: string;
   targetApplicationSearch: string;
-  targetShopId: string;
+  targetShopIds: string;
   mergePolicy: number;
   uploadEndpoint: 'uploadGrocery' | 'updateItemsync';
 }
@@ -21,7 +21,7 @@ const shopIdPattern = /^57\d{17}$/;
 
 const initialForm = (): FormState => ({
   sourceApplicationId: '', sourceApplicationSearch: '', sourceShopId: '',
-  targetApplicationId: '', targetApplicationSearch: '', targetShopId: '', mergePolicy: 0, uploadEndpoint: 'uploadGrocery',
+  targetApplicationId: '', targetApplicationSearch: '', targetShopIds: '', mergePolicy: 0, uploadEndpoint: 'uploadGrocery',
 });
 
 const stepLabels: Record<string, string> = {
@@ -42,6 +42,10 @@ function date(value?: string) {
   return value ? new Date(value).toLocaleString() : '—';
 }
 
+function parseTargetShopIds(value: string) {
+  return [...new Set(value.split(/[\s,;]+/).map(entry => entry.trim()).filter(Boolean))];
+}
+
 export default function CrossAppMenuCopySection() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -56,12 +60,13 @@ export default function CrossAppMenuCopySection() {
   });
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['menu-copy-executions'] });
+  const targetShopIds = parseTargetShopIds(form.targetShopIds);
   const create = useMutation({
     mutationFn: () => menuCopyApi.create({
       sourceApplicationId: form.sourceApplicationId,
       sourceShopId: form.sourceShopId.trim(),
       targetApplicationId: form.targetApplicationId,
-      targetShopId: form.targetShopId.trim(),
+      targetShopIds,
       mergePolicy: form.mergePolicy,
       uploadEndpoint: form.uploadEndpoint,
     }),
@@ -75,12 +80,13 @@ export default function CrossAppMenuCopySection() {
   });
 
   const valid = !!form.sourceApplicationId && !!form.targetApplicationId
-    && form.sourceApplicationId !== form.targetApplicationId
     && shopIdPattern.test(form.sourceShopId.trim())
-    && shopIdPattern.test(form.targetShopId.trim());
+    && targetShopIds.length > 0 && targetShopIds.length <= 500
+    && targetShopIds.every(shopId => shopIdPattern.test(shopId))
+    && !(form.sourceApplicationId === form.targetApplicationId && targetShopIds.includes(form.sourceShopId.trim()));
 
   const submit = () => {
-    if (form.uploadEndpoint === 'uploadGrocery' && form.mergePolicy === 1 && !window.confirm('Reemplazar sobrescribirá el menú actual de la tienda destino. ¿Continuar?')) return;
+    if (form.uploadEndpoint === 'uploadGrocery' && form.mergePolicy === 1 && !window.confirm(`Reemplazar sobrescribirá el menú actual de ${targetShopIds.length} tienda(s) destino. ¿Continuar?`)) return;
     create.mutate();
   };
 
@@ -99,7 +105,7 @@ export default function CrossAppMenuCopySection() {
       sourceShopId: execution.sourceShopId,
       targetApplicationId: execution.targetApplicationId,
       targetApplicationSearch: `${execution.targetApplication.appName} · ${execution.targetApplication.country} · ${execution.targetApplication.appId}`,
-      targetShopId: execution.targetShopId,
+      targetShopIds: execution.targetShopId,
       mergePolicy: execution.mergePolicy,
       uploadEndpoint: execution.uploadEndpoint ?? 'uploadGrocery',
     });
@@ -113,7 +119,7 @@ export default function CrossAppMenuCopySection() {
         <div>
           <strong>Cross-App Menu Copy</strong>
           <p className="text-muted" style={{ marginTop: 5, fontSize: 12 }}>
-            Copia los ítems entre aplicaciones en categorías planas Cate_Grocery_N de hasta 3,500 ítems. Cada ítem conserva solo UPC, app_item_id, precio, precio de actividad, nombre, descripción y estado.
+            Copia los ítems entre tiendas de la misma o de diferentes aplicaciones en categorías planas Cate_Grocery_N de hasta 3,500 ítems. Cada destino se procesa y reporta por separado.
           </p>
         </div>
         <button className="btn btn-primary" onClick={openCreate}>+ Nueva copia</button>
@@ -158,7 +164,7 @@ export default function CrossAppMenuCopySection() {
     </>}>
       {error && <div className="error-banner">{error}</div>}
       {sourceExecution && <div className="alert alert-info" style={{ marginBottom: 14 }}>Se cargaron los valores de la ejecución anterior. Puedes modificar cualquier campo; al confirmar se creará una ejecución nueva y el historial original no cambiará.</div>}
-      <div className="alert alert-info" style={{ marginBottom: 14 }}>Usa shop_id de 19 dígitos. El sistema resuelve internamente el app_shop_id en cada aplicación.</div>
+      <div className="alert alert-info" style={{ marginBottom: 14 }}>Puedes seleccionar la misma aplicación como origen y destino. Usa shop_id de 19 dígitos; el sistema resuelve internamente cada app_shop_id.</div>
       <div className="form-row">
         <div>
           <h3 style={{ fontSize: 14, marginBottom: 10 }}>Origen</h3>
@@ -168,12 +174,18 @@ export default function CrossAppMenuCopySection() {
         <div>
           <h3 style={{ fontSize: 14, marginBottom: 10 }}>Destino</h3>
           <div className="form-group"><label className="form-label">Aplicación destino *</label><ApplicationSearchField value={form.targetApplicationId} displayValue={form.targetApplicationSearch} onChange={(targetApplicationId, targetApplicationSearch) => setForm(value => ({ ...value, targetApplicationId, targetApplicationSearch }))} /></div>
-          <div className="form-group"><label className="form-label">Shop ID destino *</label><input className="form-input td-mono" value={form.targetShopId} maxLength={19} placeholder="57…" onChange={event => setForm(value => ({ ...value, targetShopId: event.target.value.replace(/\D/g, '') }))} /></div>
+          <div className="form-group">
+            <label className="form-label">Shop IDs destino *</label>
+            <textarea className="form-input td-mono" rows={6} value={form.targetShopIds} placeholder={'Un shop_id por línea, por ejemplo:\n5764012345678901234\n5764098765432101234'} onChange={event => setForm(value => ({ ...value, targetShopIds: event.target.value }))} />
+            <p className="form-hint">Se aceptan líneas, comas o espacios. {targetShopIds.length} destino(s) detectado(s), máximo 500. Cada tienda tendrá su propia ejecución y resultado.</p>
+          </div>
         </div>
       </div>
       <div className="form-group"><label className="form-label">Método de subida *</label><select className="form-input" value={form.uploadEndpoint} onChange={event => setForm(value => ({ ...value, uploadEndpoint: event.target.value as FormState['uploadEndpoint'] }))}><option value="uploadGrocery">uploadGrocery — carga estructural del menú</option><option value="updateItemsync">updateItemsync — actualiza los ítems existentes</option></select><p className="form-hint">En Cross-App, updateItemsync requiere que los mismos app_item_id ya existan en la tienda destino.</p></div>
       {form.uploadEndpoint === 'uploadGrocery' && <div className="form-group"><label className="form-label">Política de carga *</label><select className="form-input" value={form.mergePolicy} onChange={event => setForm(value => ({ ...value, mergePolicy: Number(event.target.value) }))}><option value={0}>Merge — agrega/actualiza sin borrar el resto</option><option value={1}>Reemplazar — sobrescribe el menú completo destino</option></select></div>}
-      {form.sourceApplicationId && form.targetApplicationId && form.sourceApplicationId === form.targetApplicationId && <p style={{ color: 'var(--red)' }}>Selecciona aplicaciones diferentes.</p>}
+      {targetShopIds.some(shopId => !shopIdPattern.test(shopId)) && <p style={{ color: 'var(--red)' }}>Todos los Shop IDs destino deben tener 19 dígitos y comenzar con 57.</p>}
+      {targetShopIds.length > 500 && <p style={{ color: 'var(--red)' }}>El máximo permitido es de 500 tiendas destino por solicitud.</p>}
+      {form.sourceApplicationId === form.targetApplicationId && targetShopIds.includes(form.sourceShopId.trim()) && <p style={{ color: 'var(--red)' }}>La tienda origen no puede incluirse también como destino dentro de la misma aplicación.</p>}
     </Modal>}
   </section>;
 }
