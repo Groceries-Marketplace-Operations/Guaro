@@ -40,10 +40,28 @@ import { TaskTypesService } from './task-types.service';
 export class TaskTypesController {
   constructor(private taskTypesService: TaskTypesService) {}
 
+  // Operational task screens need definitions to render forms and filters,
+  // without inheriting access to the Task Types administration endpoints.
+  @Get('catalog')
+  @Permissions('tasks.view', 'tasks.create', 'bpo.team')
+  findCatalog(
+    @CurrentUser() u: JwtUser,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('q') q?: string,
+  ) {
+    return this.taskTypesService.findAll(u, { page, limit, q });
+  }
+
+  @Get('catalog/:id')
+  @Permissions('tasks.view', 'tasks.create', 'bpo.team')
+  findCatalogItem(@Param('id') id: string, @CurrentUser() u: JwtUser) {
+    return this.taskTypesService.findOneForUser(id, u);
+  }
+
   // ── TaskType ──────────────────────────────────────────────────────────────
 
   @Get()
-  @Permissions('tasks.view')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.user, AccountRole.bpo, AccountRole.director)
   findAll(
     @CurrentUser() u: JwtUser,
@@ -55,7 +73,6 @@ export class TaskTypesController {
   }
 
   @Get(':id')
-  @Permissions('tasks.view')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.user, AccountRole.bpo, AccountRole.director)
   findOne(@Param('id') id: string, @CurrentUser() u: JwtUser) {
     return this.taskTypesService.findOneForUser(id, u);

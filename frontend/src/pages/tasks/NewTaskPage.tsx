@@ -247,7 +247,7 @@ export default function NewTaskPage() {
 
   const { data: taskTypesResult } = useQuery<{ data: TaskType[] }>({
     queryKey: ['task-types', { page: 1, limit: 200 }],
-    queryFn: () => taskTypesApi.list({ page: 1, limit: 200 }).then(r => r.data as { data: TaskType[] }),
+    queryFn: () => taskTypesApi.catalog({ page: 1, limit: 200 }).then(r => r.data as { data: TaskType[] }),
   });
   const taskTypes: TaskType[] = useMemo(() => taskTypesResult?.data ?? [], [taskTypesResult?.data]);
 
@@ -261,7 +261,7 @@ export default function NewTaskPage() {
 
   const { data: selectedTT = null } = useQuery<TaskType>({
     queryKey: ['task-type', selectedTTId],
-    queryFn: () => taskTypesApi.get(selectedTTId!).then(r => r.data as TaskType),
+    queryFn: () => taskTypesApi.catalogItem(selectedTTId!).then(r => r.data as TaskType),
     enabled: !!selectedTTId,
   });
 

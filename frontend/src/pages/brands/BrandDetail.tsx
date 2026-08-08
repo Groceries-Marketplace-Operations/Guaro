@@ -229,7 +229,7 @@ export default function BrandDetail() {
 
   const { data: typesResult } = useQuery<Paginated<TaskType>>({
     queryKey: ['task-types'],
-    queryFn: () => taskTypesApi.list({ page: 1, limit: 200 }).then(r => r.data as Paginated<TaskType>),
+    queryFn: () => taskTypesApi.catalog({ page: 1, limit: 200 }).then(r => r.data as Paginated<TaskType>),
   });
   const types = (typesResult?.data ?? []).filter(type => type.active);
   const brandPromotionTaskType = types.find(type => type.name === 'Download Brand Promotions Information');

@@ -17,7 +17,7 @@ export const PERMISSION_CATALOG = [
   { key: 'tasks.create', group: 'Tareas', label: 'Crear tareas', description: 'Iniciar tareas y usar el asistente de validación.', allowedRoles: ALL_EDITABLE },
   { key: 'tasks.execute', group: 'Tareas', label: 'Ejecutar pasos', description: 'Iniciar, completar, fallar, bloquear y reintentar pasos.', allowedRoles: BPO_ADMIN },
   { key: 'tasks.assign', group: 'Tareas', label: 'Asignar tareas', description: 'Asignar pasos de tareas a integrantes BPO.', allowedRoles: ADMIN },
-  { key: 'task_types.manage', group: 'Tareas', label: 'Task Types', description: 'Configurar tipos, pasos, campos y handlers de tareas.', allowedRoles: ADMIN },
+  { key: 'task_types.manage', group: 'Task Types', label: 'Administrar Task Types', description: 'Consultar y configurar tipos, pasos, campos y handlers. Es independiente de los permisos de Tareas.', allowedRoles: ADMIN },
   { key: 'bpo.queue', group: 'BPO', label: 'Mi cola BPO', description: 'Ver y trabajar la cola personal de BPO.', allowedRoles: BPO_ADMIN },
   { key: 'bpo.team', group: 'BPO', label: 'Gestión BPO', description: 'Consultar equipos, rendimiento e historial BPO.', allowedRoles: ADMIN_DIRECTOR },
   { key: 'applications.manage', group: 'Administración', label: 'Consultar aplicaciones DiDi', description: 'Consultar aplicaciones API y sus asignaciones.', allowedRoles: BPO_ADMIN },

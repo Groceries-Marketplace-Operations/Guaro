@@ -106,7 +106,7 @@ export default function BpoManagement() {
 
   const { data: taskTypesResult } = useQuery<{ data: TaskType[] }>({
     queryKey: ['task-types', { limit: 200 }],
-    queryFn: () => taskTypesApi.list({ limit: 200 }).then(r => r.data as { data: TaskType[] }),
+    queryFn: () => taskTypesApi.catalog({ limit: 200 }).then(r => r.data as { data: TaskType[] }),
   });
 
   const { data: yearOptions = [] } = useQuery<number[]>({

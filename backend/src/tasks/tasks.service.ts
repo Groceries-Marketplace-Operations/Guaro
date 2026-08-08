@@ -154,9 +154,9 @@ export class TasksService {
     roles: AccountRole[],
     accountId: string,
     sectionId: string | null,
-    filters: { page?: number; limit?: number; q?: string; status?: TaskStatus; brandId?: string } = {},
+    filters: { page?: number; limit?: number; q?: string; status?: TaskStatus; brandId?: string; sectionId?: string } = {},
   ) {
-    const { page = 1, limit = 25, q, status, brandId } = filters;
+    const { page = 1, limit = 25, q, status, brandId, sectionId: filterSectionId } = filters;
     const skip = (page - 1) * limit;
 
     const AND: Prisma.TaskWhereInput[] = [{ deletedAt: null }];
@@ -180,6 +180,7 @@ export class TasksService {
 
     if (status)  AND.push({ status });
     if (brandId) AND.push({ brandId });
+    if (filterSectionId) AND.push({ taskType: { sectionId: filterSectionId } });
     if (q) AND.push({
       OR: [
         { brand:    { brandName: { contains: q, mode: 'insensitive' } } },
@@ -194,6 +195,16 @@ export class TasksService {
       this.prisma.task.count({ where }),
     ]);
     return { data, total, page, limit };
+  }
+
+  async filterOptions(roles: AccountRole[], accountId: string, sectionId: string | null) {
+    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds({ id: accountId, roles, sectionId });
+    const sections = await this.prisma.section.findMany({
+      where: allowedSectionIds === null ? undefined : { id: { in: allowedSectionIds } },
+      select: { id: true, name: true, order: true },
+      orderBy: [{ order: 'asc' }, { name: 'asc' }],
+    });
+    return { sections };
   }
 
   async findOne(

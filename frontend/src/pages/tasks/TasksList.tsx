@@ -23,6 +23,7 @@ export default function TasksList() {
   const [dq, setDq] = useState('');
   const [page, setPage] = useState(1);
   const [statusF, setStatusF] = useState<TaskStatus | ''>('');
+  const [sectionF, setSectionF] = useState('');
 
   const STATUSES: { value: TaskStatus | ''; labelKey: string }[] = [
     { value: '', labelKey: 'pages.tasksList.statusAll' },
@@ -44,7 +45,14 @@ export default function TasksList() {
     page, limit: LIMIT,
     ...(dq      && { q: dq }),
     ...(statusF && { status: statusF }),
+    ...(sectionF && { sectionId: sectionF }),
   };
+
+  const { data: filterOptions } = useQuery({
+    queryKey: ['tasks', 'filter-options'],
+    queryFn: () => tasksApi.filterOptions().then(r => r.data),
+  });
+  const sections = filterOptions?.sections ?? [];
 
   const { data: result, isLoading } = useQuery<Paginated<Task>>({
     queryKey: ['tasks', params],
@@ -82,7 +90,17 @@ export default function TasksList() {
             <SearchIcon />
             <input placeholder={t('pages.tasksList.searchPlaceholder')} value={q} onChange={e => setQ(e.target.value)} />
           </div>
-          <div style={{ display: 'flex', gap: 4 }}>
+          <select
+            className="form-select"
+            aria-label={t('pages.tasksList.sectionFilter')}
+            value={sectionF}
+            onChange={event => { setSectionF(event.target.value); setPage(1); }}
+            style={{ width: 220 }}
+          >
+            <option value="">{t('pages.tasksList.sectionAll')}</option>
+            {sections.map(section => <option key={section.id} value={section.id}>{section.name}</option>)}
+          </select>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {STATUSES.map(s => (
               <button key={s.value} className={`btn btn-sm ${statusF === s.value ? 'btn-primary' : 'btn-ghost'}`}
                 onClick={() => { setStatusF(s.value as TaskStatus | ''); setPage(1); }}>

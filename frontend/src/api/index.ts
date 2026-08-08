@@ -33,6 +33,8 @@ export const webhooksApi = {
 export const taskTypesApi = {
   list: (params?: object) => client.get('/task-types', { params }),
   get: (id: string) => client.get(`/task-types/${id}`),
+  catalog: (params?: object) => client.get('/task-types/catalog', { params }),
+  catalogItem: (id: string) => client.get(`/task-types/catalog/${id}`),
   create: (data: object) => client.post('/task-types', data),
   update: (id: string, data: object) => client.patch(`/task-types/${id}`, data),
   delete: (id: string) => client.delete(`/task-types/${id}`),
@@ -133,6 +135,7 @@ export const applicationsApi = {
 /* ── Tasks ──────────────────────────────────────────────────── */
 export const tasksApi = {
   list: (params?: object) => client.get<{ data: unknown[]; total: number; page: number; limit: number }>('/tasks', { params }),
+  filterOptions: () => client.get<{ sections: { id: string; name: string; order: number }[] }>('/tasks/filter-options'),
   get: (id: string) => client.get(`/tasks/${id}`),
   create: (data: object) => client.post('/tasks', data),
   completeStep: (taskId: string, stepId: string, data: object) =>

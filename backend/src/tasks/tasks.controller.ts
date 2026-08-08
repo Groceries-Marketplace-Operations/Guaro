@@ -40,8 +40,15 @@ export class TasksController {
     @Query('q') q?: string,
     @Query('status') status?: TaskStatus,
     @Query('brandId') brandId?: string,
+    @Query('sectionId') sectionId?: string,
   ) {
-    return this.tasksService.findAll(u.roles, u.id, u.sectionId, { page, limit, q, status, brandId });
+    return this.tasksService.findAll(u.roles, u.id, u.sectionId, { page, limit, q, status, brandId, sectionId });
+  }
+
+  @Get('filter-options')
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
+  filterOptions(@CurrentUser() u: JwtUser) {
+    return this.tasksService.filterOptions(u.roles, u.id, u.sectionId);
   }
 
   @Get('templates/grocery-menu.xlsx')
