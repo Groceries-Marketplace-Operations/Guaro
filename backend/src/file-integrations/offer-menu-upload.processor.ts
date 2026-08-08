@@ -13,10 +13,9 @@ import { finished } from 'stream/promises';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { DIDI_BASE, fetchWithEndpointContext, getAuthToken, parseJsonKeepingIds, sleep } from '../queue/handlers/didi-food.util';
-import { FlatGroceryUpload, groceryMergePolicyForBatch } from './grocery-destination-menu.util';
 import { wildcardToRegExp } from './file-integration.util';
 import { GroceryItemFailure, uploadGroceryBatch } from './grocery-menu-upload.util';
-import { OfferMenuItem, streamOfferMenuCsv } from './offer-menu-upload.util';
+import { buildOfferMenuRequest, OfferMenuItem, streamOfferMenuCsv } from './offer-menu-upload.util';
 import { SftpConnectionService } from './sftp-connection.service';
 
 class OfferMenuCancelledError extends Error {}
@@ -268,25 +267,18 @@ export class OfferMenuUploadProcessor extends WorkerHost {
         authToken = await getAuthToken(rule.application.appId, appSecret, appShopId);
         return authToken;
       };
-      const batches = this.buildBatches(rule, appShopId, items);
-      for (let index = 0; index < batches.length; index++) {
-        await this.ensureActive(executionId);
-        const upload = await uploadGroceryBatch(
-          authToken,
-          batches[index],
-          'uploadGrocery',
-          groceryMergePolicyForBatch(rule.mergePolicy, index),
-        );
-        const completion = await this.waitForOfferUpload(
-          authToken,
-          upload.referenceId,
-          () => this.ensureActive(executionId),
-          refresh,
-        );
-        taskIds.push(upload.referenceId);
-        failedItems.push(...completion.failedItems);
-        uploadedItems += Math.max(0, batches[index].items.length - completion.failedItems.length);
-      }
+      const request = buildOfferMenuRequest(rule, appShopId, items);
+      await this.ensureActive(executionId);
+      const upload = await uploadGroceryBatch(authToken, request, 'uploadGrocery', rule.mergePolicy);
+      const completion = await this.waitForOfferUpload(
+        authToken,
+        upload.referenceId,
+        () => this.ensureActive(executionId),
+        refresh,
+      );
+      taskIds.push(upload.referenceId);
+      failedItems.push(...completion.failedItems);
+      uploadedItems = Math.max(0, request.items.length - completion.failedItems.length);
       return {
         storeId,
         appShopId,
@@ -312,39 +304,6 @@ export class OfferMenuUploadProcessor extends WorkerHost {
         error: this.safeError(error),
       };
     }
-  }
-
-  private buildBatches(
-    rule: Awaited<ReturnType<typeof this.loadRuleShape>>,
-    appShopId: string,
-    items: OfferMenuItem[],
-  ): FlatGroceryUpload[] {
-    const batches: FlatGroceryUpload[] = [];
-    for (let offset = 0; offset < items.length; offset += rule.maxItemsPerCategory) {
-      const current = items.slice(offset, offset + rule.maxItemsPerCategory);
-      const number = batches.length + 1;
-      const categoryId = `${rule.categoryIdPrefix}_${number}`;
-      const menuId = `${rule.menuIdPrefix}_${appShopId}_${number}`;
-      batches.push({
-        menus: [{ menu_name: `${rule.menuNamePrefix}_${appShopId}_${number}`, app_menu_id: menuId, app_category_ids: [categoryId] }],
-        categories: [{
-          app_category_id: categoryId,
-          category_name: number === 1 ? rule.categoryName : `${rule.categoryName} ${number}`,
-          app_item_ids: current.map(item => item.sku),
-        }],
-        items: current.map(item => ({
-          item_name: `Producto ${item.sku}`,
-          upc: item.sku,
-          app_item_id: item.sku,
-          price: item.price,
-          activity_price: item.activityPrice,
-          status: rule.activeStatus,
-          ...(rule.includeTaxInfo ? { tax_info_list: [{ type: rule.taxType, rate: rule.taxRate }] } : {}),
-        })),
-        categoryIds: [categoryId],
-      });
-    }
-    return batches;
   }
 
   private async resolveAppShopIds(applicationId: string, storeIds: string[]) {

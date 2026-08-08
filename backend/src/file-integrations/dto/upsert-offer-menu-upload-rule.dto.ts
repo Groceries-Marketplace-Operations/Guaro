@@ -93,7 +93,7 @@ export class UpsertOfferMenuUploadRuleDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(20000)
+  @Max(30000)
   maxItemsPerStore?: number;
 
   @IsOptional()

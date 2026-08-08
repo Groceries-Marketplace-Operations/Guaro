@@ -1,8 +1,22 @@
+import { FlatGroceryUpload } from './grocery-destination-menu.util';
+
 export interface OfferMenuItem {
   sku: string;
   storeId: string;
   price: number;
   activityPrice: number;
+}
+
+export interface OfferMenuRequestConfig {
+  categoryIdPrefix: string;
+  categoryName: string;
+  menuIdPrefix: string;
+  menuNamePrefix: string;
+  maxItemsPerCategory: number;
+  activeStatus: number;
+  includeTaxInfo: boolean;
+  taxType: number;
+  taxRate: number;
 }
 
 export interface ParsedOfferMenu {
@@ -22,6 +36,60 @@ export interface OfferMenuStreamStats {
 }
 
 const REQUIRED_COLUMNS = ['SKU', 'STOREID', 'PRICE', 'FULL_PRICE'] as const;
+export const OFFER_MENU_REQUEST_ITEM_LIMIT = 30_000;
+
+function categoryId(value: string, index: number) {
+  if (index === 0) return value;
+  const match = value.match(/^(.*?)(\d+)$/);
+  return match ? `${match[1]}${Number(match[2]) + index}` : `${value}_${index + 1}`;
+}
+
+export function buildOfferMenuRequest(
+  config: OfferMenuRequestConfig,
+  appShopId: string,
+  items: OfferMenuItem[],
+): FlatGroceryUpload {
+  if (!items.length) throw new Error('Offer menu request requires at least one item');
+  if (items.length > OFFER_MENU_REQUEST_ITEM_LIMIT) {
+    throw new Error(`Offer menu request cannot exceed ${OFFER_MENU_REQUEST_ITEM_LIMIT} items`);
+  }
+  if (!Number.isInteger(config.maxItemsPerCategory) || config.maxItemsPerCategory < 1) {
+    throw new Error('Offer menu category size must be a positive integer');
+  }
+  const categories: Array<{
+    app_category_id: string;
+    category_name: string;
+    app_item_ids: string[];
+  }> = [];
+  for (let offset = 0; offset < items.length; offset += config.maxItemsPerCategory) {
+    const current = items.slice(offset, offset + config.maxItemsPerCategory);
+    const index = categories.length;
+    categories.push({
+      app_category_id: categoryId(config.categoryIdPrefix, index),
+      category_name: index === 0 ? config.categoryName : `${config.categoryName} ${index + 1}`,
+      app_item_ids: current.map(item => item.sku),
+    });
+  }
+  const categoryIds = categories.map(category => category.app_category_id);
+  return {
+    menus: [{
+      menu_name: `${config.menuNamePrefix}_${appShopId}`,
+      app_menu_id: `${config.menuIdPrefix}_${appShopId}`,
+      app_category_ids: categoryIds,
+    }],
+    categories,
+    items: items.map(item => ({
+      item_name: `Producto ${item.sku}`,
+      upc: item.sku,
+      app_item_id: item.sku,
+      price: item.price,
+      activity_price: item.activityPrice,
+      status: config.activeStatus,
+      ...(config.includeTaxInfo ? { tax_info_list: [{ type: config.taxType, rate: config.taxRate }] } : {}),
+    })),
+    categoryIds,
+  };
+}
 
 export function toApiPrice(value: unknown): number | null {
   if (value === undefined || value === null) return null;

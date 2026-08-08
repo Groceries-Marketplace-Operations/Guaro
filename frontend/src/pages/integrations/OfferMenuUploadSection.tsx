@@ -36,8 +36,8 @@ function emptyForm(): FormState {
   return {
     name: '', sftpApplicationId: '', applicationId: '', active: false, dryRun: true, runNow: false,
     scheduleHours: '10,20', timezone: 'America/Mexico_City', filePattern: 'offer*.csv', delimiter: ';',
-    categoryIdPrefix: 'category', categoryName: 'Despensa', menuIdPrefix: 'menu', menuNamePrefix: 'Menu',
-    mergePolicy: 1, storeConcurrency: 2, maxItemsPerStore: 20000, maxItemsPerCategory: 4999,
+    categoryIdPrefix: 'category_0', categoryName: 'Despensa', menuIdPrefix: 'menu', menuNamePrefix: 'Menu',
+    mergePolicy: 1, storeConcurrency: 2, maxItemsPerStore: 30000, maxItemsPerCategory: 4999,
     activeStatus: 1, includeTaxInfo: false, taxType: 1, taxRate: 1600,
   };
 }
@@ -126,7 +126,7 @@ export default function OfferMenuUploadSection() {
       </div>
     </div>
     <div className="alert alert-info" style={{ marginBottom: 14 }}>
-      Recomendado: crear y probar primero en Simulación. En modo real, Reemplazar (merge_policy 1) sustituye el menú en el primer bloque; los siguientes bloques se agregan sin volver a borrar.
+      Cada tienda se envía en un solo request a uploadGrocery: un menú, todas sus categorías y hasta 30,000 ítems. Recomendado: probar primero en Simulación.
     </div>
     {isLoading && <p className="text-muted">Cargando reglas…</p>}
     {!isLoading && rules.length === 0 && <div className="empty-state"><p>No hay reglas SFTP Offer configuradas.</p></div>}
@@ -146,7 +146,7 @@ export default function OfferMenuUploadSection() {
                 {latest && <StatusBadge status={latest.status} />}
               </div>
               <p className="text-muted" style={{ marginTop: 8, fontSize: 12 }}>
-                Próxima: {date(rule.nextRunAt)} · Última: {date(rule.lastRunAt)} · Paralelismo: {rule.storeConcurrency} tiendas · Categoría: {rule.maxItemsPerCategory.toLocaleString()} ítems
+                Próxima: {date(rule.nextRunAt)} · Última: {date(rule.lastRunAt)} · Paralelismo: {rule.storeConcurrency} tiendas · Request: hasta {rule.maxItemsPerStore.toLocaleString()} ítems
               </p>
               <p className="text-muted" style={{ marginTop: 5, fontSize: 12 }}>
                 Último archivo cargado: {rule.lastSourceFile ?? '—'} · Creada por {rule.createdBy?.name ?? rule.createdBy?.email ?? 'Sistema'}
@@ -204,7 +204,7 @@ export default function OfferMenuUploadSection() {
       </div>
       <div className="form-row">
         <div className="form-group"><label className="form-label">Concurrencia de tiendas</label><input className="form-input" type="number" min={1} max={5} value={form.storeConcurrency} onChange={event => setForm(value => ({ ...value, storeConcurrency: Number(event.target.value) }))} /></div>
-        <div className="form-group"><label className="form-label">Ítems máximos por tienda</label><input className="form-input" type="number" min={1} max={20000} value={form.maxItemsPerStore} onChange={event => setForm(value => ({ ...value, maxItemsPerStore: Number(event.target.value) }))} /></div>
+        <div className="form-group"><label className="form-label">Ítems máximos por request/tienda</label><input className="form-input" type="number" min={1} max={30000} value={form.maxItemsPerStore} onChange={event => setForm(value => ({ ...value, maxItemsPerStore: Number(event.target.value) }))} /><p className="form-hint">Un solo POST por tienda; límite 30,000.</p></div>
         <div className="form-group"><label className="form-label">Ítems por categoría</label><input className="form-input" type="number" min={1} max={5000} value={form.maxItemsPerCategory} onChange={event => setForm(value => ({ ...value, maxItemsPerCategory: Number(event.target.value) }))} /></div>
       </div>
       <div className="form-group"><label className="form-label">Política de carga</label><select className="form-input" value={form.mergePolicy} onChange={event => setForm(value => ({ ...value, mergePolicy: Number(event.target.value) }))}><option value={1}>Reemplazar menú</option><option value={0}>Merge / agregar o actualizar</option></select></div>
