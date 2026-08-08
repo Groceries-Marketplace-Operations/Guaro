@@ -130,7 +130,7 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
       <header className="validation-assistant-header">
         <div className={`validation-assistant-avatar ${mascotState}`} aria-hidden="true">
           <span className="validation-assistant-ring" />
-          <img src={`${import.meta.env.BASE_URL}mascot/naranja.png`} alt="" />
+          <img src={`${import.meta.env.BASE_URL}mascot/naranja-robot-v2.png`} alt="" />
         </div>
         <div className="validation-assistant-heading">
           <strong>Naranja</strong>

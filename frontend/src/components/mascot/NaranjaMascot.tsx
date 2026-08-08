@@ -74,7 +74,9 @@ export default function NaranjaMascot() {
         </div>
       )}
       <button type="button" className="naranja-character" onClick={() => setExpanded(value => !value)} aria-expanded={expanded} title={spanish ? 'Abrir Naranja' : 'Open Naranja'}>
-        <img src={`${import.meta.env.BASE_URL}mascot/naranja.png`} alt="Naranja, mascota asistente" />
+        <span className="naranja-aura" aria-hidden="true" />
+        <img src={`${import.meta.env.BASE_URL}mascot/naranja-robot-v2.png`} alt="Naranja, mascota asistente" />
+        <span className="naranja-thruster" aria-hidden="true"><i /><i /><i /></span>
         <span className="naranja-status" />
         {event.state === 'success' && <span className="naranja-confetti" aria-hidden="true"><i /><i /><i /><i /><i /></span>}
       </button>
