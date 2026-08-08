@@ -14,7 +14,11 @@ import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { getAuthToken } from '../queue/handlers/didi-food.util';
 import { wildcardToRegExp } from './file-integration.util';
-import { GroceryItemFailure, uploadGroceryBatch } from './grocery-menu-upload.util';
+import {
+  GroceryItemFailure,
+  resolveGroceryBatchSubmission,
+  submitGroceryBatch,
+} from './grocery-menu-upload.util';
 import { buildOfferMenuRequest, OfferMenuItem, streamOfferMenuCsv } from './offer-menu-upload.util';
 import { SftpConnectionService } from './sftp-connection.service';
 
@@ -31,6 +35,21 @@ interface StoreResult {
   dryRun: boolean;
   error?: string;
 }
+
+interface PendingStoreUpload {
+  storeId: string;
+  appShopId: string;
+  itemCount: number;
+  taskId: string;
+  authToken: string;
+}
+
+interface StoreSubmission {
+  pending?: PendingStoreUpload;
+  result?: StoreResult;
+}
+
+type OfferMenuPhase = 'submitting' | 'checking_status' | 'complete';
 
 @Injectable()
 @Processor('offer-menu-upload', { concurrency: 2 })
@@ -141,6 +160,8 @@ export class OfferMenuUploadProcessor extends WorkerHost {
       let progressChain = Promise.resolve();
       let duplicateItems = 0;
       let uniqueItems = 0;
+      let submissionProcessedStores = 0;
+      const pendingUploads: PendingStoreUpload[] = [];
       for (const bucketPath of bucketPaths) {
         await this.ensureActive(executionId);
         const grouped = new Map<string, Map<string, OfferMenuItem>>();
@@ -159,10 +180,20 @@ export class OfferMenuUploadProcessor extends WorkerHost {
         await this.mapWithConcurrency(entries, rule.storeConcurrency, async ([storeId, items]) => {
           await this.ensureActive(executionId);
           const appShopId = mapping.get(storeId) ?? storeId;
-          const result = await this.processStore(executionId, rule, appSecret, storeId, appShopId, items);
-          results.push(result);
-          if (results.length % 10 === 0 || results.length === storeIds.size) {
-            progressChain = progressChain.then(() => this.saveProgress(executionId, results, storeId));
+          const submission = await this.submitStore(executionId, rule, appSecret, storeId, appShopId, items);
+          if (submission.pending) pendingUploads.push(submission.pending);
+          if (submission.result) results.push(submission.result);
+          submissionProcessedStores += 1;
+          if (submissionProcessedStores % 10 === 0 || submissionProcessedStores === storeIds.size) {
+            progressChain = progressChain.then(() => this.saveProgress(executionId, {
+              phase: 'submitting',
+              results,
+              currentStoreId: storeId,
+              submissionProcessedStores,
+              submittedStores: pendingUploads.length,
+              totalStores: storeIds.size,
+              pendingUploads,
+            }));
             await progressChain;
           }
         });
@@ -170,6 +201,41 @@ export class OfferMenuUploadProcessor extends WorkerHost {
       }
       await progressChain;
       await this.ensureActive(executionId);
+
+      if (pendingUploads.length) {
+        await this.saveProgress(executionId, {
+          phase: 'checking_status',
+          results,
+          currentStoreId: null,
+          submissionProcessedStores,
+          submittedStores: pendingUploads.length,
+          totalStores: storeIds.size,
+          pendingUploads,
+        });
+        let checkedStores = 0;
+        const statusConcurrency = Math.min(20, Math.max(10, rule.storeConcurrency * 5));
+        await this.mapWithConcurrency(pendingUploads, statusConcurrency, async pending => {
+          await this.ensureActive(executionId);
+          const result = await this.resolveStoreSubmission(executionId, rule, appSecret, pending);
+          results.push(result);
+          checkedStores += 1;
+          if (checkedStores % 10 === 0 || checkedStores === pendingUploads.length) {
+            progressChain = progressChain.then(() => this.saveProgress(executionId, {
+              phase: 'checking_status',
+              results,
+              currentStoreId: pending.storeId,
+              submissionProcessedStores,
+              submittedStores: pendingUploads.length,
+              checkedStores,
+              totalStores: storeIds.size,
+              pendingUploads,
+            }));
+            await progressChain;
+          }
+        });
+        await progressChain;
+        await this.ensureActive(executionId);
+      }
 
       const successfulStores = results.filter(value => value.status !== 'failed').length;
       const failedStores = results.length - successfulStores;
@@ -200,6 +266,10 @@ export class OfferMenuUploadProcessor extends WorkerHost {
             totalItems: uniqueItems,
             errorMessage,
             result: {
+              phase: 'complete',
+              submissionProcessedStores,
+              submittedStores: pendingUploads.length,
+              checkedStores: pendingUploads.length,
               stores: results,
               csv: {
                 rowsRead: parsed.rowsRead,
@@ -243,52 +313,84 @@ export class OfferMenuUploadProcessor extends WorkerHost {
     }
   }
 
-  private async processStore(
+  private async submitStore(
     executionId: string,
     rule: Awaited<ReturnType<typeof this.loadRuleShape>>,
     appSecret: string,
     storeId: string,
     appShopId: string,
     items: OfferMenuItem[],
-  ): Promise<StoreResult> {
+  ): Promise<StoreSubmission> {
     const taskIds: string[] = [];
     const failedItems: GroceryItemFailure[] = [];
-    let uploadedItems = 0;
     if (items.length > rule.maxItemsPerStore) {
-      return {
-        storeId, appShopId, status: 'failed', itemCount: items.length, uploadedItems, taskIds, failedItems, dryRun: rule.dryRun,
+      return { result: {
+        storeId, appShopId, status: 'failed', itemCount: items.length, uploadedItems: 0, taskIds, failedItems, dryRun: rule.dryRun,
         error: `Store has ${items.length} items; configured maximum is ${rule.maxItemsPerStore}`,
-      };
+      } };
     }
     if (rule.dryRun) {
-      return { storeId, appShopId, status: 'done', itemCount: items.length, uploadedItems: 0, taskIds, failedItems, dryRun: true };
+      return { result: { storeId, appShopId, status: 'done', itemCount: items.length, uploadedItems: 0, taskIds, failedItems, dryRun: true } };
     }
     try {
-      let authToken = await getAuthToken(rule.application.appId, appSecret, appShopId);
-      const refresh = async () => {
-        authToken = await getAuthToken(rule.application.appId, appSecret, appShopId);
-        return authToken;
-      };
+      const authToken = await getAuthToken(rule.application.appId, appSecret, appShopId);
       const request = buildOfferMenuRequest(rule, appShopId, items);
       await this.ensureActive(executionId);
-      const upload = await uploadGroceryBatch(
+      const submission = await submitGroceryBatch(
         authToken,
         request,
         'uploadGrocery',
         rule.mergePolicy,
-        () => this.ensureActive(executionId),
-        refresh,
       );
-      taskIds.push(upload.referenceId);
+      if ('acceptedCount' in submission) throw new Error('uploadGrocery unexpectedly returned a synchronous result');
+      return { pending: {
+        storeId,
+        appShopId,
+        itemCount: items.length,
+        taskId: submission.referenceId,
+        authToken,
+      } };
+    } catch (error) {
+      if (error instanceof OfferMenuCancelledError) throw error;
+      return { result: {
+        storeId,
+        appShopId,
+        status: 'failed',
+        itemCount: items.length,
+        uploadedItems: 0,
+        taskIds,
+        failedItems,
+        dryRun: false,
+        error: this.safeError(error),
+      } };
+    }
+  }
+
+  private async resolveStoreSubmission(
+    executionId: string,
+    rule: Awaited<ReturnType<typeof this.loadRuleShape>>,
+    appSecret: string,
+    pending: PendingStoreUpload,
+  ): Promise<StoreResult> {
+    const failedItems: GroceryItemFailure[] = [];
+    let uploadedItems = 0;
+    try {
+      const upload = await resolveGroceryBatchSubmission(
+        pending.authToken,
+        pending.taskId,
+        pending.itemCount,
+        () => this.ensureActive(executionId),
+        () => getAuthToken(rule.application.appId, appSecret, pending.appShopId),
+      );
       failedItems.push(...upload.failedItems);
       uploadedItems = upload.acceptedCount;
       return {
-        storeId,
-        appShopId,
+        storeId: pending.storeId,
+        appShopId: pending.appShopId,
         status: uploadedItems === 0 ? 'failed' : failedItems.length ? 'partial_success' : 'done',
-        itemCount: items.length,
+        itemCount: pending.itemCount,
         uploadedItems,
-        taskIds,
+        taskIds: [pending.taskId],
         failedItems,
         dryRun: false,
         error: uploadedItems === 0 ? 'No item was accepted by the menu endpoint' : undefined,
@@ -296,12 +398,12 @@ export class OfferMenuUploadProcessor extends WorkerHost {
     } catch (error) {
       if (error instanceof OfferMenuCancelledError) throw error;
       return {
-        storeId,
-        appShopId,
-        status: uploadedItems > 0 ? 'partial_success' : 'failed',
-        itemCount: items.length,
+        storeId: pending.storeId,
+        appShopId: pending.appShopId,
+        status: 'failed',
+        itemCount: pending.itemCount,
         uploadedItems,
-        taskIds,
+        taskIds: [pending.taskId],
         failedItems,
         dryRun: false,
         error: this.safeError(error),
@@ -343,17 +445,40 @@ export class OfferMenuUploadProcessor extends WorkerHost {
     return (hash >>> 0) % bucketCount;
   }
 
-  private async saveProgress(executionId: string, results: StoreResult[], currentStoreId: string) {
+  private async saveProgress(executionId: string, progress: {
+    phase: OfferMenuPhase;
+    results: StoreResult[];
+    currentStoreId: string | null;
+    submissionProcessedStores: number;
+    submittedStores: number;
+    totalStores: number;
+    checkedStores?: number;
+    pendingUploads?: PendingStoreUpload[];
+  }) {
+    const { results } = progress;
     await this.prisma.offerMenuUploadExecution.update({
       where: { id: executionId },
       data: {
-        currentStoreId,
+        currentStoreId: progress.currentStoreId,
         processedStores: results.length,
         successfulStores: results.filter(value => value.status !== 'failed').length,
         failedStores: results.filter(value => value.status === 'failed').length,
         uploadedItems: results.reduce((sum, value) => sum + value.uploadedItems, 0),
         failedItems: results.reduce((sum, value) => sum + value.failedItems.length, 0),
-        result: { stores: results } as unknown as Prisma.InputJsonValue,
+        result: {
+          phase: progress.phase,
+          submissionProcessedStores: progress.submissionProcessedStores,
+          submittedStores: progress.submittedStores,
+          checkedStores: progress.checkedStores ?? 0,
+          totalStores: progress.totalStores,
+          submittedTasks: progress.pendingUploads?.map(value => ({
+            storeId: value.storeId,
+            appShopId: value.appShopId,
+            itemCount: value.itemCount,
+            taskId: value.taskId,
+          })) ?? [],
+          stores: results,
+        } as unknown as Prisma.InputJsonValue,
       },
     });
   }

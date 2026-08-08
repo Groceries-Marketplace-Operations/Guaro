@@ -4,6 +4,15 @@ import { useAuth } from '../auth/AuthContext';
 import { authApi } from '../api';
 import { useT } from '../i18n';
 
+type DevAccount = {
+  id: string;
+  name: string;
+  email: string;
+  roles: string[];
+  sectionName: string | null;
+  permissions: string[];
+};
+
 const GoogleIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24">
     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -17,13 +26,31 @@ export default function Login() {
   const { account, loading, login } = useAuth();
   const nav = useNavigate();
   const t = useT();
-  const [devEmail, setDevEmail] = useState('eduardolz9527@gmail.com');
+  const [devEmail, setDevEmail] = useState('');
+  const [devAccounts, setDevAccounts] = useState<DevAccount[]>([]);
+  const [devAccountsLoading, setDevAccountsLoading] = useState(import.meta.env.DEV);
   const [devError, setDevError] = useState('');
   const [devLoading, setDevLoading] = useState(false);
 
   useEffect(() => {
     if (!loading && account) nav('/', { replace: true });
   }, [account, loading, nav]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    authApi.devAccounts()
+      .then(response => {
+        const accounts = response.data as DevAccount[];
+        setDevAccounts(accounts);
+        const remembered = localStorage.getItem('dev-login-email');
+        const preferred = accounts.find(item => item.email === remembered)
+          ?? accounts.find(item => item.email === 'eduardolarazarrabal@didi-labs.com')
+          ?? accounts[0];
+        setDevEmail(preferred?.email ?? '');
+      })
+      .catch(() => setDevError('No se pudo cargar la lista de usuarios locales.'))
+      .finally(() => setDevAccountsLoading(false));
+  }, []);
 
   const googleLogin = () => {
     window.location.href = `${import.meta.env.VITE_API_URL ?? 'http://localhost:3000'}/auth/google`;
@@ -35,6 +62,7 @@ export default function Login() {
     try {
       const tokenResponse = await authApi.devLogin(devEmail.trim());
       const token = tokenResponse.data.access_token as string;
+      localStorage.setItem('dev-login-email', devEmail.trim());
       localStorage.setItem('token', token);
       const accountResponse = await authApi.me();
       login(accountResponse.data.token ?? token, accountResponse.data);
@@ -46,6 +74,13 @@ export default function Login() {
       setDevLoading(false);
     }
   };
+
+  const selectedDevAccount = devAccounts.find(item => item.email === devEmail);
+  const groupedDevAccounts = devAccounts.reduce<Record<string, DevAccount[]>>((groups, item) => {
+    const key = item.roles.join(' + ') || 'sin rol';
+    (groups[key] ??= []).push(item);
+    return groups;
+  }, {});
 
   return (
     <div className="login-page">
@@ -68,16 +103,37 @@ export default function Login() {
 
         {import.meta.env.DEV && (
           <div style={{ marginTop: 24, display: 'grid', gap: 10 }}>
-            <input
-              type="email"
+            <label htmlFor="dev-account" style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+              Usuario local
+            </label>
+            <select
+              id="dev-account"
               value={devEmail}
               onChange={(event) => setDevEmail(event.target.value)}
               onKeyDown={(event) => { if (event.key === 'Enter') void localLogin(); }}
-              aria-label="Correo para acceso local"
+              aria-label="Usuario para acceso local"
+              disabled={devAccountsLoading}
               style={{ padding: '12px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
-            />
-            <button className="btn-google" onClick={() => void localLogin()} disabled={devLoading || !devEmail.trim()}>
-              {devLoading ? 'Ingresando…' : 'Acceso local'}
+            >
+              {devAccountsLoading && <option value="">Cargando usuarios…</option>}
+              {!devAccountsLoading && devAccounts.length === 0 && <option value="">No hay usuarios disponibles</option>}
+              {Object.entries(groupedDevAccounts).map(([role, accounts]) => (
+                <optgroup key={role} label={role}>
+                  {accounts.map(item => (
+                    <option key={item.id} value={item.email}>{item.name} — {item.email}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            {selectedDevAccount && (
+              <div style={{ padding: '9px 11px', borderRadius: 8, background: 'var(--surface-2)', color: 'var(--text-muted)', fontSize: '0.72rem', lineHeight: 1.5 }}>
+                <strong style={{ color: 'var(--text)' }}>{selectedDevAccount.roles.join(' + ')}</strong>
+                {' · '}{selectedDevAccount.permissions.length} permisos
+                {selectedDevAccount.sectionName && <>{' · '}{selectedDevAccount.sectionName}</>}
+              </div>
+            )}
+            <button className="btn-google" onClick={() => void localLogin()} disabled={devLoading || devAccountsLoading || !devEmail.trim()}>
+              {devLoading ? 'Ingresando…' : 'Acceder como este usuario'}
             </button>
             {devError && <p style={{ margin: 0, color: 'var(--danger)', fontSize: '0.8rem' }}>{devError}</p>}
           </div>

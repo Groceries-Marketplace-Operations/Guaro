@@ -50,13 +50,13 @@ export class TaskTypesController {
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
     @Query('q') q?: string,
   ) {
-    return this.taskTypesService.findAll(u, { page, limit, q });
+    return this.taskTypesService.findCatalog(u, { page, limit, q });
   }
 
   @Get('catalog/:id')
   @Permissions('tasks.view', 'tasks.create', 'bpo.team')
   findCatalogItem(@Param('id') id: string, @CurrentUser() u: JwtUser) {
-    return this.taskTypesService.findOneForUser(id, u);
+    return this.taskTypesService.findCatalogItem(id, u);
   }
 
   // ── TaskType ──────────────────────────────────────────────────────────────

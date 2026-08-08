@@ -21,6 +21,10 @@ export interface GroceryBatchUploadResult {
   acceptedCount: number;
 }
 
+export interface GroceryBatchSubmission {
+  referenceId: string;
+}
+
 export class GroceryUploadPendingError extends Error {
   constructor(
     readonly taskId: string,
@@ -135,6 +139,51 @@ export function buildGroceryUploadRequest(
   };
 }
 
+export async function submitGroceryBatch(
+  authToken: string,
+  batch: FlatGroceryUpload,
+  uploadEndpoint: string,
+  mergePolicy: number,
+): Promise<GroceryBatchSubmission | GroceryBatchUploadResult> {
+  const request = buildGroceryUploadRequest(authToken, batch, uploadEndpoint, mergePolicy);
+  const response = await fetchWithEndpointContext(request.endpoint, request.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request.payload),
+  });
+  const body = parseJsonKeepingIds(await response.text()) as Record<string, any>;
+  if (!response.ok || body.errno !== 0) {
+    throw new Error(`${request.endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
+  }
+  if (uploadEndpoint === 'updateItemsync') return parseUpdateItemSyncResult(body, batch.items.length);
+  const referenceId = String(body.data?.taskID ?? body.data?.taskId ?? '');
+  if (!referenceId) throw new Error(`${request.endpoint} did not return a taskID`);
+  return { referenceId };
+}
+
+export async function resolveGroceryBatchSubmission(
+  authToken: string,
+  referenceId: string,
+  itemCount: number,
+  ensureActive: () => Promise<void> = async () => undefined,
+  refreshAuthToken?: () => Promise<string>,
+  timeoutMs?: number,
+): Promise<GroceryBatchUploadResult> {
+  const completed = await waitForGroceryUploadTask(
+    authToken,
+    referenceId,
+    ensureActive,
+    refreshAuthToken,
+    timeoutMs,
+  );
+  return {
+    referenceId,
+    successfulItemIds: [],
+    failedItems: completed.failedItems,
+    acceptedCount: Math.max(0, itemCount - completed.failedItems.length),
+  };
+}
+
 export function parseUpdateItemSyncResult(body: Record<string, any>, itemCount: number): GroceryBatchUploadResult {
   const successfulItemIds = Array.isArray(body.data?.success)
     ? body.data.success.map((value: unknown) => String(value))
@@ -167,31 +216,19 @@ export async function uploadGroceryBatch(
   refreshAuthToken?: () => Promise<string>,
   timeoutMs?: number,
 ): Promise<GroceryBatchUploadResult> {
-  const request = buildGroceryUploadRequest(authToken, batch, uploadEndpoint, mergePolicy);
-  const response = await fetchWithEndpointContext(request.endpoint, request.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request.payload),
-  });
-  const body = parseJsonKeepingIds(await response.text()) as Record<string, any>;
-  if (!response.ok || body.errno !== 0) {
-    throw new Error(`${request.endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
-  }
-  if (uploadEndpoint === 'updateItemsync') return parseUpdateItemSyncResult(body, batch.items.length);
-  const referenceId = String(body.data?.taskID ?? body.data?.taskId ?? '');
-  if (!referenceId) throw new Error(`${request.endpoint} did not return a taskID`);
-  const completed = await waitForGroceryUploadTask(
+  const submission = await submitGroceryBatch(authToken, batch, uploadEndpoint, mergePolicy);
+  if ('acceptedCount' in submission) return submission;
+  const completed = await resolveGroceryBatchSubmission(
     authToken,
-    referenceId,
+    submission.referenceId,
+    batch.items.length,
     ensureActive,
     refreshAuthToken,
     timeoutMs,
   );
   const failedItemIds = new Set(completed.failedItems.map(item => item.appItemId));
   return {
-    referenceId,
+    ...completed,
     successfulItemIds: batch.items.map(item => String(item.app_item_id)).filter(id => !failedItemIds.has(id)),
-    failedItems: completed.failedItems,
-    acceptedCount: Math.max(0, batch.items.length - completed.failedItems.length),
   };
 }

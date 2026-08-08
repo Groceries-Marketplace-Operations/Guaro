@@ -16,6 +16,7 @@ import { UpdateStepDto } from './dto/update-step.dto';
 import { UpdateTaskTypeDto } from './dto/update-task-type.dto';
 import { SectionAccessService } from '../sections/section-access.service';
 import { JwtUser } from '../auth/types/jwt-user.interface';
+import { PermissionAccessService } from '../access-control/permission-access.service';
 
 const TASK_TYPE_INCLUDE = {
   stepDefinitions: {
@@ -36,7 +37,11 @@ const TASK_TYPE_INCLUDE = {
 
 @Injectable()
 export class TaskTypesService {
-  constructor(private prisma: PrismaService, private sectionAccess: SectionAccessService) {}
+  constructor(
+    private prisma: PrismaService,
+    private sectionAccess: SectionAccessService,
+    private permissionAccess: PermissionAccessService,
+  ) {}
 
   // ── TaskType ──────────────────────────────────────────────────────────────
 
@@ -77,6 +82,43 @@ export class TaskTypesService {
     return { data: mapped, total, page, limit };
   }
 
+  async findCatalog(
+    user: JwtUser,
+    options: { page?: number; limit?: number; q?: string } = {},
+  ) {
+    if (!(await this.permissionAccess.can(user, ['tasks.create_all_sections']))) {
+      return this.findAll(user, options);
+    }
+    const { page = 1, limit = 50, q } = options;
+    const where = {
+      deletedAt: null,
+      ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
+    };
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.prisma.taskType.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          descripcion: true,
+          active: true,
+          schedulable: true,
+          order: true,
+          sectionId: true,
+          section: { select: { id: true, name: true, order: true } },
+          _count: { select: { stepDefinitions: true, formFields: true, tasks: true } },
+        },
+        orderBy: [{ section: { order: 'asc' } }, { order: 'asc' }, { name: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.taskType.count({ where }),
+    ]);
+    const mapped = data.map(({ descripcion, ...rest }) => ({ ...rest, description: descripcion }));
+    return { data: mapped, total, page, limit };
+  }
+
   async findOne(id: string) {
     const tt = await this.prisma.taskType.findUnique({
       where: { id },
@@ -88,6 +130,15 @@ export class TaskTypesService {
 
   async findOneForUser(id: string, user: JwtUser) {
     const taskType = await this.findOne(id);
+    if (!(await this.sectionAccess.canAccess(user, taskType.sectionId))) {
+      throw new ForbiddenException('You do not have access to this task type');
+    }
+    return taskType;
+  }
+
+  async findCatalogItem(id: string, user: JwtUser) {
+    const taskType = await this.findOne(id);
+    if (await this.permissionAccess.can(user, ['tasks.create_all_sections'])) return taskType;
     if (!(await this.sectionAccess.canAccess(user, taskType.sectionId))) {
       throw new ForbiddenException('You do not have access to this task type');
     }

@@ -41,6 +41,23 @@ export class AuthService {
     return this.prisma.account.findUnique({ where: { id, deletedAt: null } });
   }
 
+  listDevAccounts() {
+    return this.prisma.account.findMany({
+      where: { deletedAt: null },
+      orderBy: [{ name: 'asc' }, { email: 'asc' }],
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        roles: true,
+        sectionId: true,
+        adminModules: true,
+        bpoPermissions: true,
+        section: { select: { name: true } },
+      },
+    });
+  }
+
   issueToken(account: Account): string {
     const payload: JwtPayload = {
       sub: account.id,

@@ -126,7 +126,7 @@ export default function OfferMenuUploadSection() {
       </div>
     </div>
     <div className="alert alert-info" style={{ marginBottom: 14 }}>
-      Cada tienda se envía en un solo request a uploadGrocery: un menú, todas sus categorías y hasta 30,000 ítems. Recomendado: probar primero en Simulación.
+      Cada tienda se envía en un solo request a uploadGrocery: primero se mandan todos los menús y al final se consultan los taskID. Así una respuesta lenta de DiDi no retrasa las demás modificaciones.
     </div>
     {isLoading && <p className="text-muted">Cargando reglas…</p>}
     {!isLoading && rules.length === 0 && <div className="empty-state"><p>No hay reglas SFTP Offer configuradas.</p></div>}
@@ -135,6 +135,12 @@ export default function OfferMenuUploadSection() {
         const latest = rule.executions[0];
         const running = latest && activeStatuses.has(latest.status);
         const stores = latest?.result?.stores ?? [];
+        const phase = latest?.result?.phase;
+        const phaseLabel = phase === 'submitting'
+          ? `Enviando menús: ${latest?.result?.submissionProcessedStores ?? 0}/${latest?.totalStores ?? 0}`
+          : phase === 'checking_status'
+            ? `Consultando taskID: ${latest?.result?.checkedStores ?? 0}/${latest?.result?.submittedStores ?? 0}`
+            : phase === 'complete' ? 'Carga y verificación terminadas' : null;
         return <article key={rule.id} className="card" style={{ padding: 18 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
             <div>
@@ -162,6 +168,10 @@ export default function OfferMenuUploadSection() {
             </div>
           </div>
           {latest && <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+            {phaseLabel && <div className="alert alert-info" style={{ marginBottom: 10, padding: '9px 12px' }}>
+              <strong>{phaseLabel}</strong>
+              {phase === 'checking_status' && <span> · {latest.result?.submittedStores ?? 0} payloads ya fueron enviados a DiDi.</span>}
+            </div>}
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
               <span>{latest.processedStores}/{latest.totalStores} tiendas</span><span>{latest.totalItems.toLocaleString()} ítems</span>
               <span style={{ color: 'var(--green)' }}>{latest.successfulStores} exitosas</span>

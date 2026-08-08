@@ -15,6 +15,7 @@ export const PERMISSION_CATALOG = [
   { key: 'brands.delete', group: 'Catálogo', label: 'Eliminar brands', description: 'Eliminar una marca y sus relaciones permitidas.', allowedRoles: ADMIN },
   { key: 'tasks.view', group: 'Tareas', label: 'Tareas', description: 'Consultar tareas de acuerdo con el alcance del rol y sus secciones.', allowedRoles: ALL_EDITABLE },
   { key: 'tasks.create', group: 'Tareas', label: 'Crear tareas', description: 'Iniciar tareas y usar el asistente de validación.', allowedRoles: ALL_EDITABLE },
+  { key: 'tasks.create_all_sections', group: 'Tareas', label: 'Crear tareas en todas las secciones', description: 'Usar Task Types de cualquier sección al iniciar una tarea, sin ampliar la consulta ni la administración.', allowedRoles: ALL_EDITABLE },
   { key: 'tasks.execute', group: 'Tareas', label: 'Ejecutar pasos', description: 'Iniciar, completar, fallar, bloquear y reintentar pasos.', allowedRoles: BPO_ADMIN },
   { key: 'tasks.assign', group: 'Tareas', label: 'Asignar tareas', description: 'Asignar pasos de tareas a integrantes BPO.', allowedRoles: ADMIN },
   { key: 'task_types.manage', group: 'Task Types', label: 'Administrar Task Types', description: 'Consultar y configurar tipos, pasos, campos y handlers. Es independiente de los permisos de Tareas.', allowedRoles: ADMIN },

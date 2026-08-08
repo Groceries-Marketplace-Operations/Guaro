@@ -592,6 +592,12 @@ export interface OfferMenuUploadExecution {
     skipped?: boolean;
     reason?: string;
     dryRun?: boolean;
+    phase?: 'submitting' | 'checking_status' | 'complete';
+    submissionProcessedStores?: number;
+    submittedStores?: number;
+    checkedStores?: number;
+    totalStores?: number;
+    submittedTasks?: Array<{ storeId: string; appShopId: string; itemCount: number; taskId: string }>;
     stores?: OfferMenuStoreResult[];
     csv?: { rowsRead: number; rowsAccepted: number; rowsRejected: number; duplicateItems: number; errors: string[] };
   };

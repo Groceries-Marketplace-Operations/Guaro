@@ -7,6 +7,7 @@ import { JwtUser } from '../auth/types/jwt-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { isClosed, normalizeDate, parseScheduleString } from '../queue/handlers/didi-food.util';
 import { SectionAccessService } from '../sections/section-access.service';
+import { PermissionAccessService } from '../access-control/permission-access.service';
 
 type CheckStatus = 'passed' | 'warning' | 'failed';
 
@@ -191,7 +192,11 @@ function formatExamples(
 
 @Injectable()
 export class TaskValidationService {
-  constructor(private prisma: PrismaService, private sectionAccess: SectionAccessService) {}
+  constructor(
+    private prisma: PrismaService,
+    private sectionAccess: SectionAccessService,
+    private permissionAccess: PermissionAccessService,
+  ) {}
 
   async assertTaskTypeAccess(taskTypeId: string, user: JwtUser) {
     const taskType = await this.prisma.taskType.findUnique({
@@ -211,7 +216,8 @@ export class TaskValidationService {
       throw new NotFoundException('Task type is not available');
     }
 
-    if (!(await this.sectionAccess.canAccess(user, taskType.sectionId))) {
+    const canCreateAcrossSections = await this.permissionAccess.can(user, ['tasks.create_all_sections']);
+    if (!canCreateAcrossSections && !(await this.sectionAccess.canAccess(user, taskType.sectionId))) {
       throw new ForbiddenException('You do not have access to this task type');
     }
 

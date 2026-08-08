@@ -2,6 +2,7 @@ import client from './client';
 
 /* ── Auth ───────────────────────────────────────────────────── */
 export const authApi = {
+  devAccounts: () => client.get('/auth/dev-accounts'),
   devLogin: (email: string) => client.post('/auth/dev-login', { email }),
   me: () => client.get('/auth/me'),
 };

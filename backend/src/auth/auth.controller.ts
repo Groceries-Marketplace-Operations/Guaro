@@ -53,6 +53,20 @@ export class AuthController {
   }
 
   // Only available in development — issues JWT by email without going through Google
+  @Get('dev-accounts')
+  async devAccounts() {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException('Not available in production');
+    }
+    const accounts = await this.authService.listDevAccounts();
+    return Promise.all(accounts.map(async account => ({
+      ...account,
+      sectionName: account.section?.name ?? null,
+      section: undefined,
+      permissions: await this.permissionAccess.permissionsForUser(account),
+    })));
+  }
+
   @Post('dev-login')
   async devLogin(@Body('email') email: string) {
     if (process.env.NODE_ENV === 'production') {
