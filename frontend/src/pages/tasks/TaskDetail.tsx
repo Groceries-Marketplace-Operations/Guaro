@@ -63,6 +63,48 @@ function pipeClass(status: StepStatus, isCurrent: boolean): string {
   return '';
 }
 
+function StepNote({ note }: { note: string | null | undefined }) {
+  if (!note?.trim()) return <span className="text-muted">—</span>;
+
+  const lines = note.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const entries = lines.map((line) => {
+    const success = /^[✓✔]/u.test(line);
+    const failed = /^[✗✕×]/u.test(line) || (!success && /\b(?:failed|error)\b/i.test(line));
+    const symbol = success ? '✓' : failed ? '✗' : '•';
+    const text = line.replace(/^[✓✔✗✕×•]\s*/u, '');
+    return { success, failed, symbol, text };
+  });
+  const successes = entries.filter(entry => entry.success).length;
+  const failures = entries.filter(entry => entry.failed).length;
+
+  return (
+    <div style={{ display: 'grid', gap: 6, minWidth: 300, maxWidth: 680 }}>
+      {entries.length > 1 && (successes > 0 || failures > 0) && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 1 }}>
+          {successes > 0 && <span title="Successful results" style={{ color: '#087443', background: '#ecfdf3', border: '1px solid #bbf7d0', borderRadius: 999, padding: '2px 8px', fontWeight: 700 }}>✓ {successes}</span>}
+          {failures > 0 && <span title="Failed results" style={{ color: '#b42318', background: '#fff1f0', border: '1px solid #fecaca', borderRadius: 999, padding: '2px 8px', fontWeight: 700 }}>✗ {failures}</span>}
+        </div>
+      )}
+      {entries.map((entry, index) => (
+        <div key={`${index}-${entry.text}`} style={{
+          display: 'grid',
+          gridTemplateColumns: '18px minmax(0, 1fr)',
+          gap: 7,
+          alignItems: 'start',
+          padding: '6px 8px',
+          borderRadius: 8,
+          border: `1px solid ${entry.success ? '#bbf7d0' : entry.failed ? '#fecaca' : '#e2e8f0'}`,
+          background: entry.success ? '#f0fdf4' : entry.failed ? '#fff7f7' : '#f8fafc',
+          color: entry.success ? '#087443' : entry.failed ? '#b42318' : 'var(--text-muted)',
+        }}>
+          <strong aria-hidden="true" style={{ textAlign: 'center' }}>{entry.symbol}</strong>
+          <span style={{ overflowWrap: 'anywhere', lineHeight: 1.45 }}>{entry.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function TaskDetail() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
@@ -245,7 +287,7 @@ export default function TaskDetail() {
                     <td className="text-muted text-sm">{s.stepDefinition?.executionType?.replace('_', ' ') ?? '—'}</td>
                     <td>{s.assignedTo?.name ?? <span className="text-muted">—</span>}</td>
                     <td><StatusBadge status={s.status} /></td>
-                    <td className="text-muted text-sm">{s.note ?? '—'}</td>
+                    <td className="text-sm"><StepNote note={s.note} /></td>
                     <td>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                       {canManualAssign && s.stepDefinition?.executionType !== 'automatic' &&

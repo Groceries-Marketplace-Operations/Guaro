@@ -213,7 +213,10 @@ async function checkShopIntegration(ctx: HandlerContext) {
   const { application } = requireBrand(ctx);
   const requested = ids(ctx.field('Target Shop IDs'));
   if (!requested.length) throw new Error('Target Shop IDs is required');
-  const map = await fetchShopIdMap(application.appId, application.appSecret, requested.filter(isRawShopId));
+  const rawShopIds = requested.filter(isRawShopId);
+  const map = rawShopIds.length
+    ? await fetchShopIdMap(application.appId, application.appSecret, rawShopIds)
+    : new Map<string, string>();
   const integrated: Array<{ shopId: string; appShopId: string; integrated: true }> = requested.flatMap(shopId => {
     const appShopId = isRawShopId(shopId) ? map.get(shopId) : undefined;
     return appShopId ? [{ shopId, appShopId, integrated: true }] : [];

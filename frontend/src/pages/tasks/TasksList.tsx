@@ -5,6 +5,7 @@ import Topbar from '../../components/layout/Topbar';
 import Paginator from '../../components/ui/Paginator';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { tasksApi } from '../../api';
+import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
 import type { Task, TaskStatus, Paginated } from '../../types';
 
@@ -18,12 +19,16 @@ const SearchIcon = () => (
 
 export default function TasksList() {
   const nav = useNavigate();
+  const { account } = useAuth();
   const t = useT();
+  const sectionFilterStorageKey = account ? `tequila.tasks.section-filter.${account.id}` : null;
   const [q, setQ] = useState('');
   const [dq, setDq] = useState('');
   const [page, setPage] = useState(1);
   const [statusF, setStatusF] = useState<TaskStatus | ''>('');
-  const [sectionF, setSectionF] = useState('');
+  const [sectionF, setSectionF] = useState(() => (
+    sectionFilterStorageKey ? localStorage.getItem(sectionFilterStorageKey) ?? '' : ''
+  ));
 
   const STATUSES: { value: TaskStatus | ''; labelKey: string }[] = [
     { value: '', labelKey: 'pages.tasksList.statusAll' },
@@ -41,18 +46,27 @@ export default function TasksList() {
     return () => clearTimeout(timer);
   }, [q]);
 
-  const params = {
-    page, limit: LIMIT,
-    ...(dq      && { q: dq }),
-    ...(statusF && { status: statusF }),
-    ...(sectionF && { sectionId: sectionF }),
-  };
-
   const { data: filterOptions } = useQuery({
     queryKey: ['tasks', 'filter-options'],
     queryFn: () => tasksApi.filterOptions().then(r => r.data),
   });
   const sections = filterOptions?.sections ?? [];
+  const activeSectionF = !filterOptions || !sectionF || sections.some(section => section.id === sectionF)
+    ? sectionF
+    : '';
+
+  useEffect(() => {
+    if (filterOptions && sectionF && !activeSectionF && sectionFilterStorageKey) {
+      localStorage.removeItem(sectionFilterStorageKey);
+    }
+  }, [filterOptions, sectionF, activeSectionF, sectionFilterStorageKey]);
+
+  const params = {
+    page, limit: LIMIT,
+    ...(dq      && { q: dq }),
+    ...(statusF && { status: statusF }),
+    ...(activeSectionF && { sectionId: activeSectionF }),
+  };
 
   const { data: result, isLoading } = useQuery<Paginated<Task>>({
     queryKey: ['tasks', params],
@@ -93,8 +107,16 @@ export default function TasksList() {
           <select
             className="form-select"
             aria-label={t('pages.tasksList.sectionFilter')}
-            value={sectionF}
-            onChange={event => { setSectionF(event.target.value); setPage(1); }}
+            value={activeSectionF}
+            onChange={event => {
+              const value = event.target.value;
+              setSectionF(value);
+              setPage(1);
+              if (sectionFilterStorageKey) {
+                if (value) localStorage.setItem(sectionFilterStorageKey, value);
+                else localStorage.removeItem(sectionFilterStorageKey);
+              }
+            }}
             style={{ width: 220 }}
           >
             <option value="">{t('pages.tasksList.sectionAll')}</option>
