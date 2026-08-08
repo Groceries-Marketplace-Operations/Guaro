@@ -7,6 +7,7 @@ import { fileIntegrationsApi, sftpApplicationsApi } from '../../api';
 import type { FileIntegrationKind, FileIntegrationRule, Paginated, SftpApplication } from '../../types';
 import TargetedMenuSection from './TargetedMenuSection';
 import CrossAppMenuCopySection from './CrossAppMenuCopySection';
+import OfferMenuUploadSection from './OfferMenuUploadSection';
 
 interface RuleForm {
   name: string;
@@ -23,7 +24,7 @@ interface RuleForm {
   maxFilesPerRun: number;
 }
 
-type CustomIntegrationSection = 'sftp' | 'targeted-menu' | 'cross-app';
+type CustomIntegrationSection = 'sftp' | 'offer-menu' | 'targeted-menu' | 'cross-app';
 
 const runningStatuses = new Set(['pending', 'running']);
 
@@ -141,6 +142,10 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           <span className="custom-integration-icon">TM</span>
           <span><strong>Targeted Menu Upload</strong><small>Carga UPC seleccionados en tiendas específicas</small></span>
         </button>
+        <button type="button" className={customSection === 'offer-menu' ? 'is-active' : ''} onClick={() => setCustomSection('offer-menu')} aria-selected={customSection === 'offer-menu'}>
+          <span className="custom-integration-icon">OF</span>
+          <span><strong>SFTP Offer Menu</strong><small>Procesa offer*.csv y programa cargas grocery por tienda</small></span>
+        </button>
         <button type="button" className={customSection === 'cross-app' ? 'is-active' : ''} onClick={() => setCustomSection('cross-app')} aria-selected={customSection === 'cross-app'}>
           <span className="custom-integration-icon">CA</span>
           <span><strong>Cross-App Menu Copy</strong><small>Copia menús entre aplicaciones y reutiliza ejecuciones</small></span>
@@ -152,6 +157,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           : 'Funciona como Auto Menu Fetch para promociones: conserva una instantánea local por App Shop ID. Las credenciales permanecen cifradas.'}
       </div>}
       {isFilter && customSection === 'targeted-menu' && <TargetedMenuSection />}
+      {isFilter && customSection === 'offer-menu' && <OfferMenuUploadSection />}
       {isFilter && customSection === 'cross-app' && <CrossAppMenuCopySection />}
       {showSftp && <>
       {isLoading && <p className="text-muted">Cargando…</p>}

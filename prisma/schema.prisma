@@ -239,6 +239,9 @@ model Account {
   updatedTargetedMenuRules       TargetedMenuRule[]           @relation("TargetedMenuRuleUpdater")
   createdTargetedMenuRuns        TargetedMenuExecution[]      @relation("TargetedMenuExecutionCreator")
   createdMenuCopyRuns            MenuCopyExecution[]          @relation("MenuCopyExecutionCreator")
+  createdOfferMenuRules          OfferMenuUploadRule[]        @relation("OfferMenuRuleCreator")
+  updatedOfferMenuRules          OfferMenuUploadRule[]        @relation("OfferMenuRuleUpdater")
+  createdOfferMenuRuns           OfferMenuUploadExecution[]   @relation("OfferMenuExecutionCreator")
   accessProfile                  AccountAccessProfile?
   accessPermissionOverrides      AccountPermissionOverride[]
   accessSectionScopes            AccountSectionScope[]
@@ -545,6 +548,7 @@ model Application {
   brands                   Brand[]
   sourceMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopySourceApplication")
   targetMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopyTargetApplication")
+  offerMenuUploadRules     OfferMenuUploadRule[]
 
   @@unique([id, country]) // target of composite FK (see constraints.sql)
   @@map("application")
@@ -570,6 +574,7 @@ model SftpApplication {
   fileIntegrationRules   FileIntegrationRule[]
   storePromotions        StorePromotion[]
   promotionShopSnapshots PromotionShopSnapshot[]
+  offerMenuUploadRules   OfferMenuUploadRule[]
 
   @@index([active])
   @@index([brandId])
@@ -1085,6 +1090,86 @@ model FileIntegrationExecution {
   @@index([ruleId, createdAt])
   @@index([status])
   @@map("file_integration_execution")
+}
+
+model OfferMenuUploadRule {
+  id                     String    @id @default(uuid()) @db.Uuid
+  name                   String
+  sftpApplicationId      String    @map("sftp_application_id") @db.Uuid
+  applicationId          String    @map("application_id") @db.Uuid
+  active                 Boolean   @default(false)
+  dryRun                 Boolean   @default(true) @map("dry_run")
+  scheduleHours          Int[]     @default([10, 20]) @map("schedule_hours")
+  timezone               String    @default("America/Mexico_City")
+  nextRunAt              DateTime? @map("next_run_at") @db.Timestamptz
+  lastRunAt              DateTime? @map("last_run_at") @db.Timestamptz
+  filePattern            String    @default("offer*.csv") @map("file_pattern")
+  delimiter              String    @default(";")
+  categoryIdPrefix       String    @default("category") @map("category_id_prefix")
+  categoryName           String    @default("Despensa") @map("category_name")
+  menuIdPrefix           String    @default("menu") @map("menu_id_prefix")
+  menuNamePrefix         String    @default("Menu") @map("menu_name_prefix")
+  mergePolicy            Int       @default(1) @map("merge_policy")
+  storeConcurrency       Int       @default(2) @map("store_concurrency")
+  maxItemsPerStore       Int       @default(20000) @map("max_items_per_store")
+  maxItemsPerCategory    Int       @default(4999) @map("max_items_per_category")
+  activeStatus           Int       @default(1) @map("active_status")
+  includeTaxInfo         Boolean   @default(false) @map("include_tax_info")
+  taxType                Int       @default(1) @map("tax_type")
+  taxRate                Int       @default(1600) @map("tax_rate")
+  lastSourceFile         String?   @map("last_source_file")
+  lastSourceModifiedAt   DateTime? @map("last_source_modified_at") @db.Timestamptz
+  lastSourceSize         BigInt?   @map("last_source_size")
+  createdById            String?   @map("created_by") @db.Uuid
+  updatedById            String?   @map("updated_by") @db.Uuid
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt              DateTime? @map("deleted_at") @db.Timestamptz
+
+  sftpApplication SftpApplication           @relation(fields: [sftpApplicationId], references: [id])
+  application     Application               @relation(fields: [applicationId], references: [id])
+  createdBy       Account?                  @relation("OfferMenuRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy       Account?                  @relation("OfferMenuRuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  executions      OfferMenuUploadExecution[]
+
+  @@index([active, nextRunAt])
+  @@index([sftpApplicationId])
+  @@index([applicationId])
+  @@map("offer_menu_upload_rule")
+}
+
+model OfferMenuUploadExecution {
+  id               String         @id @default(uuid()) @db.Uuid
+  ruleId           String         @map("rule_id") @db.Uuid
+  status           AutoOpenStatus @default(pending)
+  trigger          String         @default("manual")
+  force            Boolean        @default(false)
+  startedAt        DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt       DateTime?      @map("finished_at") @db.Timestamptz
+  durationMs       Int?           @map("duration_ms")
+  sourceFile       String?        @map("source_file")
+  sourceModifiedAt DateTime?      @map("source_modified_at") @db.Timestamptz
+  sourceSize       BigInt?        @map("source_size")
+  totalStores      Int            @default(0) @map("total_stores")
+  processedStores  Int            @default(0) @map("processed_stores")
+  successfulStores Int            @default(0) @map("successful_stores")
+  failedStores     Int            @default(0) @map("failed_stores")
+  totalItems       Int            @default(0) @map("total_items")
+  uploadedItems    Int            @default(0) @map("uploaded_items")
+  failedItems      Int            @default(0) @map("failed_items")
+  currentStoreId   String?        @map("current_store_id")
+  cancelRequested  Boolean        @default(false) @map("cancel_requested")
+  errorMessage     String?        @map("error_message") @db.Text
+  result           Json?
+  createdById      String?        @map("created_by") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  rule      OfferMenuUploadRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  createdBy Account?            @relation("OfferMenuExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([ruleId, createdAt])
+  @@index([status])
+  @@map("offer_menu_upload_execution")
 }
 
 model TargetedMenuRule {

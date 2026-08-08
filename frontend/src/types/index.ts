@@ -542,6 +542,84 @@ export interface TargetedMenuRule {
   executions: TargetedMenuExecution[];
 }
 
+export interface OfferMenuStoreResult {
+  storeId: string;
+  appShopId: string;
+  status: 'done' | 'partial_success' | 'failed';
+  itemCount: number;
+  uploadedItems: number;
+  taskIds: string[];
+  failedItems: Array<{ appItemId: string; reason: string }>;
+  dryRun: boolean;
+  error?: string;
+}
+
+export interface OfferMenuUploadExecution {
+  id: string;
+  status: AutoOpenStatus;
+  trigger: string;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  sourceFile?: string;
+  sourceModifiedAt?: string;
+  sourceSize?: string;
+  totalStores: number;
+  processedStores: number;
+  successfulStores: number;
+  failedStores: number;
+  totalItems: number;
+  uploadedItems: number;
+  failedItems: number;
+  currentStoreId?: string;
+  errorMessage?: string;
+  result?: {
+    skipped?: boolean;
+    reason?: string;
+    dryRun?: boolean;
+    stores?: OfferMenuStoreResult[];
+    csv?: { rowsRead: number; rowsAccepted: number; rowsRejected: number; duplicateItems: number; errors: string[] };
+  };
+  createdAt: string;
+}
+
+export interface OfferMenuUploadRule {
+  id: string;
+  name: string;
+  sftpApplicationId: string;
+  applicationId: string;
+  active: boolean;
+  dryRun: boolean;
+  scheduleHours: number[];
+  timezone: string;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  filePattern: string;
+  delimiter: string;
+  categoryIdPrefix: string;
+  categoryName: string;
+  menuIdPrefix: string;
+  menuNamePrefix: string;
+  mergePolicy: number;
+  storeConcurrency: number;
+  maxItemsPerStore: number;
+  maxItemsPerCategory: number;
+  activeStatus: number;
+  includeTaxInfo: boolean;
+  taxType: number;
+  taxRate: number;
+  lastSourceFile?: string;
+  lastSourceModifiedAt?: string;
+  lastSourceSize?: string;
+  createdAt: string;
+  updatedAt: string;
+  sftpApplication: Pick<SftpApplication, 'id' | 'name' | 'host' | 'port' | 'rootPath' | 'active'>;
+  application: Pick<Application, 'id' | 'appId' | 'appName' | 'country'>;
+  createdBy?: Pick<Account, 'id' | 'name' | 'email'>;
+  updatedBy?: Pick<Account, 'id' | 'name' | 'email'>;
+  executions: OfferMenuUploadExecution[];
+}
+
 export interface MenuCopyExecution {
   id: string;
   status: AutoOpenStatus;

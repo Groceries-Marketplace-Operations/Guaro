@@ -208,6 +208,15 @@ export const targetedMenuApi = {
   stop: (id: string) => client.post(`/integrations/targeted-menu/rules/${id}/stop`),
 };
 
+export const offerMenuUploadApi = {
+  list: () => client.get('/integrations/offer-menu-upload/rules'),
+  create: (data: object) => client.post('/integrations/offer-menu-upload/rules', data),
+  update: (id: string, data: object) => client.patch(`/integrations/offer-menu-upload/rules/${id}`, data),
+  delete: (id: string) => client.delete(`/integrations/offer-menu-upload/rules/${id}`),
+  run: (id: string) => client.post(`/integrations/offer-menu-upload/rules/${id}/run`),
+  stop: (id: string) => client.post(`/integrations/offer-menu-upload/rules/${id}/stop`),
+};
+
 export const menuCopyApi = {
   list: () => client.get('/integrations/menu-copy/executions'),
   create: (data: object) => client.post('/integrations/menu-copy/executions', data),
