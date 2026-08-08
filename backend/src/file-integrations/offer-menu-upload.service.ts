@@ -77,6 +77,15 @@ export class OfferMenuUploadService {
     return { ...execution, sourceSize: execution.sourceSize?.toString() ?? null, ruleName: rule.name };
   }
 
+  async resumeExecution(executionId: string) {
+    await this.queue.add('offer-menu-upload-resume', { executionId }, {
+      jobId: `resume-${executionId}-${Date.now()}`,
+      attempts: 1,
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    });
+  }
+
   async stop(id: string) {
     await this.findRule(id);
     const result = await this.prisma.offerMenuUploadExecution.updateMany({

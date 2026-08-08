@@ -15,8 +15,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getAuthToken } from '../queue/handlers/didi-food.util';
 import { wildcardToRegExp } from './file-integration.util';
 import {
+  checkGroceryUploadTaskOnce,
+  GROCERY_TASK_STATUS_MIN_INTERVAL_MS,
   GroceryItemFailure,
-  resolveGroceryBatchSubmission,
   submitGroceryBatch,
 } from './grocery-menu-upload.util';
 import { buildOfferMenuRequest, OfferMenuItem, streamOfferMenuCsv } from './offer-menu-upload.util';
@@ -32,6 +33,7 @@ interface StoreResult {
   uploadedItems: number;
   taskIds: string[];
   failedItems: GroceryItemFailure[];
+  failedItemCount: number;
   dryRun: boolean;
   error?: string;
 }
@@ -41,7 +43,7 @@ interface PendingStoreUpload {
   appShopId: string;
   itemCount: number;
   taskId: string;
-  authToken: string;
+  authToken?: string;
 }
 
 interface StoreSubmission {
@@ -50,6 +52,19 @@ interface StoreSubmission {
 }
 
 type OfferMenuPhase = 'submitting' | 'checking_status' | 'complete';
+const MAX_STORED_FAILED_ITEM_SAMPLES = 100;
+
+interface OfferCompletionStats {
+  submissionProcessedStores: number;
+  submittedStores: number;
+  checkedStores: number;
+  uniqueItems: number;
+  rowsRead: number;
+  rowsAccepted: number;
+  rowsRejected: number;
+  duplicateItems: number;
+  csvErrors: string[];
+}
 
 @Injectable()
 @Processor('offer-menu-upload', { concurrency: 2 })
@@ -64,10 +79,9 @@ export class OfferMenuUploadProcessor extends WorkerHost {
 
   async process(job: Job<{ executionId: string }>) {
     const executionId = job.data.executionId;
-    const started = Date.now();
     const claimed = await this.prisma.offerMenuUploadExecution.updateMany({
       where: { id: executionId, status: 'pending', cancelRequested: false },
-      data: { status: 'running', startedAt: new Date(), errorMessage: null },
+      data: { status: 'running', errorMessage: null },
     });
     if (!claimed.count) return;
     const execution = await this.prisma.offerMenuUploadExecution.findUnique({
@@ -76,9 +90,39 @@ export class OfferMenuUploadProcessor extends WorkerHost {
     });
     if (!execution) return;
     const { rule } = execution;
+    const started = execution.startedAt?.getTime() ?? Date.now();
+    if (!execution.startedAt) {
+      await this.prisma.offerMenuUploadExecution.update({
+        where: { id: executionId },
+        data: { startedAt: new Date(started) },
+      });
+    }
     const results: StoreResult[] = [];
     const tempRoot = await mkdtemp(join(tmpdir(), 'tequila-offer-'));
     try {
+      const resumed = this.restoreStatusProgress(execution.result, execution.totalStores, execution.totalItems);
+      if (resumed) {
+        results.push(...resumed.results);
+        const appSecret = this.decryptAppSecret(rule);
+        await this.cleanupTemp(tempRoot);
+        const checkedStores = await this.resolvePendingSubmissions(
+          executionId,
+          rule,
+          appSecret,
+          resumed.pendingUploads,
+          results,
+          resumed.stats,
+        );
+        await this.completeExecution(executionId, rule, started, results, {
+          ...resumed.stats,
+          checkedStores,
+        }, {
+          file: execution.sourceFile,
+          modifiedAt: execution.sourceModifiedAt,
+          size: execution.sourceSize,
+        });
+        return;
+      }
       const source = await this.sftp.withClient(rule.sftpApplicationId, async (client, rootPath) => {
         await this.ensureActive(executionId);
         const matcher = wildcardToRegExp(rule.filePattern);
@@ -151,11 +195,7 @@ export class OfferMenuUploadProcessor extends WorkerHost {
 
       let appSecret = '';
       if (!rule.dryRun) {
-        try {
-          appSecret = decrypt(rule.application.appSecret, this.config.getOrThrow('APP_SECRET_ENCRYPTION_KEY'));
-        } catch {
-          throw new Error(`Credential for application ${rule.application.appName} could not be decrypted`);
-        }
+        appSecret = this.decryptAppSecret(rule);
       }
       let progressChain = Promise.resolve();
       let duplicateItems = 0;
@@ -202,6 +242,17 @@ export class OfferMenuUploadProcessor extends WorkerHost {
       await progressChain;
       await this.ensureActive(executionId);
 
+      const completionStats: OfferCompletionStats = {
+        submissionProcessedStores,
+        submittedStores: pendingUploads.length,
+        checkedStores: 0,
+        uniqueItems,
+        rowsRead: parsed.rowsRead,
+        rowsAccepted: parsed.rowsAccepted,
+        rowsRejected: parsed.rowsRejected,
+        duplicateItems,
+        csvErrors: parsed.errors,
+      };
       if (pendingUploads.length) {
         await this.saveProgress(executionId, {
           phase: 'checking_status',
@@ -211,88 +262,27 @@ export class OfferMenuUploadProcessor extends WorkerHost {
           submittedStores: pendingUploads.length,
           totalStores: storeIds.size,
           pendingUploads,
+          stats: completionStats,
         });
-        let checkedStores = 0;
-        const statusConcurrency = Math.min(20, Math.max(10, rule.storeConcurrency * 5));
-        await this.mapWithConcurrency(pendingUploads, statusConcurrency, async pending => {
-          await this.ensureActive(executionId);
-          const result = await this.resolveStoreSubmission(executionId, rule, appSecret, pending);
-          results.push(result);
-          checkedStores += 1;
-          if (checkedStores % 10 === 0 || checkedStores === pendingUploads.length) {
-            progressChain = progressChain.then(() => this.saveProgress(executionId, {
-              phase: 'checking_status',
-              results,
-              currentStoreId: pending.storeId,
-              submissionProcessedStores,
-              submittedStores: pendingUploads.length,
-              checkedStores,
-              totalStores: storeIds.size,
-              pendingUploads,
-            }));
-            await progressChain;
-          }
-        });
-        await progressChain;
+        // Bucket files are no longer needed once every menu has been submitted.
+        // Removing them here prevents a long task-status phase from retaining
+        // hundreds of MB of temporary data.
+        await this.cleanupTemp(tempRoot);
+        completionStats.checkedStores = await this.resolvePendingSubmissions(
+          executionId,
+          rule,
+          appSecret,
+          pendingUploads,
+          results,
+          completionStats,
+        );
         await this.ensureActive(executionId);
       }
-
-      const successfulStores = results.filter(value => value.status !== 'failed').length;
-      const failedStores = results.length - successfulStores;
-      const uploadedItems = results.reduce((sum, value) => sum + value.uploadedItems, 0);
-      const failedItems = results.reduce((sum, value) => sum + value.failedItems.length, 0);
-      const hasWarnings = failedStores > 0 || failedItems > 0 || parsed.rowsRejected > 0;
-      const status: AutoOpenStatus = successfulStores === 0
-        ? AutoOpenStatus.failed
-        : hasWarnings ? AutoOpenStatus.partial_success : AutoOpenStatus.done;
-      const now = new Date();
-      const errorMessage = hasWarnings
-        ? `${failedStores} store(s) failed; ${failedItems} item(s) failed; ${parsed.rowsRejected} CSV row(s) rejected`
-        : null;
-      const markSourceDone = !rule.dryRun && status === AutoOpenStatus.done;
-      await this.prisma.$transaction([
-        this.prisma.offerMenuUploadExecution.update({
-          where: { id: executionId },
-          data: {
-            status,
-            finishedAt: now,
-            durationMs: Date.now() - started,
-            currentStoreId: null,
-            processedStores: results.length,
-            successfulStores,
-            failedStores,
-            uploadedItems,
-            failedItems,
-            totalItems: uniqueItems,
-            errorMessage,
-            result: {
-              phase: 'complete',
-              submissionProcessedStores,
-              submittedStores: pendingUploads.length,
-              checkedStores: pendingUploads.length,
-              stores: results,
-              csv: {
-                rowsRead: parsed.rowsRead,
-                rowsAccepted: parsed.rowsAccepted,
-                rowsRejected: parsed.rowsRejected,
-                duplicateItems,
-                errors: parsed.errors,
-              },
-              dryRun: rule.dryRun,
-            } as unknown as Prisma.InputJsonValue,
-          },
-        }),
-        this.prisma.offerMenuUploadRule.update({
-          where: { id: rule.id },
-          data: {
-            lastRunAt: now,
-            lastSourceFile: markSourceDone ? source.latest.name : undefined,
-            lastSourceModifiedAt: markSourceDone ? modifiedAt : undefined,
-            lastSourceSize: markSourceDone ? BigInt(source.latest.size) : undefined,
-          },
-        }),
-      ]);
-      this.logger.log(`Offer menu ${rule.name}: ${status}; ${successfulStores}/${results.length} stores; dryRun=${rule.dryRun}`);
+      await this.completeExecution(executionId, rule, started, results, completionStats, {
+        file: source.latest.name,
+        modifiedAt,
+        size: BigInt(source.latest.size),
+      });
     } catch (error) {
       if (error instanceof OfferMenuCancelledError) return;
       const message = this.safeError(error);
@@ -325,12 +315,12 @@ export class OfferMenuUploadProcessor extends WorkerHost {
     const failedItems: GroceryItemFailure[] = [];
     if (items.length > rule.maxItemsPerStore) {
       return { result: {
-        storeId, appShopId, status: 'failed', itemCount: items.length, uploadedItems: 0, taskIds, failedItems, dryRun: rule.dryRun,
+        storeId, appShopId, status: 'failed', itemCount: items.length, uploadedItems: 0, taskIds, failedItems, failedItemCount: 0, dryRun: rule.dryRun,
         error: `Store has ${items.length} items; configured maximum is ${rule.maxItemsPerStore}`,
       } };
     }
     if (rule.dryRun) {
-      return { result: { storeId, appShopId, status: 'done', itemCount: items.length, uploadedItems: 0, taskIds, failedItems, dryRun: true } };
+      return { result: { storeId, appShopId, status: 'done', itemCount: items.length, uploadedItems: 0, taskIds, failedItems, failedItemCount: 0, dryRun: true } };
     }
     try {
       const authToken = await getAuthToken(rule.application.appId, appSecret, appShopId);
@@ -360,55 +350,253 @@ export class OfferMenuUploadProcessor extends WorkerHost {
         uploadedItems: 0,
         taskIds,
         failedItems,
+        failedItemCount: 0,
         dryRun: false,
         error: this.safeError(error),
       } };
     }
   }
 
-  private async resolveStoreSubmission(
+  private async resolvePendingSubmissions(
     executionId: string,
     rule: Awaited<ReturnType<typeof this.loadRuleShape>>,
     appSecret: string,
-    pending: PendingStoreUpload,
-  ): Promise<StoreResult> {
-    const failedItems: GroceryItemFailure[] = [];
-    let uploadedItems = 0;
-    try {
-      const upload = await resolveGroceryBatchSubmission(
-        pending.authToken,
-        pending.taskId,
-        pending.itemCount,
-        () => this.ensureActive(executionId),
-        () => getAuthToken(rule.application.appId, appSecret, pending.appShopId),
-      );
-      failedItems.push(...upload.failedItems);
-      uploadedItems = upload.acceptedCount;
-      return {
-        storeId: pending.storeId,
-        appShopId: pending.appShopId,
-        status: uploadedItems === 0 ? 'failed' : failedItems.length ? 'partial_success' : 'done',
-        itemCount: pending.itemCount,
-        uploadedItems,
-        taskIds: [pending.taskId],
-        failedItems,
-        dryRun: false,
-        error: uploadedItems === 0 ? 'No item was accepted by the menu endpoint' : undefined,
-      };
-    } catch (error) {
-      if (error instanceof OfferMenuCancelledError) throw error;
-      return {
-        storeId: pending.storeId,
-        appShopId: pending.appShopId,
-        status: 'failed',
-        itemCount: pending.itemCount,
-        uploadedItems,
-        taskIds: [pending.taskId],
-        failedItems,
-        dryRun: false,
-        error: this.safeError(error),
-      };
+    pendingUploads: PendingStoreUpload[],
+    results: StoreResult[],
+    stats: OfferCompletionStats,
+  ): Promise<number> {
+    const resolvedTaskIds = new Set(results.flatMap(value => value.taskIds));
+    const queue = pendingUploads.filter(value => !resolvedTaskIds.has(value.taskId));
+    let checkedStores = pendingUploads.length - queue.length;
+    let statusPolls = 0;
+    let rateLimitedPolls = 0;
+    const deadline = Date.now() + Math.max(
+      4 * 60 * 60_000,
+      queue.length * GROCERY_TASK_STATUS_MIN_INTERVAL_MS * 3,
+    );
+
+    while (queue.length) {
+      await this.ensureActive(executionId);
+      if (Date.now() >= deadline) {
+        for (const pending of queue.splice(0)) {
+          results.push({
+            storeId: pending.storeId,
+            appShopId: pending.appShopId,
+            status: 'failed',
+            itemCount: pending.itemCount,
+            uploadedItems: 0,
+            taskIds: [pending.taskId],
+            failedItems: [],
+            failedItemCount: 0,
+            dryRun: false,
+            error: 'Menu task status did not reach a terminal state before the monitoring deadline',
+          });
+          checkedStores += 1;
+        }
+        break;
+      }
+
+      const pending = queue.shift()!;
+      try {
+        if (!pending.authToken) {
+          pending.authToken = await getAuthToken(rule.application.appId, appSecret, pending.appShopId);
+        }
+        const check = await checkGroceryUploadTaskOnce(
+          pending.authToken,
+          pending.taskId,
+          () => getAuthToken(rule.application.appId, appSecret, pending.appShopId),
+        );
+        pending.authToken = check.authToken;
+        statusPolls += 1;
+        if (!check.terminal) {
+          if (check.rateLimited) rateLimitedPolls += 1;
+          queue.push(pending);
+        } else {
+          const failedItemCount = check.failedItems.length;
+          const uploadedItems = check.status === 2
+            ? 0
+            : Math.max(0, pending.itemCount - failedItemCount);
+          const detail = check.failedItems.slice(0, 10)
+            .map(item => `${item.appItemId}: ${item.reason}`)
+            .join('; ');
+          results.push({
+            storeId: pending.storeId,
+            appShopId: pending.appShopId,
+            status: check.status === 2 || uploadedItems === 0
+              ? 'failed'
+              : failedItemCount ? 'partial_success' : 'done',
+            itemCount: pending.itemCount,
+            uploadedItems,
+            taskIds: [pending.taskId],
+            failedItems: check.failedItems.slice(0, MAX_STORED_FAILED_ITEM_SAMPLES),
+            failedItemCount,
+            dryRun: false,
+            error: check.status === 2
+              ? `DiDi reported a failed upload task${detail ? `: ${detail}` : ''}`
+              : uploadedItems === 0 ? 'No item was accepted by the menu endpoint' : undefined,
+          });
+          checkedStores += 1;
+        }
+      } catch (error) {
+        if (error instanceof OfferMenuCancelledError) throw error;
+        results.push({
+          storeId: pending.storeId,
+          appShopId: pending.appShopId,
+          status: 'failed',
+          itemCount: pending.itemCount,
+          uploadedItems: 0,
+          taskIds: [pending.taskId],
+          failedItems: [],
+          failedItemCount: 0,
+          dryRun: false,
+          error: this.safeError(error),
+        });
+        checkedStores += 1;
+      }
+
+      if (statusPolls % 10 === 0 || queue.length === 0 || checkedStores === pendingUploads.length) {
+        await this.saveProgress(executionId, {
+          phase: 'checking_status',
+          results,
+          currentStoreId: pending.storeId,
+          submissionProcessedStores: stats.submissionProcessedStores,
+          submittedStores: stats.submittedStores,
+          checkedStores,
+          totalStores: stats.submissionProcessedStores,
+          pendingUploads,
+          stats,
+          statusPolls,
+          rateLimitedPolls,
+          pendingStatusChecks: queue.length,
+        });
+      }
     }
+    return checkedStores;
+  }
+
+  private restoreStatusProgress(
+    value: Prisma.JsonValue | null,
+    totalStores: number,
+    totalItems: number,
+  ): { pendingUploads: PendingStoreUpload[]; results: StoreResult[]; stats: OfferCompletionStats } | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const progress = value as Record<string, unknown>;
+    if (progress.phase !== 'checking_status' || !Array.isArray(progress.submittedTasks) || !progress.submittedTasks.length) return null;
+    const pendingUploads = progress.submittedTasks.flatMap(entry => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const task = entry as Record<string, unknown>;
+      const taskId = String(task.taskId ?? '');
+      const storeId = String(task.storeId ?? '');
+      const appShopId = String(task.appShopId ?? '');
+      const itemCount = Number(task.itemCount ?? 0);
+      return taskId && storeId && appShopId && Number.isFinite(itemCount)
+        ? [{ taskId, storeId, appShopId, itemCount }]
+        : [];
+    });
+    if (!pendingUploads.length) return null;
+    const results = Array.isArray(progress.stores)
+      ? (progress.stores as unknown as StoreResult[]).map(result => ({
+        ...result,
+        failedItemCount: result.failedItemCount ?? result.failedItems?.length ?? 0,
+        failedItems: Array.isArray(result.failedItems)
+          ? result.failedItems.slice(0, MAX_STORED_FAILED_ITEM_SAMPLES)
+          : [],
+      }))
+      : [];
+    const csv = progress.csv && typeof progress.csv === 'object' && !Array.isArray(progress.csv)
+      ? progress.csv as Record<string, unknown>
+      : {};
+    return {
+      pendingUploads,
+      results,
+      stats: {
+        submissionProcessedStores: Number(progress.submissionProcessedStores ?? totalStores),
+        submittedStores: Number(progress.submittedStores ?? pendingUploads.length),
+        checkedStores: Number(progress.checkedStores ?? 0),
+        uniqueItems: Number(progress.uniqueItems ?? totalItems),
+        rowsRead: Number(csv.rowsRead ?? totalItems),
+        rowsAccepted: Number(csv.rowsAccepted ?? totalItems),
+        rowsRejected: Number(csv.rowsRejected ?? 0),
+        duplicateItems: Number(csv.duplicateItems ?? 0),
+        csvErrors: Array.isArray(csv.errors) ? csv.errors.map(String) : [],
+      },
+    };
+  }
+
+  private decryptAppSecret(rule: Awaited<ReturnType<typeof this.loadRuleShape>>) {
+    try {
+      return decrypt(rule.application.appSecret, this.config.getOrThrow('APP_SECRET_ENCRYPTION_KEY'));
+    } catch {
+      throw new Error(`Credential for application ${rule.application.appName} could not be decrypted`);
+    }
+  }
+
+  private async completeExecution(
+    executionId: string,
+    rule: Awaited<ReturnType<typeof this.loadRuleShape>>,
+    started: number,
+    results: StoreResult[],
+    stats: OfferCompletionStats,
+    source: { file: string | null; modifiedAt: Date | null; size: bigint | null },
+  ) {
+    const successfulStores = results.filter(value => value.status !== 'failed').length;
+    const failedStores = results.length - successfulStores;
+    const uploadedItems = results.reduce((sum, value) => sum + value.uploadedItems, 0);
+    const failedItems = results.reduce((sum, value) => sum + (value.failedItemCount ?? value.failedItems.length), 0);
+    const hasWarnings = failedStores > 0 || failedItems > 0 || stats.rowsRejected > 0;
+    const status: AutoOpenStatus = successfulStores === 0
+      ? AutoOpenStatus.failed
+      : hasWarnings ? AutoOpenStatus.partial_success : AutoOpenStatus.done;
+    const now = new Date();
+    const errorMessage = hasWarnings
+      ? `${failedStores} store(s) failed; ${failedItems} item(s) failed; ${stats.rowsRejected} CSV row(s) rejected`
+      : null;
+    // A partial success is still a processed source file. Re-uploading the
+    // unchanged file cannot repair missing shop authorization or unknown UPCs.
+    const markSourceDone = !rule.dryRun && status !== AutoOpenStatus.failed;
+    await this.prisma.$transaction([
+      this.prisma.offerMenuUploadExecution.update({
+        where: { id: executionId },
+        data: {
+          status,
+          finishedAt: now,
+          durationMs: Date.now() - started,
+          currentStoreId: null,
+          processedStores: results.length,
+          successfulStores,
+          failedStores,
+          uploadedItems,
+          failedItems,
+          totalItems: stats.uniqueItems,
+          errorMessage,
+          result: {
+            phase: 'complete',
+            submissionProcessedStores: stats.submissionProcessedStores,
+            submittedStores: stats.submittedStores,
+            checkedStores: stats.checkedStores,
+            stores: results,
+            csv: {
+              rowsRead: stats.rowsRead,
+              rowsAccepted: stats.rowsAccepted,
+              rowsRejected: stats.rowsRejected,
+              duplicateItems: stats.duplicateItems,
+              errors: stats.csvErrors,
+            },
+            dryRun: rule.dryRun,
+          } as unknown as Prisma.InputJsonValue,
+        },
+      }),
+      this.prisma.offerMenuUploadRule.update({
+        where: { id: rule.id },
+        data: {
+          lastRunAt: now,
+          lastSourceFile: markSourceDone && source.file ? source.file : undefined,
+          lastSourceModifiedAt: markSourceDone && source.modifiedAt ? source.modifiedAt : undefined,
+          lastSourceSize: markSourceDone && source.size !== null ? source.size : undefined,
+        },
+      }),
+    ]);
+    this.logger.log(`Offer menu ${rule.name}: ${status}; ${successfulStores}/${results.length} stores; dryRun=${rule.dryRun}`);
   }
 
   private async resolveAppShopIds(applicationId: string, storeIds: string[]) {
@@ -454,6 +642,10 @@ export class OfferMenuUploadProcessor extends WorkerHost {
     totalStores: number;
     checkedStores?: number;
     pendingUploads?: PendingStoreUpload[];
+    stats?: OfferCompletionStats;
+    statusPolls?: number;
+    rateLimitedPolls?: number;
+    pendingStatusChecks?: number;
   }) {
     const { results } = progress;
     await this.prisma.offerMenuUploadExecution.update({
@@ -464,13 +656,24 @@ export class OfferMenuUploadProcessor extends WorkerHost {
         successfulStores: results.filter(value => value.status !== 'failed').length,
         failedStores: results.filter(value => value.status === 'failed').length,
         uploadedItems: results.reduce((sum, value) => sum + value.uploadedItems, 0),
-        failedItems: results.reduce((sum, value) => sum + value.failedItems.length, 0),
+        failedItems: results.reduce((sum, value) => sum + (value.failedItemCount ?? value.failedItems.length), 0),
         result: {
           phase: progress.phase,
           submissionProcessedStores: progress.submissionProcessedStores,
           submittedStores: progress.submittedStores,
           checkedStores: progress.checkedStores ?? 0,
           totalStores: progress.totalStores,
+          statusPolls: progress.statusPolls ?? 0,
+          rateLimitedPolls: progress.rateLimitedPolls ?? 0,
+          pendingStatusChecks: progress.pendingStatusChecks ?? progress.pendingUploads?.length ?? 0,
+          uniqueItems: progress.stats?.uniqueItems,
+          csv: progress.stats ? {
+            rowsRead: progress.stats.rowsRead,
+            rowsAccepted: progress.stats.rowsAccepted,
+            rowsRejected: progress.stats.rowsRejected,
+            duplicateItems: progress.stats.duplicateItems,
+            errors: progress.stats.csvErrors,
+          } : undefined,
           submittedTasks: progress.pendingUploads?.map(value => ({
             storeId: value.storeId,
             appShopId: value.appShopId,

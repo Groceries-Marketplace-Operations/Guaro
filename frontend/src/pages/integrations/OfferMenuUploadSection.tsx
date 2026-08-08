@@ -171,7 +171,7 @@ export default function OfferMenuUploadSection() {
           {latest && <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
             {phaseLabel && <div className="alert alert-info" style={{ marginBottom: 10, padding: '9px 12px' }}>
               <strong>{phaseLabel}</strong>
-              {phase === 'checking_status' && <span> · {latest.result?.submittedStores ?? 0} payloads ya fueron enviados a DiDi.</span>}
+              {phase === 'checking_status' && <span> · {latest.result?.submittedStores ?? 0} payloads enviados · {latest.result?.checkedStores ?? 0} resultados confirmados · {latest.result?.pendingStatusChecks ?? Math.max(0, (latest.result?.submittedStores ?? 0) - (latest.result?.checkedStores ?? 0))} pendientes.</span>}
             </div>}
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
               <span>{latest.processedStores}/{latest.totalStores} tiendas</span><span>{latest.totalItems.toLocaleString()} ítems</span>
@@ -188,7 +188,7 @@ export default function OfferMenuUploadSection() {
               <tbody>{stores.map(store => <tr key={store.storeId}>
                 <td className="td-mono">{store.storeId}</td><td className="td-mono">{store.appShopId}</td><td><StatusBadge status={store.status} /></td>
                 <td>{store.itemCount}</td><td>{store.dryRun ? 'Simulación' : store.uploadedItems}</td>
-                <td className="td-mono">{store.error ?? (store.taskIds.join(', ') || '—')}{store.failedItems.length ? ` · ${store.failedItems.length} fallidos` : ''}</td>
+                <td className="td-mono">{store.error ?? (store.taskIds.join(', ') || '—')}{(store.failedItemCount ?? store.failedItems.length) ? ` · ${(store.failedItemCount ?? store.failedItems.length).toLocaleString()} fallidos` : ''}</td>
               </tr>)}</tbody>
             </table></div>}
           </div>}

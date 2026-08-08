@@ -25,6 +25,20 @@ export interface GroceryBatchSubmission {
   referenceId: string;
 }
 
+export interface GroceryUploadTaskCheckResult {
+  status: number | undefined;
+  failedItems: GroceryItemFailure[];
+  authToken: string;
+  terminal: boolean;
+  rateLimited: boolean;
+}
+
+// DiDi applies this limit to the task-info endpoint across the application,
+// not per shop/token. Keep every caller in this Node process on one queue.
+export const GROCERY_TASK_STATUS_MIN_INTERVAL_MS = 5_250;
+let groceryTaskStatusTail = Promise.resolve();
+let nextGroceryTaskStatusPollAt = 0;
+
 export class GroceryUploadPendingError extends Error {
   constructor(
     readonly taskId: string,
@@ -60,6 +74,70 @@ function taskIssues(operations: unknown): GroceryItemFailure[] {
   return [...new Map(issues.map(issue => [`${issue.appItemId}:${issue.reason}`, issue])).values()];
 }
 
+async function withGroceryTaskStatusRateLimit<T>(action: () => Promise<T>): Promise<T> {
+  const scheduled = groceryTaskStatusTail.then(async () => {
+    const waitMs = Math.max(0, nextGroceryTaskStatusPollAt - Date.now());
+    if (waitMs > 0) await sleep(waitMs);
+    nextGroceryTaskStatusPollAt = Date.now() + GROCERY_TASK_STATUS_MIN_INTERVAL_MS;
+    return action();
+  });
+  groceryTaskStatusTail = scheduled.then(() => undefined, () => undefined);
+  return scheduled;
+}
+
+export async function checkGroceryUploadTaskOnce(
+  authToken: string,
+  taskId: string,
+  refreshAuthToken?: () => Promise<string>,
+): Promise<GroceryUploadTaskCheckResult> {
+  return withGroceryTaskStatusRateLimit(async () => {
+    const endpoint = 'POST /v3/item/item/getGroceryMenuTaskInfo';
+    const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/getGroceryMenuTaskInfo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auth_token: authToken, task_id: taskId }),
+    });
+    const rawBody = await response.text();
+    const errno = Number(rawBody.match(/"errno"\s*:\s*(-?\d+)/)?.[1]);
+    const errmsg = rawBody.match(/"errmsg"\s*:\s*"([^"]*)"/)?.[1] ?? '';
+    if (errno === 10005 || /task\s*not found/i.test(rawBody)) {
+      return {
+        status: undefined,
+        failedItems: [],
+        authToken,
+        terminal: false,
+        rateLimited: /frequency|limit|window/i.test(errmsg),
+      };
+    }
+    if (errno === 10102 && refreshAuthToken) {
+      return {
+        status: undefined,
+        failedItems: [],
+        authToken: await refreshAuthToken(),
+        terminal: false,
+        rateLimited: false,
+      };
+    }
+    if (!response.ok || errno !== 0) {
+      const body = parseJsonKeepingIds(rawBody) as Record<string, any>;
+      throw new Error(`${endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
+    }
+    // Pending responses can contain a very large operationList. Avoid parsing
+    // it until DiDi reports a terminal status.
+    const statusMatch = rawBody.match(/"data"\s*:\s*\{[\s\S]{0,4096}?"status"\s*:\s*(\d+)/);
+    const status = statusMatch ? Number(statusMatch[1]) : undefined;
+    if (status === 0 || status === 3 || status === 4 || status === undefined) {
+      return { status, failedItems: [], authToken, terminal: false, rateLimited: false };
+    }
+    const body = parseJsonKeepingIds(rawBody) as Record<string, any>;
+    const failedItems = taskIssues(body.data?.operationList);
+    if (status === 1 || status === 2 || status === 5) {
+      return { status, failedItems, authToken, terminal: true, rateLimited: false };
+    }
+    throw new Error(`${endpoint} returned unsupported task status ${status}`);
+  });
+}
+
 export async function waitForGroceryUploadTask(
   authToken: string,
   taskId: string,
@@ -76,34 +154,13 @@ export async function waitForGroceryUploadTask(
     await ensureActive();
     if (attempts > 0) await sleep(10_000);
     attempts += 1;
-    const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/getGroceryMenuTaskInfo`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auth_token: pollingToken, task_id: taskId }),
-    });
-    const rawBody = await response.text();
-    const errno = Number(rawBody.match(/"errno"\s*:\s*(-?\d+)/)?.[1]);
-    if (errno === 10005 || /task\s*not found/i.test(rawBody)) continue;
-    if (errno === 10102 && refreshAuthToken) {
-      pollingToken = await refreshAuthToken();
-      continue;
-    }
-    if (!response.ok || errno !== 0) {
-      const body = parseJsonKeepingIds(rawBody) as Record<string, any>;
-      throw new Error(`${endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
-    }
-    // Pending task responses may contain a very large operationList. Read the
-    // top-level status without materializing that list on every poll; parse the
-    // full payload only once the task reaches a terminal state.
-    const statusMatch = rawBody.match(/"data"\s*:\s*\{[\s\S]{0,4096}?"status"\s*:\s*(\d+)/);
-    const status = statusMatch ? Number(statusMatch[1]) : undefined;
-    lastStatus = status;
-    if (status === 0 || status === 3 || status === 4) continue;
-    const body = parseJsonKeepingIds(rawBody) as Record<string, any>;
-    const failedItems = taskIssues(body.data?.operationList);
-    if (status === 1 || status === 5) return { status, failedItems };
-    if (status === 2) {
-      const detail = failedItems.slice(0, 10).map(item => `${item.appItemId}: ${item.reason}`).join('; ');
+    const check = await checkGroceryUploadTaskOnce(pollingToken, taskId, refreshAuthToken);
+    pollingToken = check.authToken;
+    if (check.status !== undefined) lastStatus = check.status;
+    if (!check.terminal) continue;
+    if (check.status === 1 || check.status === 5) return { status: check.status, failedItems: check.failedItems };
+    if (check.status === 2) {
+      const detail = check.failedItems.slice(0, 10).map(item => `${item.appItemId}: ${item.reason}`).join('; ');
       throw new Error(`${endpoint} reported failed upload task ${taskId}${detail ? `: ${detail}` : ''}`);
     }
   }

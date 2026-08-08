@@ -565,6 +565,7 @@ export interface OfferMenuStoreResult {
   uploadedItems: number;
   taskIds: string[];
   failedItems: Array<{ appItemId: string; reason: string }>;
+  failedItemCount?: number;
   dryRun: boolean;
   error?: string;
 }
@@ -597,6 +598,9 @@ export interface OfferMenuUploadExecution {
     submittedStores?: number;
     checkedStores?: number;
     totalStores?: number;
+    statusPolls?: number;
+    rateLimitedPolls?: number;
+    pendingStatusChecks?: number;
     submittedTasks?: Array<{ storeId: string; appShopId: string; itemCount: number; taskId: string }>;
     stores?: OfferMenuStoreResult[];
     csv?: { rowsRead: number; rowsAccepted: number; rowsRejected: number; duplicateItems: number; errors: string[] };

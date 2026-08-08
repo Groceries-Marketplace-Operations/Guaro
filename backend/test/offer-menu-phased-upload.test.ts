@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import {
+  checkGroceryUploadTaskOnce,
   resolveGroceryBatchSubmission,
   submitGroceryBatch,
 } from '../src/file-integrations/grocery-menu-upload.util';
@@ -45,4 +46,21 @@ test('offer menu task status is resolved independently after submission', async 
   assert.deepEqual(result.failedItems, []);
   assert.equal(calls.length, 1);
   assert.match(calls[0], /\/v3\/item\/item\/getGroceryMenuTaskInfo$/);
+});
+
+test('DiDi task-info frequency errors remain pending instead of failing the store', async t => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = async () => new Response(JSON.stringify({
+    errno: 10005,
+    errmsg: 'The calling frequency exceeds the setting: window: 5s, limit: 1',
+    data: {},
+  }), { status: 200 });
+
+  const result = await checkGroceryUploadTaskOnce('token', 'task-rate-limited');
+
+  assert.equal(result.terminal, false);
+  assert.equal(result.rateLimited, true);
+  assert.equal(result.status, undefined);
+  assert.deepEqual(result.failedItems, []);
 });
