@@ -161,8 +161,10 @@ export class OfferMenuUploadProcessor extends WorkerHost {
           const appShopId = mapping.get(storeId) ?? storeId;
           const result = await this.processStore(executionId, rule, appSecret, storeId, appShopId, items);
           results.push(result);
-          progressChain = progressChain.then(() => this.saveProgress(executionId, results, storeId));
-          await progressChain;
+          if (results.length % 10 === 0 || results.length === storeIds.size) {
+            progressChain = progressChain.then(() => this.saveProgress(executionId, results, storeId));
+            await progressChain;
+          }
         });
         grouped.clear();
       }

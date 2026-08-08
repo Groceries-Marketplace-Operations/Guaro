@@ -70,24 +70,32 @@ export async function waitForGroceryUploadTask(
   let pollingToken = authToken;
   while (Date.now() - startedAt < timeoutMs) {
     await ensureActive();
-    if (attempts > 0) await sleep(6000);
+    if (attempts > 0) await sleep(10_000);
     attempts += 1;
     const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/getGroceryMenuTaskInfo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ auth_token: pollingToken, task_id: taskId }),
     });
-    const body = parseJsonKeepingIds(await response.text()) as Record<string, any>;
-    if (body.errno === 10005 || /task\s*not found/i.test(String(body.errmsg ?? ''))) continue;
-    if (body.errno === 10102 && refreshAuthToken) {
+    const rawBody = await response.text();
+    const errno = Number(rawBody.match(/"errno"\s*:\s*(-?\d+)/)?.[1]);
+    if (errno === 10005 || /task\s*not found/i.test(rawBody)) continue;
+    if (errno === 10102 && refreshAuthToken) {
       pollingToken = await refreshAuthToken();
       continue;
     }
-    if (!response.ok || body.errno !== 0) {
+    if (!response.ok || errno !== 0) {
+      const body = parseJsonKeepingIds(rawBody) as Record<string, any>;
       throw new Error(`${endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
     }
-    const status = Number(body.data?.status);
+    // Pending task responses may contain a very large operationList. Read the
+    // top-level status without materializing that list on every poll; parse the
+    // full payload only once the task reaches a terminal state.
+    const statusMatch = rawBody.match(/"data"\s*:\s*\{[\s\S]{0,4096}?"status"\s*:\s*(\d+)/);
+    const status = statusMatch ? Number(statusMatch[1]) : undefined;
     lastStatus = status;
+    if (status === 0 || status === 3 || status === 4) continue;
+    const body = parseJsonKeepingIds(rawBody) as Record<string, any>;
     const failedItems = taskIssues(body.data?.operationList);
     if (status === 1 || status === 5) return { status, failedItems };
     if (status === 2) {
