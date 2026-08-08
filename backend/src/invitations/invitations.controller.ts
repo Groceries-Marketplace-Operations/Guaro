@@ -16,6 +16,7 @@ export class InvitationsController {
   constructor(private invitationsService: InvitationsService) {}
 
   @Post()
+  @Permissions('config.invitations.update')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() user: JwtUser, @Body() dto: CreateInvitationDto) {
@@ -34,6 +35,7 @@ export class InvitationsController {
   }
 
   @Delete(':id')
+  @Permissions('config.invitations.update')
   @HttpCode(204)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(AccountRole.admin, AccountRole.super_admin)

@@ -26,18 +26,21 @@ export class BrandsController {
   }
 
   @Patch('assignment-rules/:ruleId')
+  @Permissions('brands.update')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   updateRule(@Param('ruleId') ruleId: string, @Body('modo') modo: AssignmentMode) {
     return this.brandsService.updateRule(ruleId, modo);
   }
 
   @Post('assignment-rules/:ruleId/candidates')
+  @Permissions('brands.update')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   addRuleCandidate(@Param('ruleId') ruleId: string, @Body() dto: AddRuleCandidateDto) {
     return this.brandsService.addRuleCandidate(ruleId, dto);
   }
 
   @Delete('assignment-rules/:ruleId/candidates/:accountId')
+  @Permissions('brands.update')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   removeRuleCandidate(@Param('ruleId') ruleId: string, @Param('accountId') accountId: string) {
     return this.brandsService.removeRuleCandidate(ruleId, accountId);
@@ -76,12 +79,14 @@ export class BrandsController {
   }
 
   @Patch(':id')
+  @Permissions('brands.update')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   update(@Param('id') id: string, @CurrentUser() u: JwtUser, @Body() dto: UpdateBrandDto) {
     return this.brandsService.update(id, dto, u.id, u.roles);
   }
 
   @Delete(':id')
+  @Permissions('brands.delete')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   remove(@Param('id') id: string) {
     return this.brandsService.remove(id);

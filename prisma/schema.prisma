@@ -239,6 +239,10 @@ model Account {
   updatedTargetedMenuRules       TargetedMenuRule[]           @relation("TargetedMenuRuleUpdater")
   createdTargetedMenuRuns        TargetedMenuExecution[]      @relation("TargetedMenuExecutionCreator")
   createdMenuCopyRuns            MenuCopyExecution[]          @relation("MenuCopyExecutionCreator")
+  accessProfile                  AccountAccessProfile?
+  accessPermissionOverrides      AccountPermissionOverride[]
+  accessSectionScopes            AccountSectionScope[]
+  accessControlAudits            AccessControlAudit[]         @relation("AccessControlAuditActor")
 
   @@index([sectionId])
   @@map("account")
@@ -265,10 +269,13 @@ model Section {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  accounts     Account[]
-  taskTypes    TaskType[]
-  invitations  Invitation[]
-  roleAccesses RoleSectionAccess[]
+  accounts             Account[]
+  taskTypes            TaskType[]
+  invitations          Invitation[]
+  roleAccesses         RoleSectionAccess[]
+  roleSectionProfiles  RoleSectionProfile[]  @relation("RoleSectionProfileHome")
+  roleSectionScopes    RoleSectionScope[]    @relation("RoleSectionScopeTarget")
+  accountSectionScopes AccountSectionScope[]
 
   @@map("section")
 }
@@ -317,6 +324,105 @@ model RolePermission {
   @@id([role, permission])
   @@index([permission])
   @@map("role_permission")
+}
+
+model RoleSectionProfile {
+  role                AccountRole @map("rol")
+  sectionId           String      @map("section_id") @db.Uuid
+  customSectionAccess Boolean     @default(false) @map("custom_section_access")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
+
+  section             Section                         @relation("RoleSectionProfileHome", fields: [sectionId], references: [id], onDelete: Cascade)
+  permissionOverrides RoleSectionPermissionOverride[]
+  sectionScopes       RoleSectionScope[]
+
+  @@id([role, sectionId])
+  @@index([sectionId])
+  @@map("role_section_profile")
+}
+
+model RoleSectionPermissionOverride {
+  role       AccountRole @map("rol")
+  sectionId  String      @map("section_id") @db.Uuid
+  permission String      @map("permiso")
+  allowed    Boolean     @map("permitido")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  profile RoleSectionProfile @relation(fields: [role, sectionId], references: [role, sectionId], onDelete: Cascade)
+
+  @@id([role, sectionId, permission])
+  @@index([permission])
+  @@map("role_section_permission_override")
+}
+
+model RoleSectionScope {
+  role             AccountRole @map("rol")
+  profileSectionId String      @map("profile_section_id") @db.Uuid
+  allowedSectionId String      @map("allowed_section_id") @db.Uuid
+  createdAt        DateTime    @default(now()) @map("created_at")
+
+  profile        RoleSectionProfile @relation(fields: [role, profileSectionId], references: [role, sectionId], onDelete: Cascade)
+  allowedSection Section            @relation("RoleSectionScopeTarget", fields: [allowedSectionId], references: [id], onDelete: Cascade)
+
+  @@id([role, profileSectionId, allowedSectionId])
+  @@index([allowedSectionId])
+  @@map("role_section_scope")
+}
+
+model AccountAccessProfile {
+  accountId           String   @id @map("account_id") @db.Uuid
+  customSectionAccess Boolean  @default(false) @map("custom_section_access")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("account_access_profile")
+}
+
+model AccountPermissionOverride {
+  accountId  String   @map("account_id") @db.Uuid
+  permission String   @map("permiso")
+  allowed    Boolean  @map("permitido")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@id([accountId, permission])
+  @@index([permission])
+  @@map("account_permission_override")
+}
+
+model AccountSectionScope {
+  accountId String   @map("account_id") @db.Uuid
+  sectionId String   @map("section_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@id([accountId, sectionId])
+  @@index([sectionId])
+  @@map("account_section_scope")
+}
+
+model AccessControlAudit {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String   @map("actor_id") @db.Uuid
+  scopeType String   @map("scope_type")
+  scopeKey  String   @map("scope_key")
+  before    Json
+  after     Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  actor Account @relation("AccessControlAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([createdAt])
+  @@index([scopeType, scopeKey])
+  @@map("access_control_audit")
 }
 
 model Handler {

@@ -51,14 +51,14 @@ export class TaskTypesController {
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
     @Query('q') q?: string,
   ) {
-    return this.taskTypesService.findAll(u.roles, u.sectionId, { page, limit, q });
+    return this.taskTypesService.findAll(u, { page, limit, q });
   }
 
   @Get(':id')
   @Permissions('tasks.view')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.user, AccountRole.bpo, AccountRole.director)
   findOne(@Param('id') id: string, @CurrentUser() u: JwtUser) {
-    return this.taskTypesService.findOneForUser(id, u.roles);
+    return this.taskTypesService.findOneForUser(id, u);
   }
 
   @Post()

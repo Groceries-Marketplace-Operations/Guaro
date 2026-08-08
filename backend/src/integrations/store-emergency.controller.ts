@@ -30,11 +30,13 @@ export class StoreEmergencyController {
   }
 
   @Post()
+  @Permissions('integrations.emergencies.execute')
   create(@Body() dto: CreateStoreEmergencyDto, @CurrentUser() user: JwtUser) {
     return this.service.create(dto, user.id);
   }
 
   @Post(':id/restore')
+  @Permissions('integrations.emergencies.execute')
   restoreNow(@Param('id') id: string) {
     return this.service.restoreNow(id);
   }

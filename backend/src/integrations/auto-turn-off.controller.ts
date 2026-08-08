@@ -37,21 +37,25 @@ export class AutoTurnOffController {
   }
 
   @Post('pools')
+  @Permissions('integrations.auto_turn_off.configure')
   createPool(@Body() dto: CreateAutoTurnOffPoolDto) {
     return this.service.createPool(dto);
   }
 
   @Patch('pools/:id')
+  @Permissions('integrations.auto_turn_off.configure')
   updatePool(@Param('id') id: string, @Body() dto: UpdateAutoTurnOffPoolDto) {
     return this.service.updatePool(id, dto);
   }
 
   @Delete('pools/:id')
+  @Permissions('integrations.auto_turn_off.configure')
   removePool(@Param('id') id: string) {
     return this.service.removePool(id);
   }
 
   @Post('pools/:poolId/rules')
+  @Permissions('integrations.auto_turn_off.configure')
   createRule(
     @Param('poolId') poolId: string,
     @Body() dto: CreateAutoTurnOffRuleDto,
@@ -61,21 +65,25 @@ export class AutoTurnOffController {
   }
 
   @Patch('rules/:id')
+  @Permissions('integrations.auto_turn_off.configure')
   updateRule(@Param('id') id: string, @Body() dto: UpdateAutoTurnOffRuleDto, @CurrentUser() user: JwtUser) {
     return this.service.updateRule(id, dto, user.id);
   }
 
   @Delete('rules/:id')
+  @Permissions('integrations.auto_turn_off.configure')
   removeRule(@Param('id') id: string) {
     return this.service.removeRule(id);
   }
 
   @Post('rules/:id/run')
+  @Permissions('integrations.auto_turn_off.execute')
   runRule(@Param('id') id: string) {
     return this.service.runRuleNow(id);
   }
 
   @Post('rules/:id/stop')
+  @Permissions('integrations.auto_turn_off.execute')
   stopRule(@Param('id') id: string, @CurrentUser() user: JwtUser) {
     return this.service.stopRule(id, user.id);
   }

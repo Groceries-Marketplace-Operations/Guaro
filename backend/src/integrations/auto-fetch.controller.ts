@@ -29,31 +29,31 @@ export class AutoFetchController {
 
   @Patch('pools/:id')
   async update(@Param('id') id: string, @Body() dto: UpdateAutoFetchPoolDto, @CurrentUser() user: JwtUser) {
-    await this.assertPoolAccess(user, id);
+    await this.assertPoolAccess(user, id, 'configure');
     return this.service.update(id, dto);
   }
 
   @Post('pools/:id/run')
   async run(@Param('id') id: string, @CurrentUser() user: JwtUser) {
-    await this.assertPoolAccess(user, id);
+    await this.assertPoolAccess(user, id, 'execute');
     return this.service.runNow(id);
   }
 
   @Post('pools/:id/stop')
   async stop(@Param('id') id: string, @CurrentUser() user: JwtUser) {
-    await this.assertPoolAccess(user, id);
+    await this.assertPoolAccess(user, id, 'execute');
     return this.service.stopPool(id);
   }
 
   @Post('pools/:id/brands')
   async addCkaBrand(@Param('id') id: string, @Body() dto: AddAutoFetchBrandDto, @CurrentUser() user: JwtUser) {
-    await this.assertPoolAccess(user, id);
+    await this.assertPoolAccess(user, id, 'configure');
     return this.service.addCkaBrand(id, dto.brandId);
   }
 
   @Delete('pools/:id/brands/:brandId')
   async removeCkaBrand(@Param('id') id: string, @Param('brandId') brandId: string, @CurrentUser() user: JwtUser) {
-    await this.assertPoolAccess(user, id);
+    await this.assertPoolAccess(user, id, 'configure');
     return this.service.removeCkaBrand(id, brandId);
   }
 
@@ -64,19 +64,19 @@ export class AutoFetchController {
     @Body() dto: UpdateAutoFetchBrandDto,
     @CurrentUser() user: JwtUser,
   ) {
-    await this.assertPoolAccess(user, id);
+    await this.assertPoolAccess(user, id, 'configure');
     return this.service.updateBrand(id, brandId, dto.active);
   }
 
   @Post('pools/:id/brands/:brandId/run')
   async runBrand(@Param('id') id: string, @Param('brandId') brandId: string, @CurrentUser() user: JwtUser) {
-    await this.assertPoolAccess(user, id);
+    await this.assertPoolAccess(user, id, 'execute');
     return this.service.runBrand(id, brandId);
   }
 
   @Post('pools/:id/brands/:brandId/stop')
   async stopBrand(@Param('id') id: string, @Param('brandId') brandId: string, @CurrentUser() user: JwtUser) {
-    await this.assertPoolAccess(user, id);
+    await this.assertPoolAccess(user, id, 'execute');
     return this.service.stopBrand(id, brandId);
   }
 
@@ -90,16 +90,17 @@ export class AutoFetchController {
     return this.service.executions(id, page);
   }
 
-  private async assertPoolAccess(user: JwtUser, poolId: string) {
+  private async assertPoolAccess(user: JwtUser, poolId: string, action: 'view' | 'configure' | 'execute' = 'view') {
     const pool = await this.service.findOne(poolId);
-    await this.assertKindAccess(user, pool.kind);
+    await this.assertKindAccess(user, pool.kind, action);
   }
 
-  private async assertKindAccess(user: JwtUser, kind: AutoFetchKind) {
-    const permission = kind === AutoFetchKind.stores
+  private async assertKindAccess(user: JwtUser, kind: AutoFetchKind, action: 'view' | 'configure' | 'execute' = 'view') {
+    const basePermission = kind === AutoFetchKind.stores
       ? 'integrations.auto_stores_fetch'
       : 'integrations.auto_menu_fetch';
-    if (!(await this.permissionAccess.can(user.roles, [permission]))) {
+    const permission = action === 'view' ? basePermission : `${basePermission}.${action}`;
+    if (!(await this.permissionAccess.can(user, [permission]))) {
       throw new ForbiddenException('You do not have permission to access this auto-fetch integration');
     }
   }

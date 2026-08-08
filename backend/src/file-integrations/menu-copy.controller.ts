@@ -22,11 +22,13 @@ export class MenuCopyController {
   }
 
   @Post('executions')
+  @Permissions('integrations.custom.execute')
   create(@Body() dto: CreateMenuCopyDto, @CurrentUser() user: JwtUser) {
     return this.service.create(dto, user.id);
   }
 
   @Post('executions/:id/stop')
+  @Permissions('integrations.custom.execute')
   stop(@Param('id') id: string) {
     return this.service.stop(id);
   }

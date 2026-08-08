@@ -96,6 +96,16 @@ export const accessControlApi = {
   matrix: () => client.get('/access-control/matrix'),
   updateRole: (role: string, data: { permissions: string[]; sectionIds: string[] }) =>
     client.put(`/access-control/roles/${role}`, data),
+  roleSectionProfile: (role: string, sectionId: string) =>
+    client.get(`/access-control/role-sections/${role}/${sectionId}`),
+  updateRoleSectionProfile: (role: string, sectionId: string, data: object) =>
+    client.put(`/access-control/role-sections/${role}/${sectionId}`, data),
+  accounts: (params?: { q?: string; page?: number; limit?: number }) =>
+    client.get('/access-control/accounts', { params }),
+  accountProfile: (accountId: string) => client.get(`/access-control/accounts/${accountId}`),
+  updateAccountProfile: (accountId: string, data: object) =>
+    client.put(`/access-control/accounts/${accountId}`, data),
+  audits: (params?: { page?: number; limit?: number }) => client.get('/access-control/audits', { params }),
 };
 
 /* ── Shops ──────────────────────────────────────────────────── */

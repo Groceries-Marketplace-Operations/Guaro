@@ -63,8 +63,12 @@ export default function Config() {
   const isAdmin = account?.roles.includes('admin') ?? false;
   const canSeeHandlers = hasPermission(account, 'config.handlers');
   const canSeeWebhooks = hasPermission(account, 'config.webhooks');
+  const canUpdateWebhooks = hasPermission(account, 'config.webhooks.update');
   const canSeeInvitations = hasPermission(account, 'config.invitations');
+  const canUpdateInvitations = hasPermission(account, 'config.invitations.update');
   const canSeeUsers = hasPermission(account, 'config.users');
+  const canUpdateUsers = hasPermission(account, 'config.users.update');
+  const canDeleteUsers = hasPermission(account, 'config.users.delete');
   const defaultTab = canSeeHandlers ? 'handlers' : canSeeWebhooks ? 'webhooks' : canSeeInvitations ? 'invitations' : 'users';
   const [tab, setTab] = useState<'handlers' | 'webhooks' | 'invitations' | 'users'>(defaultTab);
 
@@ -298,9 +302,9 @@ export default function Config() {
 
         {tab === 'webhooks' && (
           <>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+            {canUpdateWebhooks && <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
               <button className="btn btn-primary" onClick={() => setOpenWebhook(true)}><PlusIcon /> {t('pages.config.newWebhook')}</button>
-            </div>
+            </div>}
             <div className="table-wrap">
               <table>
                 <thead><tr><th>{t('pages.config.colName')}</th><th>{t('pages.config.colUrl')}</th><th>{t('pages.config.colType')}</th><th>{t('pages.config.colCreated')}</th><th></th></tr></thead>
@@ -334,7 +338,7 @@ export default function Config() {
                       </td>
                       <td className="text-muted text-sm">{new Date(w.createdAt).toLocaleDateString()}</td>
                       <td>
-                        <div style={{ display: 'flex', gap: 4 }}>
+                        {canUpdateWebhooks && <div style={{ display: 'flex', gap: 4 }}>
                           <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px' }}
                             onClick={() => openEditWebhook(w)} title="Edit">
                             <EditIcon />
@@ -343,7 +347,7 @@ export default function Config() {
                             onClick={() => deleteWebhook(w)} title="Delete">
                             <TrashIcon />
                           </button>
-                        </div>
+                        </div>}
                       </td>
                     </tr>
                   ))}
@@ -361,7 +365,7 @@ export default function Config() {
                   ? t('pages.config.invitationsCount').replace('{count}', String(invTotal))
                   : t('pages.config.invitationCount').replace('{count}', String(invTotal))}
               </span>
-              <button className="btn btn-primary" onClick={() => setOpenInvite(true)}><PlusIcon /> {t('pages.config.newInvitation')}</button>
+              {canUpdateInvitations && <button className="btn btn-primary" onClick={() => setOpenInvite(true)}><PlusIcon /> {t('pages.config.newInvitation')}</button>}
             </div>
             <div className="table-wrap">
               <table>
@@ -413,14 +417,14 @@ export default function Config() {
                               >
                                 {copiedInvId === inv.id ? '✓' : <CopyIcon />}
                               </button>
-                              <button
+                              {canUpdateInvitations && <button
                                 className="btn btn-ghost btn-sm"
                                 style={{ color: 'var(--red)', padding: '3px 8px' }}
                                 onClick={() => deleteInvitation(inv.id)}
                                 title="Delete invitation"
                               >
                                 <TrashIcon />
-                              </button>
+                              </button>}
                             </div>
                           )}
                         </td>
@@ -503,7 +507,7 @@ export default function Config() {
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 4 }}>
-                        {(isSuperAdmin || (isAdmin && !u.roles.includes('admin') && !u.roles.includes('director'))) &&
+                        {canUpdateUsers && (isSuperAdmin || (isAdmin && !u.roles.includes('admin') && !u.roles.includes('director'))) &&
                           !u.roles.includes('super_admin') && (
                           <button
                             className="btn btn-ghost btn-sm"
@@ -514,7 +518,7 @@ export default function Config() {
                             <EditIcon />
                           </button>
                         )}
-                        {!u.roles.includes('super_admin') && (
+                        {canDeleteUsers && !u.roles.includes('super_admin') && (
                           <button
                             className="btn btn-ghost btn-sm"
                             style={{ color: 'var(--red)', padding: '3px 8px' }}

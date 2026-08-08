@@ -20,6 +20,7 @@ export class PromotionApiController {
   contract() { return this.service.contract(); }
 
   @Post('execute')
+  @Permissions('integrations.promotion_api.execute')
   execute(@Body() dto: ExecutePromotionDto, @CurrentUser() user: JwtUser) {
     return this.service.execute(dto, user.id);
   }

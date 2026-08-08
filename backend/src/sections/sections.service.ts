@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AccountRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SectionAccessService } from './section-access.service';
+import { JwtUser } from '../auth/types/jwt-user.interface';
 
 const EDITABLE_ROLES: readonly AccountRole[] = [AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.director];
 
@@ -9,8 +10,8 @@ const EDITABLE_ROLES: readonly AccountRole[] = [AccountRole.user, AccountRole.bp
 export class SectionsService {
   constructor(private prisma: PrismaService, private access: SectionAccessService) {}
 
-  async findAll(roles: AccountRole[], _sectionId: string | null) {
-    const allowed = await this.access.accessibleSectionIds(roles);
+  async findAll(user: JwtUser) {
+    const allowed = await this.access.accessibleSectionIds(user);
     const where = allowed === null ? {} : { id: { in: allowed } };
 
     return this.prisma.section.findMany({

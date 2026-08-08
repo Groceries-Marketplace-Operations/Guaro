@@ -20,21 +20,26 @@ export class TargetedMenuController {
   list() { return this.service.list(); }
 
   @Post('rules')
+  @Permissions('integrations.custom.configure')
   create(@Body() dto: UpsertTargetedMenuRuleDto, @CurrentUser() user: JwtUser) {
     return this.service.create(dto, user.id);
   }
 
   @Patch('rules/:id')
+  @Permissions('integrations.custom.configure')
   update(@Param('id') id: string, @Body() dto: UpsertTargetedMenuRuleDto, @CurrentUser() user: JwtUser) {
     return this.service.update(id, dto, user.id);
   }
 
   @Delete('rules/:id')
+  @Permissions('integrations.custom.configure')
   remove(@Param('id') id: string) { return this.service.remove(id); }
 
   @Post('rules/:id/run')
+  @Permissions('integrations.custom.execute')
   run(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.service.run(id, user.id); }
 
   @Post('rules/:id/stop')
+  @Permissions('integrations.custom.execute')
   stop(@Param('id') id: string) { return this.service.stop(id); }
 }

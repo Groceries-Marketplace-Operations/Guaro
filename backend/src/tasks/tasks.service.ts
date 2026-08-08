@@ -160,7 +160,7 @@ export class TasksService {
     const skip = (page - 1) * limit;
 
     const AND: Prisma.TaskWhereInput[] = [{ deletedAt: null }];
-    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds(roles);
+    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds({ id: accountId, roles, sectionId });
     if (allowedSectionIds !== null) AND.push({ taskType: { sectionId: { in: allowedSectionIds } } });
 
     // Role-based visibility
@@ -223,7 +223,7 @@ export class TasksService {
         }
       }
       const taskSectionId = (task as { taskType?: { sectionId?: string } }).taskType?.sectionId;
-      if (taskSectionId && !(await this.sectionAccess.canAccess(roles, taskSectionId))) {
+      if (taskSectionId && !(await this.sectionAccess.canAccess({ id: accountId, roles, sectionId }, taskSectionId))) {
         throw new ForbiddenException('Task not found');
       }
     }

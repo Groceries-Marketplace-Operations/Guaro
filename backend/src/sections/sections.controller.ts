@@ -18,7 +18,7 @@ export class SectionsController {
   @Permissions('sections.view', 'config.users', 'config.invitations')
   @Roles(AccountRole.admin, AccountRole.super_admin, AccountRole.director)
   findAll(@CurrentUser() u: JwtUser) {
-    return this.sectionsService.findAll(u.roles, u.sectionId);
+    return this.sectionsService.findAll(u);
   }
 
   @Post()

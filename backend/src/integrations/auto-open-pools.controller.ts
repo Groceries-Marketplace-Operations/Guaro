@@ -25,24 +25,28 @@ export class AutoOpenPoolsController {
   }
 
   @Post('pools')
+  @Permissions('integrations.forced_open.configure')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   create(@Body() dto: CreatePoolDto) {
     return this.svc.create(dto);
   }
 
   @Patch('pools/:id')
+  @Permissions('integrations.forced_open.configure')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   update(@Param('id') id: string, @Body() dto: UpdatePoolDto) {
     return this.svc.update(id, dto);
   }
 
   @Delete('pools/:id')
+  @Permissions('integrations.forced_open.configure')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   remove(@Param('id') id: string) {
     return this.svc.remove(id);
   }
 
   @Post('pools/:id/run')
+  @Permissions('integrations.forced_open.execute')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   runNow(@Param('id') id: string) {
     return this.svc.runNow(id);
@@ -59,6 +63,7 @@ export class AutoOpenPoolsController {
   }
 
   @Post('notify')
+  @Permissions('integrations.forced_open.execute')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   notify(@Body() dto: SendNotificationDto) {
     return this.svc.sendNotification(dto);

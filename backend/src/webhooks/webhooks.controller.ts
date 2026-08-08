@@ -21,16 +21,19 @@ export class WebhooksController {
   }
 
   @Post()
+  @Permissions('config.webhooks.update')
   create(@Body() dto: CreateWebhookDto) {
     return this.webhooksService.create(dto);
   }
 
   @Patch(':id')
+  @Permissions('config.webhooks.update')
   update(@Param('id') id: string, @Body() dto: UpdateWebhookDto) {
     return this.webhooksService.update(id, dto);
   }
 
   @Delete(':id')
+  @Permissions('config.webhooks.update')
   remove(@Param('id') id: string) {
     return this.webhooksService.remove(id);
   }

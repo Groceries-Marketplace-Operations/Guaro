@@ -27,21 +27,25 @@ export class SftpApplicationsController {
   }
 
   @Post()
+  @Permissions('sftp_applications.update')
   create(@Body() dto: CreateSftpApplicationDto, @CurrentUser() user: JwtUser) {
     return this.service.create(dto, user.id);
   }
 
   @Patch(':id')
+  @Permissions('sftp_applications.update')
   update(@Param('id') id: string, @Body() dto: UpdateSftpApplicationDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
+  @Permissions('sftp_applications.update')
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }
 
   @Post(':id/test')
+  @Permissions('sftp_applications.test')
   test(@Param('id') id: string) {
     return this.service.testConnection(id);
   }

@@ -211,7 +211,7 @@ export class TaskValidationService {
       throw new NotFoundException('Task type is not available');
     }
 
-    if (!(await this.sectionAccess.canAccess(user.roles, taskType.sectionId))) {
+    if (!(await this.sectionAccess.canAccess(user, taskType.sectionId))) {
       throw new ForbiddenException('You do not have access to this task type');
     }
 

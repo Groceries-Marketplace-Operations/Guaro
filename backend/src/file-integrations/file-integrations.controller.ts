@@ -30,32 +30,32 @@ export class FileIntegrationsController {
 
   @Post('rules')
   async create(@Body() dto: UpsertFileIntegrationRuleDto, @CurrentUser() user: JwtUser) {
-    await this.assertKindAccess(user, dto.kind);
+    await this.assertKindAccess(user, dto.kind, 'configure');
     return this.service.create(dto, user.id);
   }
 
   @Patch('rules/:id')
   async update(@Param('id') id: string, @Body() dto: UpsertFileIntegrationRuleDto, @CurrentUser() user: JwtUser) {
-    await this.assertRuleAccess(user, id);
-    await this.assertKindAccess(user, dto.kind);
+    await this.assertRuleAccess(user, id, 'configure');
+    await this.assertKindAccess(user, dto.kind, 'configure');
     return this.service.update(id, dto);
   }
 
   @Delete('rules/:id')
   async remove(@Param('id') id: string, @CurrentUser() user: JwtUser) {
-    await this.assertRuleAccess(user, id);
+    await this.assertRuleAccess(user, id, 'configure');
     return this.service.remove(id);
   }
 
   @Post('rules/:id/run')
   async run(@Param('id') id: string, @CurrentUser() user: JwtUser) {
-    await this.assertRuleAccess(user, id);
+    await this.assertRuleAccess(user, id, 'execute');
     return this.service.run(id, user.id);
   }
 
   @Post('rules/:id/stop')
   async stop(@Param('id') id: string, @CurrentUser() user: JwtUser) {
-    await this.assertRuleAccess(user, id);
+    await this.assertRuleAccess(user, id, 'execute');
     return this.service.stop(id);
   }
 
@@ -76,20 +76,21 @@ export class FileIntegrationsController {
     return this.service.download(executionId, fileName);
   }
 
-  private async assertRuleAccess(user: JwtUser, ruleId: string) {
+  private async assertRuleAccess(user: JwtUser, ruleId: string, action: 'view' | 'configure' | 'execute' = 'view') {
     const rule = await this.prisma.fileIntegrationRule.findFirst({
       where: { id: ruleId, deletedAt: null },
       select: { kind: true },
     });
     if (!rule) throw new BadRequestException('File integration rule not found');
-    await this.assertKindAccess(user, rule.kind);
+    await this.assertKindAccess(user, rule.kind, action);
   }
 
-  private async assertKindAccess(user: JwtUser, kind: FileIntegrationKind) {
-    const permission = kind === FileIntegrationKind.complex_promotion_reader
+  private async assertKindAccess(user: JwtUser, kind: FileIntegrationKind, action: 'view' | 'configure' | 'execute' = 'view') {
+    const basePermission = kind === FileIntegrationKind.complex_promotion_reader
       ? 'integrations.promotions_sftp'
       : 'integrations.custom';
-    if (!(await this.permissionAccess.can(user.roles, [permission]))) {
+    const permission = action === 'view' ? basePermission : `${basePermission}.${action}`;
+    if (!(await this.permissionAccess.can(user, [permission]))) {
       throw new ForbiddenException('You do not have permission to access this file integration');
     }
   }

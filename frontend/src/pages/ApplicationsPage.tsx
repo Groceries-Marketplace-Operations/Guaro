@@ -34,7 +34,9 @@ export default function ApplicationsPage() {
   const qc = useQueryClient();
   const { account } = useAuth();
   const t = useT();
-  const canCreateApp = hasPermission(account, 'applications.manage');
+  const canCreateApp = hasPermission(account, 'applications.create');
+  const canUpdateApp = hasPermission(account, 'applications.update');
+  const canDeleteApp = hasPermission(account, 'applications.delete');
 
   const [q, setQ] = useState('');
   const [country, setCountry] = useState<Country | ''>('');
@@ -180,14 +182,14 @@ export default function ApplicationsPage() {
                   <td className="text-muted text-sm">{new Date(a.createdAt).toLocaleDateString()}</td>
                   <td>
                     <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px' }}
+                      {canUpdateApp && <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px' }}
                         onClick={() => openEdit(a)} title={t('common.edit')}>
                         <EditIcon />
-                      </button>
-                      <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px', color: 'var(--red)' }}
+                      </button>}
+                      {canDeleteApp && <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px', color: 'var(--red)' }}
                         onClick={() => handleDelete(a)} title={t('common.delete')}>
                         <TrashIcon />
-                      </button>
+                      </button>}
                     </div>
                   </td>
                 </tr>

@@ -65,6 +65,7 @@ export class AccountsController {
   }
 
   @Patch(':id')
+  @Permissions('config.users.update')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   async update(
     @Param('id') id: string,
@@ -113,6 +114,7 @@ export class AccountsController {
   }
 
   @Delete(':id')
+  @Permissions('config.users.delete')
   @HttpCode(204)
   @Roles(AccountRole.admin, AccountRole.super_admin)
   async remove(@Param('id') id: string, @CurrentUser() requester: JwtUser) {

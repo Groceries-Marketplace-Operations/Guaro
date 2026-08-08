@@ -153,6 +153,7 @@ export class TasksController {
   }
 
   @Patch(':id/steps/:stepId/complete')
+  @Permissions('tasks.execute')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   completeStep(
     @Param('id') id: string,
@@ -164,6 +165,7 @@ export class TasksController {
   }
 
   @Patch(':id/steps/:stepId/fail')
+  @Permissions('tasks.execute')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   failStep(
     @Param('id') id: string,
@@ -175,6 +177,7 @@ export class TasksController {
   }
 
   @Patch(':id/steps/:stepId/block')
+  @Permissions('tasks.execute')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   blockStep(
     @Param('id') id: string,
@@ -186,24 +189,28 @@ export class TasksController {
   }
 
   @Patch(':id/steps/:stepId/retry')
+  @Permissions('tasks.execute')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   retryStep(@Param('id') id: string, @Param('stepId') stepId: string, @CurrentUser() u: JwtUser) {
     return this.tasksService.retryStep(id, stepId, u);
   }
 
   @Patch(':id/steps/:stepId/force-retry')
+  @Permissions('tasks.execute')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   forceRetryStep(@Param('id') id: string, @Param('stepId') stepId: string, @CurrentUser() u: JwtUser) {
     return this.tasksService.forceRetryStep(id, stepId, u);
   }
 
   @Patch(':id/steps/:stepId/start')
+  @Permissions('tasks.execute')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   startStep(@Param('id') id: string, @Param('stepId') stepId: string, @CurrentUser() u: JwtUser) {
     return this.tasksService.startStep(id, stepId, u);
   }
 
   @Patch(':id/steps/:stepId/assign')
+  @Permissions('tasks.assign')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   assignStep(
     @Param('id') id: string,

@@ -48,7 +48,7 @@ export class AuthController {
     if (!account) return user;
     // Re-issue JWT so role/permission changes take effect without requiring logout
     const token = this.authService.issueToken(account);
-    const permissions = await this.permissionAccess.permissionsForRoles(account.roles);
+    const permissions = await this.permissionAccess.permissionsForUser(account);
     return { id: account.id, name: account.name, email: account.email, roles: account.roles, sectionId: account.sectionId, adminModules: account.adminModules, bpoPermissions: account.bpoPermissions, permissions, token };
   }
 

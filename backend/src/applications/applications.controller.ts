@@ -34,18 +34,21 @@ export class ApplicationsController {
   }
 
   @Post()
+  @Permissions('applications.create')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateApplicationDto) {
     return this.applicationsService.create(dto, u.id);
   }
 
   @Patch(':id')
+  @Permissions('applications.update')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   update(@Param('id') id: string, @Body() dto: UpdateApplicationDto) {
     return this.applicationsService.update(id, dto);
   }
 
   @Delete(':id')
+  @Permissions('applications.delete')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   remove(@Param('id') id: string) {
     return this.applicationsService.remove(id);

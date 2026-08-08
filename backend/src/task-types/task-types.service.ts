@@ -15,6 +15,7 @@ import { UpdateFormFieldDto } from './dto/update-form-field.dto';
 import { UpdateStepDto } from './dto/update-step.dto';
 import { UpdateTaskTypeDto } from './dto/update-task-type.dto';
 import { SectionAccessService } from '../sections/section-access.service';
+import { JwtUser } from '../auth/types/jwt-user.interface';
 
 const TASK_TYPE_INCLUDE = {
   stepDefinitions: {
@@ -40,11 +41,10 @@ export class TaskTypesService {
   // ── TaskType ──────────────────────────────────────────────────────────────
 
   async findAll(
-    roles: AccountRole[],
-    sectionId: string | null,
+    user: JwtUser,
     { page = 1, limit = 50, q }: { page?: number; limit?: number; q?: string } = {},
   ) {
-    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds(roles);
+    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds(user);
 
     const where = {
       deletedAt: null,
@@ -86,9 +86,9 @@ export class TaskTypesService {
     return tt;
   }
 
-  async findOneForUser(id: string, roles: AccountRole[]) {
+  async findOneForUser(id: string, user: JwtUser) {
     const taskType = await this.findOne(id);
-    if (!(await this.sectionAccess.canAccess(roles, taskType.sectionId))) {
+    if (!(await this.sectionAccess.canAccess(user, taskType.sectionId))) {
       throw new ForbiddenException('You do not have access to this task type');
     }
     return taskType;
