@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fileIntegrationsApi, sftpApplicationsApi } from '../../api';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
+import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 import type { FileIntegrationRule, Paginated, SftpApplication } from '../../types';
 
 interface SplitterForm {
@@ -147,6 +148,7 @@ export default function StoreFileSplitterSection() {
               <span>{latest.result?.outputs?.length ?? 0} archivos generados</span>
               {!!latest.result?.malformed && <span style={{ color: 'var(--red)' }}>{latest.result.malformed} inválidas</span>}
             </div>
+            <ExecutionTiming startedAt={latest.startedAt} finishedAt={latest.finishedAt} durationMs={latest.durationMs} />
             {latest.errorMessage && <p style={{ color: 'var(--red)', marginTop: 8 }}>{latest.errorMessage}</p>}
           </div>}
         </article>;

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
+import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 import { applicationsApi, offerMenuUploadApi, sftpApplicationsApi } from '../../api';
 import type { Application, OfferMenuUploadRule, Paginated, SftpApplication } from '../../types';
 
@@ -179,6 +180,7 @@ export default function OfferMenuUploadSection() {
               {latest.currentStoreId && <span>Procesando {latest.currentStoreId}</span>}
               {stores.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(expanded === latest.id ? null : latest.id)}>{expanded === latest.id ? 'Ocultar detalle' : 'Ver tiendas'}</button>}
             </div>
+            <ExecutionTiming startedAt={latest.startedAt} finishedAt={latest.finishedAt} durationMs={latest.durationMs} />
             <p className="text-muted" style={{ marginTop: 7, fontSize: 12 }}>Archivo: {latest.sourceFile ?? '—'} · Modificado: {date(latest.sourceModifiedAt)}{latest.result?.skipped ? ` · Omitido: ${latest.result.reason}` : ''}</p>
             {latest.errorMessage && <p style={{ color: 'var(--red)', marginTop: 8 }}>{latest.errorMessage}</p>}
             {expanded === latest.id && <div className="table-wrap" style={{ marginTop: 12 }}><table>

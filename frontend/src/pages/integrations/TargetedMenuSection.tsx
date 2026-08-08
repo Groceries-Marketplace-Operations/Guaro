@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
+import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 import { targetedMenuApi } from '../../api';
 import type { TargetedMenuRule } from '../../types';
 import BrandSearchField from './BrandSearchField';
@@ -178,6 +179,7 @@ export default function TargetedMenuSection() {
               {latest.currentShopId && <span>Procesando {latest.currentShopId}</span>}
               {shops.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(expanded === latest.id ? null : latest.id)}>{expanded === latest.id ? 'Ocultar detalle' : 'Ver tiendas'}</button>}
             </div>
+            <ExecutionTiming startedAt={latest.startedAt} finishedAt={latest.finishedAt} />
             {latest.errorMessage && <p style={{ color: 'var(--red)', marginTop: 8 }}>{latest.errorMessage}</p>}
             {expanded === latest.id && <div className="table-wrap" style={{ marginTop: 12 }}><table>
               <thead><tr><th>Shop ID</th><th>Resultado</th><th>UPCs cargados</th><th>UPCs faltantes</th><th>Ítems fallidos</th><th>Task ID / error</th></tr></thead>

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fileIntegrationsApi, sftpApplicationsApi } from '../../api';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
+import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 import type { FileIntegrationRule, Paginated, SftpApplication } from '../../types';
 
 interface ActivationForm {
@@ -145,6 +146,7 @@ export default function DailyStatusActivationSection() {
               <span>Fecha objetivo: {latest.result?.matchedDate ?? '—'}</span>
               {files.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(expanded === latest.id ? null : latest.id)}>{expanded === latest.id ? 'Ocultar detalle' : 'Ver detalle'}</button>}
             </div>
+            <ExecutionTiming startedAt={latest.startedAt} finishedAt={latest.finishedAt} durationMs={latest.durationMs} />
             {latest.currentFile && <p className="text-muted" style={{ marginTop: 8 }}>Procesando: {latest.currentFile}</p>}
             {latest.errorMessage && <p style={{ color: 'var(--red)', marginTop: 8 }}>{latest.errorMessage}</p>}
             {expanded === latest.id && <div className="table-wrap" style={{ marginTop: 12 }}><table>

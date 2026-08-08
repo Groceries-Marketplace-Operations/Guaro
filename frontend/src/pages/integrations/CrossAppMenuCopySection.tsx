@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
+import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 import { menuCopyApi } from '../../api';
 import type { MenuCopyExecution } from '../../types';
 import ApplicationSearchField from './ApplicationSearchField';
@@ -145,8 +146,9 @@ export default function CrossAppMenuCopySection() {
                 {execution.sourceShopId} ({execution.sourceApplication.appId}) → {execution.targetShopId} ({execution.targetApplication.appId})
               </p>
               <p className="text-muted" style={{ marginTop: 5, fontSize: 12 }}>
-                Paso: {stepLabels[execution.currentStep ?? ''] ?? execution.currentStep ?? '—'} · Creada: {date(execution.createdAt)} · Finalizada: {date(execution.finishedAt)}
+                Paso: {stepLabels[execution.currentStep ?? ''] ?? execution.currentStep ?? '—'} · Creada: {date(execution.createdAt)}
               </p>
+              <ExecutionTiming startedAt={execution.startedAt} finishedAt={execution.finishedAt} />
               {(execution.itemCount > 0 || execution.categoryCount > 0) && <p style={{ marginTop: 6, fontSize: 12 }}>{execution.itemCount} ítems · {execution.categoryCount} categorías · taskID carga: {execution.uploadTaskId ?? '—'}</p>}
               {execution.errorMessage && <p style={{ color: 'var(--red)', marginTop: 7 }}>{execution.errorMessage}</p>}
             </div>

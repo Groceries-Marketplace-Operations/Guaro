@@ -10,6 +10,7 @@ import CrossAppMenuCopySection from './CrossAppMenuCopySection';
 import OfferMenuUploadSection from './OfferMenuUploadSection';
 import StoreFileSplitterSection from './StoreFileSplitterSection';
 import DailyStatusActivationSection from './DailyStatusActivationSection';
+import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 
 interface RuleForm {
   name: string;
@@ -40,13 +41,6 @@ function initialForm(kind: FileIntegrationKind): RuleForm {
 
 function date(value?: string) {
   return value ? new Date(value).toLocaleString() : '—';
-}
-
-function duration(ms?: number) {
-  if (ms === undefined || ms === null) return '—';
-  if (ms < 1000) return `${ms} ms`;
-  const seconds = ms / 1000;
-  return seconds < 60 ? `${seconds.toFixed(1)} s` : `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 }
 
 function saveBase64(fileName: string, contentBase64: string, mimeType: string) {
@@ -216,9 +210,9 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
                 <span>{latest.rowsRead.toLocaleString()} filas</span>
                 {isFilter && <><span style={{ color: 'var(--red)' }}>{latest.rowsRemoved.toLocaleString()} eliminadas</span><span>{latest.rowsKept.toLocaleString()} conservadas</span></>}
                 {!isFilter && <span>{latest.rowsKept.toLocaleString()} promociones guardadas</span>}
-                <span>{duration(latest.durationMs)}</span>
                 <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(expanded === latest.id ? null : latest.id)}>{expanded === latest.id ? 'Ocultar detalle' : 'Ver detalle'}</button>
               </div>
+              <ExecutionTiming startedAt={latest.startedAt} finishedAt={latest.finishedAt} durationMs={latest.durationMs} />
               {latest.currentFile && <p className="text-muted" style={{ marginTop: 8 }}>Procesando: {latest.currentFile}</p>}
               {latest.errorMessage && <p style={{ color: 'var(--red)', marginTop: 8 }}>{latest.errorMessage}</p>}
               {expanded === latest.id && <div className="table-wrap" style={{ marginTop: 12 }}><table>
