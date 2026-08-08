@@ -151,6 +151,7 @@ export class TargetedMenuProcessor extends WorkerHost {
             () => getAuthToken(application.appId, appSecret, target.appShopId!),
             {
               existingTaskId: activeProgress.exportTaskId,
+              rateLimitKey: application.appId,
               onProgress: async (downloadProgress: MenuDownloadProgress) => {
                 activeProgress = {
                   ...activeProgress!,
@@ -240,6 +241,8 @@ export class TargetedMenuProcessor extends WorkerHost {
                     uploads[index].items.length,
                     () => this.ensureActive(executionId),
                     () => getAuthToken(application.appId, appSecret, target.appShopId!),
+                    undefined,
+                    application.appId,
                   );
                 }
               } else {
@@ -258,6 +261,8 @@ export class TargetedMenuProcessor extends WorkerHost {
                   uploads[index].items.length,
                   () => this.ensureActive(executionId),
                   () => getAuthToken(application.appId, appSecret, target.appShopId!),
+                  undefined,
+                  application.appId,
                 );
               }
               batchProgress = {

@@ -4,16 +4,25 @@ import { sleep } from '../queue/handlers/didi-food.util';
 // Menu exports and menu uploads must therefore share the same in-process queue.
 export const GROCERY_TASK_STATUS_MIN_INTERVAL_MS = 5_250;
 
-let taskStatusTail = Promise.resolve();
-let nextTaskStatusPollAt = 0;
+interface StatusLane {
+  tail: Promise<void>;
+  nextPollAt: number;
+}
 
-export async function withGroceryTaskStatusRateLimit<T>(action: () => Promise<T>): Promise<T> {
-  const scheduled = taskStatusTail.then(async () => {
-    const waitMs = Math.max(0, nextTaskStatusPollAt - Date.now());
+const lanes = new Map<string, StatusLane>();
+
+export async function withGroceryTaskStatusRateLimit<T>(
+  action: () => Promise<T>,
+  applicationKey = 'global',
+): Promise<T> {
+  const lane = lanes.get(applicationKey) ?? { tail: Promise.resolve(), nextPollAt: 0 };
+  lanes.set(applicationKey, lane);
+  const scheduled = lane.tail.then(async () => {
+    const waitMs = Math.max(0, lane.nextPollAt - Date.now());
     if (waitMs > 0) await sleep(waitMs);
-    nextTaskStatusPollAt = Date.now() + GROCERY_TASK_STATUS_MIN_INTERVAL_MS;
+    lane.nextPollAt = Date.now() + GROCERY_TASK_STATUS_MIN_INTERVAL_MS;
     return action();
   });
-  taskStatusTail = scheduled.then(() => undefined, () => undefined);
+  lane.tail = scheduled.then(() => undefined, () => undefined);
   return scheduled;
 }

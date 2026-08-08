@@ -16,6 +16,7 @@ export interface MenuDownloadProgress {
 
 export interface DownloadMenuOptions {
   existingTaskId?: string;
+  rateLimitKey?: string;
   onProgress?: (progress: MenuDownloadProgress) => Promise<void>;
 }
 
@@ -119,7 +120,7 @@ export async function downloadMenu(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ auth_token: pollingToken, task_id: taskId }),
       },
-    ));
+    ), options.rateLimitKey);
     const taskBody = parseJsonKeepingIds(await taskResponse.text());
     if (isMenuTaskPending(taskBody)) {
       await options.onProgress?.({

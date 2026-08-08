@@ -405,6 +405,7 @@ export class OfferMenuUploadProcessor extends WorkerHost {
           pending.authToken,
           pending.taskId,
           () => getAuthToken(rule.application.appId, appSecret, pending.appShopId),
+          rule.application.appId,
         );
         pending.authToken = check.authToken;
         statusPolls += 1;

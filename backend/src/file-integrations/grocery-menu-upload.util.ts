@@ -74,6 +74,7 @@ export async function checkGroceryUploadTaskOnce(
   authToken: string,
   taskId: string,
   refreshAuthToken?: () => Promise<string>,
+  rateLimitKey = 'global',
 ): Promise<GroceryUploadTaskCheckResult> {
   return withGroceryTaskStatusRateLimit(async () => {
     const endpoint = 'POST /v3/item/item/getGroceryMenuTaskInfo';
@@ -120,7 +121,7 @@ export async function checkGroceryUploadTaskOnce(
       return { status, failedItems, authToken, terminal: true, rateLimited: false };
     }
     throw new Error(`${endpoint} returned unsupported task status ${status}`);
-  });
+  }, rateLimitKey);
 }
 
 export async function waitForGroceryUploadTask(
@@ -129,6 +130,7 @@ export async function waitForGroceryUploadTask(
   ensureActive: () => Promise<void> = async () => undefined,
   refreshAuthToken?: () => Promise<string>,
   timeoutMs = 30 * 60_000,
+  rateLimitKey = 'global',
 ): Promise<{ status: number; failedItems: GroceryItemFailure[] }> {
   const endpoint = 'POST /v3/item/item/getGroceryMenuTaskInfo';
   const startedAt = Date.now();
@@ -139,7 +141,7 @@ export async function waitForGroceryUploadTask(
     await ensureActive();
     if (attempts > 0) await sleep(10_000);
     attempts += 1;
-    const check = await checkGroceryUploadTaskOnce(pollingToken, taskId, refreshAuthToken);
+    const check = await checkGroceryUploadTaskOnce(pollingToken, taskId, refreshAuthToken, rateLimitKey);
     pollingToken = check.authToken;
     if (check.status !== undefined) lastStatus = check.status;
     if (!check.terminal) continue;
@@ -210,6 +212,7 @@ export async function resolveGroceryBatchSubmission(
   ensureActive: () => Promise<void> = async () => undefined,
   refreshAuthToken?: () => Promise<string>,
   timeoutMs?: number,
+  rateLimitKey = 'global',
 ): Promise<GroceryBatchUploadResult> {
   const completed = await waitForGroceryUploadTask(
     authToken,
@@ -217,6 +220,7 @@ export async function resolveGroceryBatchSubmission(
     ensureActive,
     refreshAuthToken,
     timeoutMs,
+    rateLimitKey,
   );
   return {
     referenceId,
@@ -257,6 +261,7 @@ export async function uploadGroceryBatch(
   ensureActive: () => Promise<void> = async () => undefined,
   refreshAuthToken?: () => Promise<string>,
   timeoutMs?: number,
+  rateLimitKey = 'global',
 ): Promise<GroceryBatchUploadResult> {
   const submission = await submitGroceryBatch(authToken, batch, uploadEndpoint, mergePolicy);
   if ('acceptedCount' in submission) return submission;
@@ -267,6 +272,7 @@ export async function uploadGroceryBatch(
     ensureActive,
     refreshAuthToken,
     timeoutMs,
+    rateLimitKey,
   );
   const failedItemIds = new Set(completed.failedItems.map(item => item.appItemId));
   return {
