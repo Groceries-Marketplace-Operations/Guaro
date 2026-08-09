@@ -9,8 +9,8 @@ import { useT } from '../i18n';
 import type { Application, Country, Paginated } from '../types';
 import { hasPermission } from '../auth/permissions';
 
-const COUNTRY_EMOJI: Record<Country, string> = { MX: '🇲🇽', CO: '🇨🇴', CR: '🇨🇷' };
 const COUNTRIES: Country[] = ['MX', 'CO', 'CR'];
+const COUNTRY_LABEL: Record<Country, string> = { MX: 'Mexico (MX)', CO: 'Colombia (CO)', CR: 'Costa Rica (CR)' };
 const LIMIT = 25;
 
 const PlusIcon = () => (
@@ -46,7 +46,7 @@ export default function ApplicationsPage() {
   const [createForm, setCreateForm] = useState({ appId: '', appName: '', country: 'MX' as Country, appSecret: '' });
 
   const [editApp, setEditApp] = useState<Application | null>(null);
-  const [editForm, setEditForm] = useState({ appName: '', appSecret: '' });
+  const [editForm, setEditForm] = useState({ appName: '', country: 'MX' as Country, appSecret: '' });
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -79,7 +79,7 @@ export default function ApplicationsPage() {
 
   const openEdit = (a: Application) => {
     setEditApp(a);
-    setEditForm({ appName: a.appName, appSecret: '' });
+    setEditForm({ appName: a.appName, country: a.country, appSecret: '' });
     setErr('');
   };
 
@@ -89,6 +89,7 @@ export default function ApplicationsPage() {
     setSaving(true); setErr('');
     const payload: Record<string, string> = {};
     if (editForm.appName) payload.appName = editForm.appName;
+    payload.country = editForm.country;
     if (editForm.appSecret) payload.appSecret = editForm.appSecret;
     try {
       await applicationsApi.update(editApp.id, payload);
@@ -146,7 +147,7 @@ export default function ApplicationsPage() {
             onChange={e => { setCountry(e.target.value as Country | ''); setPage(1); }}
           >
             <option value="">{t('pages.applications.allCountries')}</option>
-            {COUNTRIES.map(c => <option key={c} value={c}>{COUNTRY_EMOJI[c]} {c}</option>)}
+            {COUNTRIES.map(c => <option key={c} value={c}>{COUNTRY_LABEL[c]}</option>)}
           </select>
           {(q || country) && (
             <button className="btn btn-ghost btn-sm" onClick={resetFilters}>{t('pages.applications.clearFilters')}</button>
@@ -178,7 +179,7 @@ export default function ApplicationsPage() {
                 <tr key={a.id}>
                   <td style={{ fontWeight: 600 }}>{a.appName}</td>
                   <td className="td-mono">{a.appId}</td>
-                  <td>{COUNTRY_EMOJI[a.country]} {a.country}</td>
+                  <td>{COUNTRY_LABEL[a.country]}</td>
                   <td className="text-muted text-sm">{new Date(a.createdAt).toLocaleDateString()}</td>
                   <td>
                     <div style={{ display: 'flex', gap: 4 }}>
@@ -230,7 +231,7 @@ export default function ApplicationsPage() {
               <label className="form-label">{t('pages.applications.countryLabel')} <span style={{ color: 'var(--red)' }}>*</span></label>
               <select className="form-select" value={createForm.country}
                 onChange={e => setCreateForm(f => ({ ...f, country: e.target.value as Country }))}>
-                {COUNTRIES.map(c => <option key={c} value={c}>{COUNTRY_EMOJI[c]} {c}</option>)}
+                {COUNTRIES.map(c => <option key={c} value={c}>{COUNTRY_LABEL[c]}</option>)}
               </select>
             </div>
             <div className="form-group">
@@ -254,15 +255,19 @@ export default function ApplicationsPage() {
         >
           {err && <div className="error-banner">{err}</div>}
           <p className="text-muted text-sm" style={{ marginBottom: 14 }}>
-            {t('pages.applications.editHint')
-              .replace('{appId}', editApp.appId)
-              .replace('{flag}', COUNTRY_EMOJI[editApp.country])
-              .replace('{country}', editApp.country)}
+            {t('pages.applications.editHint').replace('{appId}', editApp.appId)}
           </p>
           <div className="form-group">
             <label className="form-label">{t('pages.applications.editAppName')}</label>
             <input className="form-input" value={editForm.appName}
               onChange={e => setEditForm(f => ({ ...f, appName: e.target.value }))} autoFocus />
+          </div>
+          <div className="form-group">
+            <label className="form-label">{t('pages.applications.countryLabel')}</label>
+            <select className="form-select" value={editForm.country}
+              onChange={e => setEditForm(f => ({ ...f, country: e.target.value as Country }))}>
+              {COUNTRIES.map(c => <option key={c} value={c}>{COUNTRY_LABEL[c]}</option>)}
+            </select>
           </div>
           <div className="form-group">
             <label className="form-label">{t('pages.applications.editSecretLabel')} <span className="text-muted">{t('pages.applications.editSecretNote')}</span></label>

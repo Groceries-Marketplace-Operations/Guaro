@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Country, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -44,25 +44,71 @@ export class ApplicationsService {
     return app;
   }
 
-  create(dto: CreateApplicationDto, createdById: string) {
-    return this.prisma.application.create({
-      data: {
-        appId: dto.appId,
-        appName: dto.appName,
-        country: dto.country,
-        appSecret: encrypt(dto.appSecret, this.encKey),
-        createdById,
-      },
-      select: SELECT_SAFE,
-    });
+  async create(dto: CreateApplicationDto, createdById: string) {
+    const appId = dto.appId.trim();
+    const existing = await this.prisma.application.findUnique({ where: { appId } });
+
+    if (existing && !existing.deletedAt) {
+      throw new ConflictException('An application with this App ID already exists');
+    }
+
+    if (existing) {
+      await this.assertCountryCanChange(existing.id, dto.country);
+      return this.prisma.application.update({
+        where: { id: existing.id },
+        data: {
+          appName: dto.appName.trim(),
+          country: dto.country,
+          appSecret: encrypt(dto.appSecret, this.encKey),
+          createdById,
+          deletedAt: null,
+        },
+        select: SELECT_SAFE,
+      });
+    }
+
+    try {
+      return await this.prisma.application.create({
+        data: {
+          appId,
+          appName: dto.appName.trim(),
+          country: dto.country,
+          appSecret: encrypt(dto.appSecret, this.encKey),
+          createdById,
+        },
+        select: SELECT_SAFE,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('An application with this App ID already exists');
+      }
+      throw error;
+    }
   }
 
   async update(id: string, dto: UpdateApplicationDto) {
-    await this.findOne(id);
+    const application = await this.findOne(id);
+    if (dto.country && dto.country !== application.country) {
+      await this.assertCountryCanChange(id, dto.country);
+    }
     const data: Record<string, unknown> = {};
-    if (dto.appName) data.appName = dto.appName;
+    if (dto.appName) data.appName = dto.appName.trim();
     if (dto.appSecret) data.appSecret = encrypt(dto.appSecret, this.encKey);
+    if (dto.country) data.country = dto.country;
     return this.prisma.application.update({ where: { id }, data, select: SELECT_SAFE });
+  }
+
+  private async assertCountryCanChange(id: string, country: Country) {
+    const conflictingBrand = await this.prisma.brand.findFirst({
+      where: { applicationId: id, country: { not: country } },
+      select: { brandName: true, country: true },
+      orderBy: { brandName: 'asc' },
+    });
+    if (conflictingBrand) {
+      throw new ConflictException(
+        `Country cannot be changed while the application is linked to ${conflictingBrand.brandName} (${conflictingBrand.country})`,
+      );
+    }
   }
 
   async remove(id: string) {

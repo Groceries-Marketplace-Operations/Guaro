@@ -1,4 +1,5 @@
-import { IsOptional, IsString } from 'class-validator';
+import { Country } from '@prisma/client';
+import { IsEnum, IsOptional, IsString } from 'class-validator';
 
 export class UpdateApplicationDto {
   @IsOptional()
@@ -8,4 +9,8 @@ export class UpdateApplicationDto {
   @IsOptional()
   @IsString()
   appSecret?: string;
+
+  @IsOptional()
+  @IsEnum(Country)
+  country?: Country;
 }
