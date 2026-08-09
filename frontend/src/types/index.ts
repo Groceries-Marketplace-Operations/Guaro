@@ -370,6 +370,17 @@ export interface AutoTurnOffExecution {
   createdAt: string;
 }
 
+export interface TaskDashboardSummary {
+  total: number;
+  counts: Record<TaskStatus, number>;
+  active: number;
+  attention: number;
+  createdLast24Hours: number;
+  completionRate: number;
+  scopedBrandCount?: number;
+  scopedShopCount?: number;
+}
+
 export interface BrandItem {
   id: string;
   brandId: string;

@@ -139,6 +139,7 @@ export const applicationsApi = {
 /* ── Tasks ──────────────────────────────────────────────────── */
 export const tasksApi = {
   list: (params?: object) => client.get<{ data: unknown[]; total: number; page: number; limit: number }>('/tasks', { params }),
+  dashboardSummary: () => client.get<import('../types').TaskDashboardSummary>('/tasks/dashboard-summary'),
   filterOptions: () => client.get<{ sections: { id: string; name: string; order: number }[] }>('/tasks/filter-options'),
   get: (id: string) => client.get(`/tasks/${id}`),
   create: (data: object) => client.post('/tasks', data),

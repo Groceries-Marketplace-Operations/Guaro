@@ -158,43 +158,59 @@ export class TasksService {
   ) {
     const { page = 1, limit = 25, q, status, brandId, sectionId: filterSectionId } = filters;
     const skip = (page - 1) * limit;
-
-    const AND: Prisma.TaskWhereInput[] = [{ deletedAt: null }];
-    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds({ id: accountId, roles, sectionId });
-    if (allowedSectionIds !== null) AND.push({ taskType: { sectionId: { in: allowedSectionIds } } });
-
-    // Role-based visibility
-    const isSuperAdmin = roles.includes(AccountRole.super_admin);
-    const isAdmin      = roles.includes(AccountRole.admin);
-    const isBpo        = roles.includes(AccountRole.bpo);
-    const isUser       = roles.includes(AccountRole.user);
-
-    if (!isSuperAdmin && !isAdmin) {
-      if (isUser && !isBpo) {
-        AND.push({ createdById: accountId });
-      } else if (isBpo && !isUser) {
-        AND.push({ stepInstances: { some: { assignedToId: accountId } } });
-      }
-      // user+bpo or director: no additional restriction
-    }
-
-    if (status)  AND.push({ status });
-    if (brandId) AND.push({ brandId });
-    if (filterSectionId) AND.push({ taskType: { sectionId: filterSectionId } });
-    if (q) AND.push({
-      OR: [
-        { brand:    { brandName: { contains: q, mode: 'insensitive' } } },
-        { taskType: { name:      { contains: q, mode: 'insensitive' } } },
-      ],
-    });
-
-    const where: Prisma.TaskWhereInput = { AND };
+    const where = await this.taskWhere(roles, accountId, sectionId, { q, status, brandId, sectionId: filterSectionId });
 
     const [data, total] = await Promise.all([
       this.prisma.task.findMany({ where, include: TASK_INCLUDE, orderBy: { createdAt: 'desc' }, skip, take: limit }),
       this.prisma.task.count({ where }),
     ]);
     return { data, total, page, limit };
+  }
+
+  async dashboardSummary(roles: AccountRole[], accountId: string, sectionId: string | null) {
+    const where = await this.taskWhere(roles, accountId, sectionId);
+    const last24Hours = new Date(Date.now() - 24 * 60 * 60_000);
+    const isBpoOnly = roles.includes(AccountRole.bpo)
+      && !roles.includes(AccountRole.admin)
+      && !roles.includes(AccountRole.super_admin)
+      && !roles.includes(AccountRole.user);
+    const [grouped, total, createdLast24Hours, scopedBrandRows] = await Promise.all([
+      this.prisma.task.groupBy({
+        by: ['status'],
+        where,
+        _count: { _all: true },
+      }),
+      this.prisma.task.count({ where }),
+      this.prisma.task.count({ where: { AND: [where, { createdAt: { gte: last24Hours } }] } }),
+      isBpoOnly
+        ? this.prisma.task.findMany({
+          where: { AND: [where, { brandId: { not: null } }] },
+          distinct: ['brandId'],
+          select: { brandId: true },
+        })
+        : Promise.resolve([]),
+    ]);
+    const scopedBrandIds = scopedBrandRows.flatMap(row => row.brandId ? [row.brandId] : []);
+    const scopedShopCount = isBpoOnly && scopedBrandIds.length
+      ? await this.prisma.shop.count({ where: { brandId: { in: scopedBrandIds } } })
+      : 0;
+    const counts = Object.fromEntries(
+      Object.values(TaskStatus).map(status => [status, 0]),
+    ) as Record<TaskStatus, number>;
+    for (const row of grouped) counts[row.status] = row._count._all;
+    const active = counts.scheduled + counts.pending + counts.assigned + counts.in_progress + counts.blocked;
+    const attention = counts.blocked + counts.failed;
+    const resolved = counts.done + counts.failed;
+    return {
+      total,
+      counts,
+      active,
+      attention,
+      createdLast24Hours,
+      completionRate: resolved ? Math.round((counts.done / resolved) * 100) : 0,
+      scopedBrandCount: isBpoOnly ? scopedBrandIds.length : undefined,
+      scopedShopCount: isBpoOnly ? scopedShopCount : undefined,
+    };
   }
 
   async filterOptions(roles: AccountRole[], accountId: string, sectionId: string | null) {
@@ -205,6 +221,40 @@ export class TasksService {
       orderBy: [{ order: 'asc' }, { name: 'asc' }],
     });
     return { sections };
+  }
+
+  private async taskWhere(
+    roles: AccountRole[],
+    accountId: string,
+    sectionId: string | null,
+    filters: { q?: string; status?: TaskStatus; brandId?: string; sectionId?: string } = {},
+  ): Promise<Prisma.TaskWhereInput> {
+    const AND: Prisma.TaskWhereInput[] = [{ deletedAt: null }];
+    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds({ id: accountId, roles, sectionId });
+    if (allowedSectionIds !== null) AND.push({ taskType: { sectionId: { in: allowedSectionIds } } });
+
+    const isSuperAdmin = roles.includes(AccountRole.super_admin);
+    const isAdmin = roles.includes(AccountRole.admin);
+    const isBpo = roles.includes(AccountRole.bpo);
+    const isUser = roles.includes(AccountRole.user);
+    if (!isSuperAdmin && !isAdmin) {
+      if (isUser && !isBpo) {
+        AND.push({ createdById: accountId });
+      } else if (isBpo && !isUser) {
+        AND.push({ stepInstances: { some: { assignedToId: accountId } } });
+      }
+    }
+
+    if (filters.status) AND.push({ status: filters.status });
+    if (filters.brandId) AND.push({ brandId: filters.brandId });
+    if (filters.sectionId) AND.push({ taskType: { sectionId: filters.sectionId } });
+    if (filters.q) AND.push({
+      OR: [
+        { brand: { brandName: { contains: filters.q, mode: 'insensitive' } } },
+        { taskType: { name: { contains: filters.q, mode: 'insensitive' } } },
+      ],
+    });
+    return { AND };
   }
 
   async findOne(

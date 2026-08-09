@@ -51,6 +51,12 @@ export class TasksController {
     return this.tasksService.filterOptions(u.roles, u.id, u.sectionId);
   }
 
+  @Get('dashboard-summary')
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
+  dashboardSummary(@CurrentUser() u: JwtUser) {
+    return this.tasksService.dashboardSummary(u.roles, u.id, u.sectionId);
+  }
+
   @Get('templates/grocery-menu.xlsx')
   @Permissions('tasks.create')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
