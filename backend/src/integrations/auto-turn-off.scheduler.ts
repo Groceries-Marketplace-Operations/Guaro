@@ -29,6 +29,7 @@ export class AutoTurnOffScheduler {
         nextRunAt: { lte: now },
         OR: [{ endsAt: null }, { endsAt: { gt: now } }],
         pool: { active: true },
+        executions: { none: { status: { in: ['pending', 'running'] } } },
       },
       select: {
         id: true,
@@ -57,6 +58,7 @@ export class AutoTurnOffScheduler {
             nextRunAt: { lte: now },
             OR: [{ endsAt: null }, { endsAt: { gt: now } }],
             pool: { active: true },
+            executions: { none: { status: { in: ['pending', 'running'] } } },
           },
           data: { nextRunAt, lastRunAt: now },
         });
@@ -67,6 +69,14 @@ export class AutoTurnOffScheduler {
       } catch (error) {
         this.logger.error(`Could not schedule rule ${rule.id}: ${(error as Error).message}`);
       }
+    }
+  }
+
+  @Cron('*/5 * * * *')
+  async recoverInterruptedExecutions() {
+    const recovered = await this.service.recoverStaleExecutions(15);
+    if (recovered > 0) {
+      this.logger.warn(`Recovered ${recovered} interrupted auto turn off execution(s)`);
     }
   }
 

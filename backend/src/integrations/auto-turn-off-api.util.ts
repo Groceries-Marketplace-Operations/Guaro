@@ -35,6 +35,16 @@ export interface SuccessfulItem {
   confirmation?: 'accepted' | 'confirmed';
 }
 
+export interface ShopStockCandidate {
+  upc: string;
+  appItemId: string;
+  name?: string;
+}
+
+export interface KnownShopItem extends ShopStockCandidate {
+  available: boolean;
+}
+
 export interface ShopResult {
   shopId: string;
   appShopId: string;
@@ -222,6 +232,71 @@ export function resolveAppItemIds(items: Array<Record<string, unknown>>, request
     matchedUpcs: requestedUpcs.length - missingUpcs.length,
     missingUpcs,
   };
+}
+
+/**
+ * Prefer app_item_id values observed in the exact target shop. For a shop that
+ * has not been learned yet, probe the brand-wide candidates once. Candidates
+ * that this shop already rejected are not sent again.
+ */
+export function resolveShopStockCandidates(
+  catalogItems: ShopStockCandidate[],
+  knownShopItems: KnownShopItem[],
+  requestedUpcs: string[],
+) {
+  const globalByUpc = groupCandidates(catalogItems);
+  const shopByUpc = groupCandidates(knownShopItems);
+  const candidates: ShopStockCandidate[] = [];
+  const missingUpcs: string[] = [];
+  const unavailableUpcs: string[] = [];
+  const matchedUpcs = new Set<string>();
+
+  for (const requestedUpc of requestedUpcs) {
+    const upc = requestedUpc.trim();
+    const known = shopByUpc.get(upc) ?? [];
+    const available = known.filter(item => item.available);
+    if (available.length > 0) {
+      candidates.push(...available);
+      matchedUpcs.add(upc);
+      continue;
+    }
+
+    const rejectedIds = new Set(known.filter(item => !item.available).map(item => item.appItemId));
+    const untested = (globalByUpc.get(upc) ?? []).filter(item => !rejectedIds.has(item.appItemId));
+    if (untested.length > 0) {
+      candidates.push(...untested);
+      matchedUpcs.add(upc);
+    } else if (known.length > 0 || (globalByUpc.get(upc)?.length ?? 0) > 0) {
+      unavailableUpcs.push(requestedUpc);
+    } else {
+      missingUpcs.push(requestedUpc);
+    }
+  }
+
+  const uniqueCandidates = [...new Map(
+    candidates.map(candidate => [candidate.appItemId, candidate]),
+  ).values()];
+  return {
+    candidates: uniqueCandidates,
+    matchedUpcs: matchedUpcs.size,
+    missingUpcs,
+    unavailableUpcs,
+  };
+}
+
+function groupCandidates<T extends ShopStockCandidate>(items: T[]) {
+  const grouped = new Map<string, T[]>();
+  for (const item of items) {
+    const upc = item.upc.trim();
+    const appItemId = item.appItemId.trim();
+    if (!upc || !appItemId) continue;
+    const current = grouped.get(upc) ?? [];
+    if (!current.some(candidate => candidate.appItemId === appItemId)) {
+      current.push({ ...item, upc, appItemId });
+    }
+    grouped.set(upc, current);
+  }
+  return grouped;
 }
 
 export function buildStockList(appItemIds: string[], stockValue: number) {

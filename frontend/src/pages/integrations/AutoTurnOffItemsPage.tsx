@@ -198,6 +198,8 @@ export default function AutoTurnOffItemsPage() {
     next: 'Próxima', last: 'Última', never: 'Nunca', stores: 'tiendas', items: 'UPCs',
     noRules: 'Este pool aún no tiene reglas.', noHistory: 'Aún no hay ejecuciones.',
     executed: 'ejecutada', scheduled: 'programada', manual: 'manual', succeeded: 'exitosas',
+    fullShops: 'tiendas completas', partialShops: 'parciales', failedShops: 'fallidas',
+    itemUpdates: 'actualizaciones exitosas', itemFailures: 'fallos de item',
     minFrequency: 'La frecuencia mínima es de 10 minutos por la restricción de Stock API.',
     createdBy: 'Creada por', updatedBy: 'Modificada por', failureReason: 'Motivo del fallo',
     successfulItems: 'Items exitosos', failedItems: 'Items fallidos', result: 'Resultado', finished: 'Finalizada',
@@ -233,6 +235,8 @@ export default function AutoTurnOffItemsPage() {
     next: 'Next', last: 'Last', never: 'Never', stores: 'stores', items: 'UPCs',
     noRules: 'This pool has no rules yet.', noHistory: 'No executions yet.',
     executed: 'executed', scheduled: 'scheduled', manual: 'manual', succeeded: 'succeeded',
+    fullShops: 'fully successful stores', partialShops: 'partial', failedShops: 'failed',
+    itemUpdates: 'successful item updates', itemFailures: 'item failures',
     minFrequency: 'Minimum frequency is 10 minutes due to the Stock API restriction.',
     createdBy: 'Created by', updatedBy: 'Modified by', failureReason: 'Failure reason',
     successfulItems: 'Successful items', failedItems: 'Failed items', result: 'Result', finished: 'Finished',
@@ -496,6 +500,11 @@ export default function AutoTurnOffItemsPage() {
                         {copy.createdBy}: {rule.createdBy?.name ?? rule.createdBy?.email ?? '—'} ({new Date(rule.createdAt).toLocaleString()}) · {copy.updatedBy}: {rule.updatedBy?.name ?? rule.updatedBy?.email ?? '—'} ({new Date(rule.updatedAt).toLocaleString()})
                       </div>
                       {(rule.executions?.[0]?.status === 'running' || rule.executions?.[0]?.status === 'pending') && <Progress execution={rule.executions[0]} es={es} />}
+                      {rule.executions?.[0] && !['running', 'pending'].includes(rule.executions[0].status) && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 6 }}>
+                          {rule.executions[0].shopsSucceeded ?? 0} {copy.fullShops} · {rule.executions[0].shopsPartial ?? 0} {copy.partialShops} · {rule.executions[0].shopsFailed ?? 0} {copy.failedShops} · {rule.executions[0].itemsTurnedOff ?? 0} {copy.itemUpdates} · {rule.executions[0].itemsFailed ?? 0} {copy.itemFailures}
+                        </div>
+                      )}
                       {rule.executions?.[0]?.errorMessage && (rule.executions[0].status === 'partial_success' || rule.executions[0].status === 'failed' || rule.executions[0].status === 'cancelled') && (
                         <div style={{ color: rule.executions[0].status === 'partial_success' ? '#B54708' : 'var(--red)', fontSize: '0.72rem', marginTop: 6 }}>
                           {copy.failureReason}: {rule.executions[0].errorMessage}
@@ -527,8 +536,11 @@ export default function AutoTurnOffItemsPage() {
                         <strong>{execution.rule.name}</strong>
                         <span style={{ color: 'var(--text-muted)' }}>{execution.rule.brand.brandName}</span>
                         <span style={{ color: statusColor[execution.status], fontWeight: 700 }}>{executionStatusLabel(execution.status, es)}</span>
-                        <span>{execution.shopsSucceeded}/{execution.totalShops} {copy.succeeded}</span>
-                        <span>{execution.itemsTurnedOff} {copy.items}</span>
+                        <span>{execution.shopsSucceeded ?? 0} {copy.fullShops}</span>
+                        <span>{execution.shopsPartial ?? 0} {copy.partialShops}</span>
+                        <span>{execution.shopsFailed ?? 0} {copy.failedShops}</span>
+                        <span>{execution.itemsTurnedOff ?? 0} {copy.itemUpdates}</span>
+                        <span>{execution.itemsFailed ?? 0} {copy.itemFailures}</span>
                         <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>{copy[execution.trigger]} · {new Date(execution.createdAt).toLocaleString()}</span>
                         <button className="btn btn-ghost btn-sm" onClick={() => toggleShopResults(execution.id)}>
                           {shopResultsExecutionId === execution.id ? copy.hideShopResults : copy.shopResults}

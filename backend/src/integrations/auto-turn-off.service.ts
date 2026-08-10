@@ -24,7 +24,10 @@ const RULE_INCLUDE = {
       progressPercent: true,
       totalShops: true,
       shopsSucceeded: true,
+      shopsPartial: true,
+      shopsFailed: true,
       itemsTurnedOff: true,
+      itemsFailed: true,
       errorMessage: true,
       cancelledAt: true,
       startedAt: true,
@@ -317,18 +320,26 @@ export class AutoTurnOffService {
   async enqueueExecution(poolId: string, ruleId: string, trigger: 'manual' | 'scheduled') {
     const pool = await this.prisma.autoTurnOffPool.findUnique({ where: { id: poolId }, select: { country: true } });
     if (!pool) throw new NotFoundException('Auto turn off pool not found');
-    const execution = await this.prisma.autoTurnOffExecution.create({
-      data: {
-        poolId,
-        ruleId,
-        trigger,
-        status: 'pending',
-        currentStep: 'queued',
-        progressCurrent: 0,
-        progressTotal: 1,
-        progressPercent: 0,
-      },
-    });
+    let execution;
+    try {
+      execution = await this.prisma.autoTurnOffExecution.create({
+        data: {
+          poolId,
+          ruleId,
+          trigger,
+          status: 'pending',
+          currentStep: 'queued',
+          progressCurrent: 0,
+          progressTotal: 1,
+          progressPercent: 0,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new BadRequestException('This rule already has an execution pending or running');
+      }
+      throw error;
+    }
     try {
       // DiDi only accepts one Stock API request per store every 10 minutes.
       // Disable BullMQ's global quick retries to avoid violating that limit.
@@ -348,6 +359,91 @@ export class AutoTurnOffService {
       });
       throw error;
     }
+  }
+
+  async recoverStaleExecutions(staleMinutes = 15) {
+    const cutoff = new Date(Date.now() - staleMinutes * 60_000);
+    const staleExecutions = await this.prisma.autoTurnOffExecution.findMany({
+      where: {
+        status: { in: ['pending', 'running'] },
+        OR: [
+          { status: 'pending', createdAt: { lt: cutoff } },
+          {
+            status: 'running',
+            startedAt: { lt: cutoff },
+            shops: { none: { updatedAt: { gte: cutoff } } },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        status: true,
+        progressTotal: true,
+        shops: {
+          select: {
+            status: true,
+            itemsSucceeded: true,
+            itemsFailed: true,
+          },
+        },
+      },
+    });
+
+    let recovered = 0;
+    for (const execution of staleExecutions) {
+      const shopsSucceeded = execution.shops.filter(shop => shop.status === 'done').length;
+      const shopsPartial = execution.shops.filter(shop => shop.status === 'partial_success').length;
+      const shopsFailed = execution.shops.length - shopsSucceeded - shopsPartial;
+      const itemsSucceeded = execution.shops.reduce((sum, shop) => sum + shop.itemsSucceeded, 0);
+      const itemsFailed = execution.shops.reduce((sum, shop) => sum + shop.itemsFailed, 0);
+      const finalStatus = itemsSucceeded > 0 ? 'partial_success' : 'failed';
+      const message = `Recovered interrupted execution after ${staleMinutes} minutes without progress`;
+
+      const claimed = await this.prisma.$transaction(async tx => {
+        const updated = await tx.autoTurnOffExecution.updateMany({
+          where: {
+            id: execution.id,
+            status: { in: ['pending', 'running'] },
+            OR: [
+              { status: 'pending', createdAt: { lt: cutoff } },
+              {
+                status: 'running',
+                startedAt: { lt: cutoff },
+                shops: { none: { updatedAt: { gte: cutoff } } },
+              },
+            ],
+          },
+          data: {
+            status: finalStatus,
+            currentStep: 'recovered_interrupted',
+            finishedAt: new Date(),
+            shopsSucceeded,
+            shopsPartial,
+            shopsFailed,
+            itemsTurnedOff: itemsSucceeded,
+            itemsFailed,
+            progressCurrent: execution.progressTotal,
+            progressPercent: 100,
+            errorMessage: message,
+          },
+        });
+        if (updated.count === 0) return false;
+        await tx.autoTurnOffShopExecution.updateMany({
+          where: {
+            executionId: execution.id,
+            status: { in: ['pending', 'running'] },
+          },
+          data: {
+            status: 'cancelled',
+            currentStep: 'recovered_interrupted',
+            finishedAt: new Date(),
+          },
+        });
+        return true;
+      });
+      if (claimed) recovered += 1;
+    }
+    return recovered;
   }
 
   async listExecutions(poolId: string, page = 1, limit = 20) {

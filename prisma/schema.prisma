@@ -613,6 +613,7 @@ model Brand {
   storeEmergencies       StoreEmergency[]
   forcedOpenOperations   ForcedOpenOperation[]
   items                  BrandItem[]
+  shopItems              BrandShopItem[]
   menuCategories         BrandMenuCategory[]
   sftpApplications       SftpApplication[]
   promotionApiExecutions PromotionApiExecution[]
@@ -691,6 +692,28 @@ model BrandItem {
   @@index([brandId, upc])
   @@index([brandId, name])
   @@map("brand_item")
+}
+
+model BrandShopItem {
+  id         String   @id @default(uuid()) @db.Uuid
+  brandId    String   @map("brand_id") @db.Uuid
+  shopId     String   @map("shop_id")
+  name       String
+  upc        String?
+  appItemId  String   @map("app_item_id")
+  available  Boolean  @default(true)
+  source     String   @default("menu")
+  lastError  String?  @map("last_error") @db.Text
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, shopId, appItemId])
+  @@index([brandId, shopId, upc])
+  @@index([brandId, upc, available])
+  @@map("brand_shop_item")
 }
 
 model BrandMenuCategory {
@@ -1385,7 +1408,10 @@ model AutoTurnOffExecution {
   finishedAt      DateTime?      @map("finished_at") @db.Timestamptz
   totalShops      Int            @default(0) @map("total_shops")
   shopsSucceeded  Int            @default(0) @map("shops_succeeded")
+  shopsPartial    Int            @default(0) @map("shops_partial")
+  shopsFailed     Int            @default(0) @map("shops_failed")
   itemsTurnedOff  Int            @default(0) @map("items_turned_off")
+  itemsFailed     Int            @default(0) @map("items_failed")
   currentStep     String?        @map("current_step")
   progressCurrent Int            @default(0) @map("progress_current")
   progressTotal   Int            @default(0) @map("progress_total")

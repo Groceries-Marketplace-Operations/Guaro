@@ -285,28 +285,66 @@ export class CatalogSyncService {
     for (let offset = 0; offset < items.length; offset += 100) {
       await ensureActive?.();
       const chunk = items.slice(offset, offset + 100);
-      await this.prisma.$transaction(chunk.map(item => this.prisma.brandItem.upsert({
-        where: { brandId_appItemId: { brandId: shop.brandId, appItemId: item.appItemId } },
-        create: {
-          brandId: shop.brandId,
-          name: item.name,
-          upc: item.upc,
-          appItemId: item.appItemId,
-          imageUrl: item.imageUrl,
-          sourceShopId: shop.shopId,
-          sourceCity: shop.city,
-          lastSeenAt: now,
-        },
-        update: {
-          name: item.name,
-          upc: item.upc,
-          imageUrl: item.imageUrl ?? undefined,
-          sourceShopId: shop.shopId,
-          sourceCity: shop.city,
-          lastSeenAt: now,
-        },
-      })));
+      await this.prisma.$transaction([
+        ...chunk.map(item => this.prisma.brandItem.upsert({
+          where: { brandId_appItemId: { brandId: shop.brandId, appItemId: item.appItemId } },
+          create: {
+            brandId: shop.brandId,
+            name: item.name,
+            upc: item.upc,
+            appItemId: item.appItemId,
+            imageUrl: item.imageUrl,
+            sourceShopId: shop.shopId,
+            sourceCity: shop.city,
+            lastSeenAt: now,
+          },
+          update: {
+            name: item.name,
+            upc: item.upc,
+            imageUrl: item.imageUrl ?? undefined,
+            sourceShopId: shop.shopId,
+            sourceCity: shop.city,
+            lastSeenAt: now,
+          },
+        })),
+        ...chunk.map(item => this.prisma.brandShopItem.upsert({
+          where: {
+            brandId_shopId_appItemId: {
+              brandId: shop.brandId,
+              shopId: shop.shopId,
+              appItemId: item.appItemId,
+            },
+          },
+          create: {
+            brandId: shop.brandId,
+            shopId: shop.shopId,
+            name: item.name,
+            upc: item.upc,
+            appItemId: item.appItemId,
+            available: true,
+            source: 'menu',
+            lastError: null,
+            lastSeenAt: now,
+          },
+          update: {
+            name: item.name,
+            upc: item.upc,
+            available: true,
+            source: 'menu',
+            lastError: null,
+            lastSeenAt: now,
+          },
+        })),
+      ]);
     }
+    await ensureActive?.();
+    await this.prisma.brandShopItem.deleteMany({
+      where: {
+        brandId: shop.brandId,
+        shopId: shop.shopId,
+        lastSeenAt: { lt: now },
+      },
+    });
     await this.prisma.shop.update({
       where: { id: shop.id },
       data: {

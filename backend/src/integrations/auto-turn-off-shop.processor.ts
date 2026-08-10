@@ -11,7 +11,8 @@ import {
   AutoTurnOffCancelledError,
   buildStockList,
   callStockApi,
-  resolveAppItemIds,
+  resolveShopStockCandidates,
+  ShopStockCandidate,
   ShopResult,
   StockEndpoint,
 } from './auto-turn-off-api.util';
@@ -147,53 +148,102 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     const { execution } = target;
     const { rule } = execution;
     const endpoint = rule.stockEndpoint as StockEndpoint;
-    const catalogItems = await this.prisma.brandItem.findMany({
-      where: {
-        brandId: rule.brandId,
-        upc: { in: rule.upcs },
-      },
-      select: { upc: true, appItemId: true, name: true },
-    });
-    const cached = resolveAppItemIds(
-      catalogItems.map(item => ({ upc: item.upc, app_item_id: item.appItemId })),
-      rule.upcs,
-    );
+    const [catalogRows, shopRows] = await Promise.all([
+      this.prisma.brandItem.findMany({
+        where: {
+          brandId: rule.brandId,
+          upc: { in: rule.upcs },
+        },
+        select: { upc: true, appItemId: true, name: true },
+      }),
+      this.prisma.brandShopItem.findMany({
+        where: {
+          brandId: rule.brandId,
+          shopId: target.shopId,
+          upc: { in: rule.upcs },
+        },
+        select: { upc: true, appItemId: true, name: true, available: true },
+      }),
+    ]);
+    const catalogItems: ShopStockCandidate[] = catalogRows
+      .filter((item): item is typeof item & { upc: string } => Boolean(item.upc))
+      .map(item => ({ upc: item.upc, appItemId: item.appItemId, name: item.name }));
+    const knownShopItems = shopRows
+      .filter((item): item is typeof item & { upc: string } => Boolean(item.upc))
+      .map(item => ({
+        upc: item.upc,
+        appItemId: item.appItemId,
+        name: item.name,
+        available: item.available,
+      }));
+    const cached = resolveShopStockCandidates(catalogItems, knownShopItems, rule.upcs);
 
     await this.advanceStep(target.id, execution.id, `matching_local_upcs:${target.shopId}`);
     await this.advanceStep(target.id, execution.id, `updating_local_stock:${target.shopId}`);
 
     let localResult: Omit<ShopResult, 'shopId' | 'appShopId' | 'endpoint'> = {
-      success: cached.appItemIds.length === 0,
+      success: cached.candidates.length === 0,
       itemsSucceeded: 0,
       itemsFailed: 0,
     };
-    if (cached.appItemIds.length > 0) {
+    let apiCompleted = false;
+    if (cached.candidates.length > 0) {
       await this.ensureActive(target.id, execution.id);
       try {
         localResult = await callStockApi(
           endpoint,
           authToken,
-          buildStockList(cached.appItemIds, rule.stockValue),
+          buildStockList(cached.candidates.map(item => item.appItemId), rule.stockValue),
         );
+        apiCompleted = true;
       } catch (error) {
         const reason = (error as Error).message;
         localResult = {
           success: false,
           itemsSucceeded: 0,
-          itemsFailed: cached.appItemIds.length,
-          failedItems: cached.appItemIds.map(appItemId => ({ appItemId, reason })),
+          itemsFailed: cached.candidates.length,
+          failedItems: cached.candidates.map(item => ({ appItemId: item.appItemId, upc: item.upc, reason })),
           error: reason,
         };
       }
+    }
+
+    if (apiCompleted) {
+      await this.persistShopItemKnowledge(
+        rule.brandId,
+        target.shopId,
+        cached.candidates,
+        localResult,
+      );
     }
 
     const missingFailures = cached.missingUpcs.map(upc => ({
       upc,
       reason: 'UPC is not available in the local brand catalog; Auto Turn Off does not download menus',
     }));
-    const failedItems = [...(localResult.failedItems ?? []), ...missingFailures];
-    const itemsFailed = localResult.itemsFailed + cached.missingUpcs.length;
-    const catalogByItemId = new Map(catalogItems.map(item => [item.appItemId, item]));
+    const unavailableFailures = cached.unavailableUpcs.map(upc => ({
+      upc,
+      reason: 'All known app_item_id candidates were rejected by this store in an earlier execution',
+    }));
+    const catalogByItemId = new Map(cached.candidates.map(item => [item.appItemId, item]));
+    const apiFailedItems = (localResult.failedItems ?? []).map(item => {
+      const catalogItem = item.appItemId ? catalogByItemId.get(item.appItemId) : undefined;
+      return {
+        ...item,
+        upc: item.upc ?? catalogItem?.upc,
+      };
+    });
+    const failedItems = [...apiFailedItems, ...missingFailures, ...unavailableFailures];
+    const itemsFailed = localResult.itemsFailed + cached.missingUpcs.length + cached.unavailableUpcs.length;
+    const errors = [
+      localResult.error,
+      cached.missingUpcs.length > 0
+        ? `${cached.missingUpcs.length} UPC(s) are missing from the local brand catalog`
+        : undefined,
+      cached.unavailableUpcs.length > 0
+        ? `${cached.unavailableUpcs.length} UPC(s) have no valid app_item_id candidate for this store`
+        : undefined,
+    ].filter((value): value is string => Boolean(value));
     const successfulItems = (localResult.successfulItems ?? []).map(item => {
       const catalogItem = catalogByItemId.get(item.appItemId);
       return {
@@ -215,11 +265,68 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
       successfulItems: successfulItems.length > 0 ? successfulItems : undefined,
       missingUpcs: cached.missingUpcs.length > 0 ? cached.missingUpcs : undefined,
       failedItems: failedItems.length > 0 ? failedItems : undefined,
-      error: cached.missingUpcs.length > 0
-        ? `${cached.missingUpcs.length} UPC(s) are missing from the local brand catalog`
-        : localResult.error,
+      error: errors.length > 0 ? errors.join('; ') : undefined,
       menuSource: 'catalog',
     }, 1);
+  }
+
+  private async persistShopItemKnowledge(
+    brandId: string,
+    shopId: string,
+    candidates: ShopStockCandidate[],
+    result: Omit<ShopResult, 'shopId' | 'appShopId' | 'endpoint'>,
+  ) {
+    const candidatesById = new Map(candidates.map(item => [item.appItemId, item]));
+    const observations = new Map<string, {
+      candidate: ShopStockCandidate;
+      available: boolean;
+      lastError: string | null;
+    }>();
+    for (const item of result.successfulItems ?? []) {
+      if (item.confirmation !== 'confirmed') continue;
+      const candidate = candidatesById.get(item.appItemId);
+      if (candidate) observations.set(item.appItemId, { candidate, available: true, lastError: null });
+    }
+    for (const item of result.failedItems ?? []) {
+      if (!item.appItemId || !this.isMissingAppItemId(item.reason)) continue;
+      const candidate = candidatesById.get(item.appItemId);
+      if (candidate) observations.set(item.appItemId, { candidate, available: false, lastError: item.reason });
+    }
+
+    const values = [...observations.values()];
+    for (let offset = 0; offset < values.length; offset += 100) {
+      const now = new Date();
+      const chunk = values.slice(offset, offset + 100);
+      await this.prisma.$transaction(chunk.map(({ candidate, available, lastError }) =>
+        this.prisma.brandShopItem.upsert({
+          where: {
+            brandId_shopId_appItemId: { brandId, shopId, appItemId: candidate.appItemId },
+          },
+          create: {
+            brandId,
+            shopId,
+            name: candidate.name ?? candidate.upc,
+            upc: candidate.upc,
+            appItemId: candidate.appItemId,
+            available,
+            source: 'stock_probe',
+            lastError,
+            lastSeenAt: now,
+          },
+          update: {
+            name: candidate.name ?? candidate.upc,
+            upc: candidate.upc,
+            available,
+            lastError,
+            lastSeenAt: now,
+          },
+        }),
+      ));
+    }
+  }
+
+  private isMissingAppItemId(reason: string) {
+    return /app[_\s-]?item[_\s-]?id.*(?:does not exist|not exist|not found|invalid)/i.test(reason);
   }
 
   @OnWorkerEvent('failed')
@@ -482,16 +589,42 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
   }
 
   private async failExecution(executionId: string, message: string) {
-    await this.prisma.autoTurnOffExecution.updateMany({
-      where: { id: executionId, status: { in: ['pending', 'running'] } },
-      data: {
-        status: 'failed',
-        currentStep: 'failed',
-        errorMessage: message,
-        finishedAt: new Date(),
-        progressPercent: 100,
+    const execution = await this.prisma.autoTurnOffExecution.findUnique({
+      where: { id: executionId },
+      select: {
+        status: true,
+        progressTotal: true,
+        shops: { select: { status: true, itemsSucceeded: true, itemsFailed: true } },
       },
     });
+    if (!execution || !['pending', 'running'].includes(execution.status)) return;
+    const shopsSucceeded = execution.shops.filter(shop => shop.status === 'done').length;
+    const shopsPartial = execution.shops.filter(shop => shop.status === 'partial_success').length;
+    const shopsFailed = execution.shops.length - shopsSucceeded - shopsPartial;
+    const itemsSucceeded = execution.shops.reduce((sum, shop) => sum + shop.itemsSucceeded, 0);
+    const itemsFailed = execution.shops.reduce((sum, shop) => sum + shop.itemsFailed, 0);
+    await this.prisma.$transaction([
+      this.prisma.autoTurnOffExecution.updateMany({
+        where: { id: executionId, status: { in: ['pending', 'running'] } },
+        data: {
+          status: itemsSucceeded > 0 ? 'partial_success' : 'failed',
+          currentStep: 'worker_failed',
+          errorMessage: message,
+          finishedAt: new Date(),
+          shopsSucceeded,
+          shopsPartial,
+          shopsFailed,
+          itemsTurnedOff: itemsSucceeded,
+          itemsFailed,
+          progressCurrent: execution.progressTotal,
+          progressPercent: 100,
+        },
+      }),
+      this.prisma.autoTurnOffShopExecution.updateMany({
+        where: { executionId, status: { in: ['pending', 'running'] } },
+        data: { status: 'cancelled', currentStep: 'worker_failed', finishedAt: new Date() },
+      }),
+    ]);
   }
 
   private async finalizeIfComplete(executionId: string) {
@@ -508,7 +641,10 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
 
     const complete = execution.shops.length > 0 && execution.shops.every(shop => shop.status === 'done');
     const shopsSucceeded = execution.shops.filter(shop => shop.status === 'done').length;
+    const shopsPartial = execution.shops.filter(shop => shop.status === 'partial_success').length;
+    const shopsFailed = execution.shops.length - shopsSucceeded - shopsPartial;
     const itemsTurnedOff = execution.shops.reduce((sum, shop) => sum + shop.itemsSucceeded, 0);
+    const itemsFailed = execution.shops.reduce((sum, shop) => sum + shop.itemsFailed, 0);
     const finalStatus = complete ? 'done' : (itemsTurnedOff > 0 ? 'partial_success' : 'failed');
     const results = execution.shops.map(shop => shop.result).filter(Boolean) as Prisma.JsonValue[];
     const failedResult = execution.shops.find(
@@ -522,7 +658,10 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
         currentStep: complete ? 'completed' : finalStatus,
         finishedAt: new Date(),
         shopsSucceeded,
+        shopsPartial,
+        shopsFailed,
         itemsTurnedOff,
+        itemsFailed,
         progressCurrent: execution.progressTotal,
         progressPercent: 100,
         errorMessage,

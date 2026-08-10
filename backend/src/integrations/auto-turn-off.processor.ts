@@ -189,11 +189,24 @@ export class AutoTurnOffCoordinator {
       await this.prisma.$transaction([
         this.prisma.autoTurnOffExecution.updateMany({
           where: { id: executionId, status: 'running' },
-          data: { status: 'failed', currentStep: 'failed', errorMessage: message, finishedAt: new Date(), progressPercent: 100 },
+          data: {
+            status: 'failed',
+            currentStep: 'failed',
+            shopsFailed: rule.shopIds.length,
+            itemsFailed: rule.shopIds.length * rule.upcs.length,
+            errorMessage: message,
+            finishedAt: new Date(),
+            progressPercent: 100,
+          },
         }),
         this.prisma.autoTurnOffShopExecution.updateMany({
           where: { executionId, status: { in: ['pending', 'running'] } },
-          data: { status: 'failed', currentStep: 'queue_failed', finishedAt: new Date() },
+          data: {
+            status: 'failed',
+            currentStep: 'queue_failed',
+            itemsFailed: rule.upcs.length,
+            finishedAt: new Date(),
+          },
         }),
       ]);
     }
@@ -265,6 +278,8 @@ export class AutoTurnOffCoordinator {
           status: 'failed',
           currentStep: 'failed',
           totalShops: rule.shopIds.length,
+          shopsFailed: rule.shopIds.length,
+          itemsFailed: rule.shopIds.length * rule.upcs.length,
           errorMessage: message,
           finishedAt: now,
           progressCurrent: progressTotal,

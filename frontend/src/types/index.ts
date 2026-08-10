@@ -321,7 +321,10 @@ export interface AutoTurnOffRule {
     progressPercent: number;
     totalShops: number;
     shopsSucceeded: number;
+    shopsPartial: number;
+    shopsFailed: number;
     itemsTurnedOff: number;
+    itemsFailed: number;
     errorMessage?: string;
     cancelledAt?: string;
     startedAt?: string;
@@ -358,7 +361,10 @@ export interface AutoTurnOffExecution {
   finishedAt?: string;
   totalShops: number;
   shopsSucceeded: number;
+  shopsPartial: number;
+  shopsFailed: number;
   itemsTurnedOff: number;
+  itemsFailed: number;
   currentStep?: string;
   progressCurrent: number;
   progressTotal: number;
