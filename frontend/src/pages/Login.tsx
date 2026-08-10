@@ -24,7 +24,7 @@ const GoogleIcon = () => (
 
 type VoxelWorkerProps = {
   className: string;
-  tool: 'scanner' | 'crate' | 'tablet' | 'cart';
+  tool: 'monitor' | 'alert' | 'tablet' | 'calendar' | 'integration';
   badge: string;
 };
 
@@ -45,13 +45,18 @@ const VoxelOrangeWorker = ({ className, tool, badge }: VoxelWorkerProps) => (
       <span className="voxel-worker-leg leg-left" />
       <span className="voxel-worker-leg leg-right" />
       <span className={`voxel-worker-tool tool-${tool}`}>
-        {tool === 'crate' && <><i /><i /><i /></>}
-        {tool === 'scanner' && <><i /><i /></>}
+        {tool === 'monitor' && <><i /><i /><i /></>}
+        {tool === 'alert' && <><i /><i /><i /></>}
         {tool === 'tablet' && <><i /><i /><i /></>}
-        {tool === 'cart' && <><i /><i /><i /><i /></>}
+        {tool === 'calendar' && <><i /><i /><i /><i /></>}
+        {tool === 'integration' && <><i /><i /><i /><i /></>}
       </span>
     </div>
   </div>
+);
+
+const VoxelMetricChart = () => (
+  <em className="metric-chart"><b /><b /><b /><b /><b /></em>
 );
 
 const VoxelOrangeWorld = () => (
@@ -62,15 +67,21 @@ const VoxelOrangeWorld = () => (
       <span className="ceiling-light light-three" />
     </div>
 
-    <div className="grocery-status-board">
-      <span className="status-board-kicker">GROCERY OPS</span>
-      <strong>124</strong>
-      <span className="status-board-copy">ORDERS READY</span>
-      <i className="status-board-led" />
+    <div className="grocery-control-wall">
+      <div className="control-wall-title">
+        <span>GROCERY CONTROL CENTER</span>
+        <i /> LIVE
+      </div>
+      <div className="control-metric metric-completed"><i>✓</i><span>COMPLETED</span><strong>124</strong><VoxelMetricChart /></div>
+      <div className="control-metric metric-cancelled"><i>×</i><span>CANCELED</span><strong>07</strong><VoxelMetricChart /></div>
+      <div className="control-metric metric-emergency"><i>!</i><span>EMERGENCIES</span><strong>02</strong><VoxelMetricChart /></div>
+      <div className="control-metric metric-operations"><i>◆</i><span>OPERATIONS</span><strong>38</strong><VoxelMetricChart /></div>
+      <div className="control-metric metric-schedule"><i>◷</i><span>SCHEDULES</span><strong>09:00</strong><VoxelMetricChart /></div>
+      <div className="control-metric metric-integrations"><i>↔</i><span>INTEGRATIONS</span><strong>16</strong><VoxelMetricChart /></div>
     </div>
 
     <div className="grocery-aisle aisle-produce">
-      <span className="aisle-sign">FRESH PRODUCE</span>
+      <span className="aisle-sign">GROCERY</span>
       <span className="aisle-shelf shelf-top" />
       <span className="aisle-shelf shelf-bottom" />
       <span className="produce-bin produce-oranges"><i /><i /><i /><i /><i /><i /></span>
@@ -88,41 +99,34 @@ const VoxelOrangeWorld = () => (
       <span className="cold-room-snow snow-three">+</span>
     </div>
 
-    <div className="grocery-forklift">
-      <span className="forklift-cabin"><i /><i /></span>
-      <span className="forklift-body" />
-      <span className="forklift-mast" />
-      <span className="forklift-fork" />
-      <span className="forklift-crate"><i /><i /><i /></span>
-      <span className="forklift-wheel wheel-one" />
-      <span className="forklift-wheel wheel-two" />
-    </div>
-
     <div className="voxel-floor floor-back" />
 
-    <div className="voxel-conveyor grocery-conveyor">
-      <span className="conveyor-screen"><i /></span>
-      <span className="conveyor-track" />
-      <span className="grocery-tote tote-one"><i /><i /><i /></span>
-      <span className="grocery-tote tote-two"><i /><i /><i /></span>
-      <span className="grocery-tote tote-three"><i /><i /><i /></span>
+    <div className="grocery-control-desk">
+      <span className="desk-monitor monitor-orders"><i /><VoxelMetricChart /><small>ORDERS</small></span>
+      <span className="desk-monitor monitor-alerts"><i /><VoxelMetricChart /><small>ALERTS</small></span>
+      <span className="desk-monitor monitor-integrations"><i /><VoxelMetricChart /><small>LINKS</small></span>
+      <span className="desk-monitor monitor-ops"><i /><VoxelMetricChart /><small>OPS</small></span>
+      <span className="desk-monitor monitor-hours"><i /><VoxelMetricChart /><small>SHIFTS</small></span>
+      <span className="desk-surface" />
+      <span className="desk-leg leg-one" />
+      <span className="desk-leg leg-two" />
     </div>
 
     <div className="voxel-floor floor-front" />
 
-    <VoxelOrangeWorker className="worker-stocker" tool="crate" badge="S" />
-    <VoxelOrangeWorker className="worker-picker" tool="scanner" badge="P" />
-    <VoxelOrangeWorker className="worker-packer" tool="tablet" badge="Q" />
-    <VoxelOrangeWorker className="worker-runner" tool="cart" badge="R" />
+    <VoxelOrangeWorker className="worker-orders" tool="monitor" badge="O" />
+    <VoxelOrangeWorker className="worker-emergency" tool="alert" badge="E" />
+    <VoxelOrangeWorker className="worker-integrations" tool="integration" badge="I" />
+    <VoxelOrangeWorker className="worker-operations" tool="tablet" badge="X" />
+    <VoxelOrangeWorker className="worker-schedule" tool="calendar" badge="H" />
 
-    <span className="scan-beam" />
     <span className="voxel-ping ping-one">✓</span>
-    <span className="voxel-ping ping-two">✓</span>
-    <span className="voxel-ping ping-three">✓</span>
+    <span className="voxel-ping ping-two">!</span>
+    <span className="voxel-ping ping-three">◷</span>
 
     <div className="grocery-world-caption">
-      <span>GROCERY CREW</span>
-      <strong>Picking fresh. Moving fast.</strong>
+      <span>GROCERY CONTROL</span>
+      <strong>Orders, incidents, integrations and shifts in sync.</strong>
     </div>
   </div>
 );
