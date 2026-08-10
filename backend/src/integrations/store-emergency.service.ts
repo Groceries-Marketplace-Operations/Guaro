@@ -3,8 +3,10 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreEmergencyDto } from './dto/create-store-emergency.dto';
+import { UpdateStoreEmergencyReopeningDto } from './dto/update-store-emergency-reopening.dto';
 
 const ACTIVE_STATUSES = ['pending', 'running', 'offline', 'partial_success', 'restoring'];
+const REOPENING_EDITABLE_STATUSES = ['pending', 'running', 'offline', 'partial_success'];
 
 @Injectable()
 export class StoreEmergencyService {
@@ -112,6 +114,28 @@ export class StoreEmergencyService {
     });
     if (!emergency) throw new NotFoundException('Store emergency not found');
     return emergency;
+  }
+
+  async updateReopening(id: string, dto: UpdateStoreEmergencyReopeningDto) {
+    if (dto.endsAt.getTime() <= Date.now()) {
+      throw new BadRequestException('Emergency reopening date must be in the future');
+    }
+    const emergency = await this.prisma.storeEmergency.findUnique({
+      where: { id },
+      select: { id: true, status: true },
+    });
+    if (!emergency) throw new NotFoundException('Store emergency not found');
+    if (!REOPENING_EDITABLE_STATUSES.includes(emergency.status)) {
+      throw new BadRequestException('Reopening time can only be changed before restoration begins');
+    }
+    const updated = await this.prisma.storeEmergency.updateMany({
+      where: { id, status: { in: REOPENING_EDITABLE_STATUSES } },
+      data: { endsAt: dto.endsAt },
+    });
+    if (updated.count === 0) {
+      throw new BadRequestException('Emergency is already changing status');
+    }
+    return this.findOne(id);
   }
 
   async restoreNow(id: string) {

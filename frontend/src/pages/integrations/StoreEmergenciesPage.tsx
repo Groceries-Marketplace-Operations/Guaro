@@ -20,6 +20,8 @@ export default function StoreEmergenciesPage() {
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<StoreEmergency | null>(null);
+  const [editingReopening, setEditingReopening] = useState<StoreEmergency | null>(null);
+  const [reopeningAt, setReopeningAt] = useState('');
   const [error, setError] = useState('');
   const [form, setForm] = useState({
     brandId: '',
@@ -69,6 +71,25 @@ export default function StoreEmergenciesPage() {
       setError(Array.isArray(message) ? message.join(', ') : message ?? 'No se pudo encender las tiendas');
     },
   });
+  const updateReopening = useMutation({
+    mutationFn: () => {
+      if (!editingReopening) throw new Error('No emergency selected');
+      return storeEmergenciesApi.updateReopening(editingReopening.id, new Date(reopeningAt).toISOString());
+    },
+    onSuccess: response => {
+      const updated = response.data as StoreEmergency;
+      qc.invalidateQueries({ queryKey: ['store-emergencies'] });
+      if (detail?.id === updated.id) setDetail(updated);
+      setEditingReopening(null);
+      setReopeningAt('');
+      setError('');
+    },
+    onError: (err: unknown) => {
+      const response = err as { response?: { data?: { message?: string | string[] } } };
+      const message = response.response?.data?.message;
+      setError(Array.isArray(message) ? message.join(', ') : message ?? 'No se pudo modificar la hora de reapertura');
+    },
+  });
 
   if (!isAdmin) return <Navigate to="/" replace />;
   const brands = (brandsResult?.data ?? []).filter(brand => !!brand.applicationId);
@@ -98,13 +119,13 @@ export default function StoreEmergenciesPage() {
       <div className="alert" style={{ marginBottom: 18, borderColor: '#ffc7b2', background: '#fff4ee', color: '#8b2d00' }}>
         Esta acción cambia tiendas reales a Offline usando únicamente las tiendas almacenadas localmente. Al vencer el periodo, el sistema intentará reabrir solo las tiendas que logró apagar.
       </div>
-      {error && !open && <div className="error-banner" style={{ marginBottom: 14 }}>{error}</div>}
+      {error && !open && !editingReopening && <div className="error-banner" style={{ marginBottom: 14 }}>{error}</div>}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Marca</th><th>Alcance</th><th>Tiendas</th><th>Estado</th><th>Reapertura</th><th>Creada por</th><th></th></tr></thead>
+          <thead><tr><th>Marca</th><th>Alcance</th><th>Tiendas</th><th>Estado</th><th>Inicio de apagado</th><th>Reapertura</th><th>Creada por</th><th></th></tr></thead>
           <tbody>
-            {isLoading && <tr><td colSpan={7} className="text-muted">Cargando…</td></tr>}
-            {!isLoading && !data?.data.length && <tr><td colSpan={7}><div className="empty-state"><p>No hay emergencias registradas.</p></div></td></tr>}
+            {isLoading && <tr><td colSpan={8} className="text-muted">Cargando…</td></tr>}
+            {!isLoading && !data?.data.length && <tr><td colSpan={8}><div className="empty-state"><p>No hay emergencias registradas.</p></div></td></tr>}
             {data?.data.map(item => {
               const offline = item.targets.filter(target => target.offlineStatus === 'done').length;
               const restored = item.targets.filter(target => target.restoreStatus === 'done').length;
@@ -113,9 +134,19 @@ export default function StoreEmergenciesPage() {
                 <td>{item.mode === 'all_brand' ? 'Toda la marca' : 'Lista de shop_ids'}</td>
                 <td>{offline}/{item.targets.length} apagadas{restored > 0 ? ` · ${restored} reabiertas` : ''}</td>
                 <td><StatusBadge status={item.status} />{item.errorMessage && <div style={{ color: 'var(--red)', fontSize: '.68rem', marginTop: 4 }}>{item.errorMessage}</div>}</td>
+                <td>{item.startedAt ? new Date(item.startedAt).toLocaleString() : <span className="text-muted">Pendiente</span>}</td>
                 <td>{new Date(item.endsAt).toLocaleString()}</td>
                 <td>{item.createdBy.name}</td>
                 <td><div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  {['pending', 'running', 'offline', 'partial_success'].includes(item.status) && <button
+                    className="btn btn-ghost btn-sm"
+                    disabled={updateReopening.isPending}
+                    onClick={() => {
+                      setEditingReopening(item);
+                      setReopeningAt(localDateTime(new Date(item.endsAt)));
+                      setError('');
+                    }}
+                  >Editar reapertura</button>}
                   {['offline', 'partial_success'].includes(item.status) && <button
                     className="btn btn-primary btn-sm"
                     disabled={restore.isPending}
@@ -161,7 +192,50 @@ export default function StoreEmergenciesPage() {
       </div>
     </Modal>}
 
+    {editingReopening && <Modal title={`Modificar reapertura · ${editingReopening.brand.brandName}`} onClose={() => {
+      if (!updateReopening.isPending) {
+        setEditingReopening(null);
+        setError('');
+      }
+    }} footer={<>
+      <button className="btn btn-ghost" disabled={updateReopening.isPending} onClick={() => {
+        setEditingReopening(null);
+        setError('');
+      }}>Cancelar</button>
+      <button className="btn btn-primary" disabled={updateReopening.isPending || !reopeningAt} onClick={() => {
+        if (window.confirm(`¿Cambiar la reapertura de ${editingReopening.brand.brandName} a ${new Date(reopeningAt).toLocaleString()}?`)) {
+          updateReopening.mutate();
+        }
+      }}>{updateReopening.isPending ? 'Guardando…' : 'Guardar nueva hora'}</button>
+    </>}>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="alert" style={{ marginBottom: 18, borderColor: '#ffd0b8', background: '#fff7f2', color: '#7a320e' }}>
+        El scheduler utilizará la nueva hora. Solo puede modificarse antes de que comience la reapertura.
+      </div>
+      <div className="form-group">
+        <label className="form-label">Inicio de la instrucción de apagado</label>
+        <div className="form-input" style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}>
+          {editingReopening.startedAt ? new Date(editingReopening.startedAt).toLocaleString() : 'Pendiente de iniciar'}
+        </div>
+      </div>
+      <div className="form-group">
+        <label className="form-label">Nueva fecha y hora de reapertura *</label>
+        <input className="form-input" type="datetime-local" min={localDateTime(new Date())} value={reopeningAt} onChange={event => setReopeningAt(event.target.value)} />
+      </div>
+      <p className="form-hint">Hora actual: {new Date(editingReopening.endsAt).toLocaleString()}</p>
+    </Modal>}
+
     {detail && <Modal title={`Tiendas · ${detail.brand.brandName}`} onClose={() => setDetail(null)}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginBottom: 14 }}>
+        <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--surface-2)' }}>
+          <div className="text-muted text-sm">Inicio de apagado</div>
+          <strong>{detail.startedAt ? new Date(detail.startedAt).toLocaleString() : 'Pendiente'}</strong>
+        </div>
+        <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--surface-2)' }}>
+          <div className="text-muted text-sm">Reapertura programada</div>
+          <strong>{new Date(detail.endsAt).toLocaleString()}</strong>
+        </div>
+      </div>
       <div className="table-wrap" style={{ maxHeight: 520, overflow: 'auto' }}><table>
         <thead><tr><th>shop_id</th><th>Ciudad</th><th>Apagado</th><th>Reapertura</th></tr></thead>
         <tbody>{detail.targets.map(target => <tr key={target.id}>

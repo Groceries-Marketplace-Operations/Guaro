@@ -716,6 +716,7 @@ export interface StoreEmergency {
   finishedAt?: string;
   errorMessage?: string;
   createdAt: string;
+  updatedAt: string;
   brand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'>;
   createdBy: Pick<Account, 'id' | 'name' | 'email'>;
   targets: StoreEmergencyTarget[];

@@ -1,4 +1,4 @@
-import { Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AccountRole } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -7,6 +7,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Permissions } from '../access-control/permissions.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { CreateStoreEmergencyDto } from './dto/create-store-emergency.dto';
+import { UpdateStoreEmergencyReopeningDto } from './dto/update-store-emergency-reopening.dto';
 import { StoreEmergencyService } from './store-emergency.service';
 
 @Controller('integrations/store-emergencies')
@@ -33,6 +34,12 @@ export class StoreEmergencyController {
   @Permissions('integrations.emergencies.execute')
   create(@Body() dto: CreateStoreEmergencyDto, @CurrentUser() user: JwtUser) {
     return this.service.create(dto, user.id);
+  }
+
+  @Patch(':id/reopening')
+  @Permissions('integrations.emergencies.execute')
+  updateReopening(@Param('id') id: string, @Body() dto: UpdateStoreEmergencyReopeningDto) {
+    return this.service.updateReopening(id, dto);
   }
 
   @Post(':id/restore')

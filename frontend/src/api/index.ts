@@ -320,6 +320,7 @@ export const storeEmergenciesApi = {
   list: (page = 1, limit = 20) => client.get('/integrations/store-emergencies', { params: { page, limit } }),
   get: (id: string) => client.get(`/integrations/store-emergencies/${id}`),
   create: (data: object) => client.post('/integrations/store-emergencies', data),
+  updateReopening: (id: string, endsAt: string) => client.patch(`/integrations/store-emergencies/${id}/reopening`, { endsAt }),
   restoreNow: (id: string) => client.post(`/integrations/store-emergencies/${id}/restore`),
 };
 
