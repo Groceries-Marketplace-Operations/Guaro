@@ -22,6 +22,111 @@ const GoogleIcon = () => (
   </svg>
 );
 
+type VoxelWorkerProps = {
+  className: string;
+  tool: 'scanner' | 'crate' | 'tablet' | 'cart';
+  badge: string;
+};
+
+const VoxelOrangeWorker = ({ className, tool, badge }: VoxelWorkerProps) => (
+  <div className={`voxel-worker ${className}`} aria-hidden="true">
+    <span className="voxel-worker-shadow" />
+    <div className="voxel-orange-head">
+      <span className="voxel-orange-leaf" />
+      <span className="voxel-orange-eye eye-left" />
+      <span className="voxel-orange-eye eye-right" />
+      <span className="voxel-orange-smile" />
+    </div>
+    <div className="voxel-worker-body">
+      <span className="voxel-worker-vest" />
+      <span className="voxel-worker-badge">{badge}</span>
+      <span className="voxel-worker-arm arm-left" />
+      <span className="voxel-worker-arm arm-right" />
+      <span className="voxel-worker-leg leg-left" />
+      <span className="voxel-worker-leg leg-right" />
+      <span className={`voxel-worker-tool tool-${tool}`}>
+        {tool === 'crate' && <><i /><i /><i /></>}
+        {tool === 'scanner' && <><i /><i /></>}
+        {tool === 'tablet' && <><i /><i /><i /></>}
+        {tool === 'cart' && <><i /><i /><i /><i /></>}
+      </span>
+    </div>
+  </div>
+);
+
+const VoxelOrangeWorld = () => (
+  <div className="voxel-orange-world" aria-hidden="true">
+    <div className="voxel-ceiling">
+      <span className="ceiling-light light-one" />
+      <span className="ceiling-light light-two" />
+      <span className="ceiling-light light-three" />
+    </div>
+
+    <div className="grocery-status-board">
+      <span className="status-board-kicker">GROCERY OPS</span>
+      <strong>124</strong>
+      <span className="status-board-copy">ORDERS READY</span>
+      <i className="status-board-led" />
+    </div>
+
+    <div className="grocery-aisle aisle-produce">
+      <span className="aisle-sign">FRESH PRODUCE</span>
+      <span className="aisle-shelf shelf-top" />
+      <span className="aisle-shelf shelf-bottom" />
+      <span className="produce-bin produce-oranges"><i /><i /><i /><i /><i /><i /></span>
+      <span className="produce-bin produce-greens"><i /><i /><i /><i /><i /></span>
+      <span className="produce-bin produce-tomatoes"><i /><i /><i /><i /><i /></span>
+      <span className="produce-bin produce-bananas"><i /><i /><i /><i /></span>
+    </div>
+
+    <div className="grocery-cold-room">
+      <span className="cold-room-sign">CHILLED</span>
+      <span className="cold-room-door" />
+      <span className="cold-room-window" />
+      <span className="cold-room-snow snow-one">+</span>
+      <span className="cold-room-snow snow-two">+</span>
+      <span className="cold-room-snow snow-three">+</span>
+    </div>
+
+    <div className="grocery-forklift">
+      <span className="forklift-cabin"><i /><i /></span>
+      <span className="forklift-body" />
+      <span className="forklift-mast" />
+      <span className="forklift-fork" />
+      <span className="forklift-crate"><i /><i /><i /></span>
+      <span className="forklift-wheel wheel-one" />
+      <span className="forklift-wheel wheel-two" />
+    </div>
+
+    <div className="voxel-floor floor-back" />
+
+    <div className="voxel-conveyor grocery-conveyor">
+      <span className="conveyor-screen"><i /></span>
+      <span className="conveyor-track" />
+      <span className="grocery-tote tote-one"><i /><i /><i /></span>
+      <span className="grocery-tote tote-two"><i /><i /><i /></span>
+      <span className="grocery-tote tote-three"><i /><i /><i /></span>
+    </div>
+
+    <div className="voxel-floor floor-front" />
+
+    <VoxelOrangeWorker className="worker-stocker" tool="crate" badge="S" />
+    <VoxelOrangeWorker className="worker-picker" tool="scanner" badge="P" />
+    <VoxelOrangeWorker className="worker-packer" tool="tablet" badge="Q" />
+    <VoxelOrangeWorker className="worker-runner" tool="cart" badge="R" />
+
+    <span className="scan-beam" />
+    <span className="voxel-ping ping-one">✓</span>
+    <span className="voxel-ping ping-two">✓</span>
+    <span className="voxel-ping ping-three">✓</span>
+
+    <div className="grocery-world-caption">
+      <span>GROCERY CREW</span>
+      <strong>Picking fresh. Moving fast.</strong>
+    </div>
+  </div>
+);
+
 export default function Login() {
   const { account, loading, login } = useAuth();
   const nav = useNavigate();
@@ -146,7 +251,8 @@ export default function Login() {
         </p>
       </div>
 
-      <div className="login-aside" style={{ backgroundImage: `url(${import.meta.env.BASE_URL}tequila-login-hero.png)` }}>
+      <div className="login-aside">
+        <VoxelOrangeWorld />
         <div className="login-aside-scrim" aria-hidden="true" />
         <div className="login-aside-logo">
           <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 80, height: 80, objectFit: 'contain', borderRadius: 16, marginBottom: 16 }} />
