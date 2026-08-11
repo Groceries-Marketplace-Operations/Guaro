@@ -453,6 +453,35 @@ export class TasksService {
     };
   }
 
+  async assignableBpos(requester: JwtUser) {
+    this.assertAdminAssignment(requester);
+    const isSuperAdmin = requester.roles.includes(AccountRole.super_admin);
+
+    if (!isSuperAdmin && !requester.sectionId) {
+      return { data: [] };
+    }
+
+    const data = await this.prisma.account.findMany({
+      where: {
+        deletedAt: null,
+        roles: { has: AccountRole.bpo },
+        ...(isSuperAdmin ? {} : { sectionId: requester.sectionId! }),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        roles: true,
+        sectionId: true,
+        adminModules: true,
+        bpoPermissions: true,
+      },
+      orderBy: [{ name: 'asc' }, { email: 'asc' }],
+    });
+
+    return { data };
+  }
+
   private assertAdminAssignment(requester: JwtUser) {
     if (!requester.roles.some(role => role === AccountRole.admin || role === AccountRole.super_admin)) {
       throw new ForbiddenException('Only admins can assign or reassign BPOs');

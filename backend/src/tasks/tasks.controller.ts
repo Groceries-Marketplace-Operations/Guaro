@@ -135,6 +135,13 @@ export class TasksController {
     response.send(Buffer.from(buffer));
   }
 
+  @Get('assignable-bpos')
+  @Permissions('tasks.assign')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  assignableBpos(@CurrentUser() u: JwtUser) {
+    return this.tasksService.assignableBpos(u);
+  }
+
   @Get(':id')
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
   findOne(@Param('id') id: string, @CurrentUser() u: JwtUser) {

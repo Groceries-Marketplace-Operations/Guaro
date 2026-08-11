@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
-import { tasksApi, accountsApi } from '../../api';
+import { tasksApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
 import type { Task, StepInstance, StepStatus, FormValue, Account } from '../../types';
@@ -132,8 +132,8 @@ export default function TaskDetail() {
 
   const canManualAssign = roles.some(r => r === 'admin' || r === 'super_admin');
   const { data: bpoAccountsResult } = useQuery<{ data: Account[] }>({
-    queryKey: ['accounts', 'bpo'],
-    queryFn: () => accountsApi.list({ role: 'bpo', limit: 200 }).then(r => r.data as { data: Account[] }),
+    queryKey: ['tasks', 'assignable-bpos'],
+    queryFn: () => tasksApi.assignableBpos().then(r => r.data),
     enabled: canManualAssign && !!task,
   });
   const bpoAccounts: Account[] = bpoAccountsResult?.data ?? [];

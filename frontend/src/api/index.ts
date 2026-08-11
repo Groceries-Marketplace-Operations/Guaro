@@ -1,4 +1,5 @@
 import client from './client';
+import type { Account } from '../types';
 
 /* ── Auth ───────────────────────────────────────────────────── */
 export const authApi = {
@@ -159,6 +160,7 @@ export const tasksApi = {
     client.patch(`/tasks/${taskId}/steps/${stepId}/assign`, { accountId }),
   bulkReassign: (taskIds: string[], accountId: string) =>
     client.patch('/tasks/bulk-reassign', { taskIds, accountId }),
+  assignableBpos: () => client.get<{ data: Account[] }>('/tasks/assignable-bpos'),
   downloadStepExport: (taskId: string, stepId: string, format: 'xlsx' | 'json' = 'xlsx') =>
     client.get<{ fileKey: string; mimeType: string; contentBase64: string }>(
       `/tasks/${taskId}/steps/${stepId}/download`,

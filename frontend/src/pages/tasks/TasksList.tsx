@@ -5,7 +5,7 @@ import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import Paginator from '../../components/ui/Paginator';
 import StatusBadge from '../../components/ui/StatusBadge';
-import { accountsApi, tasksApi } from '../../api';
+import { tasksApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
 import type { Account, Task, TaskStatus, Paginated } from '../../types';
@@ -84,8 +84,8 @@ export default function TasksList() {
   const tasks = result?.data ?? [];
   const total = result?.total ?? 0;
   const { data: bpoResult } = useQuery<{ data: Account[] }>({
-    queryKey: ['accounts', 'bpo', 'bulk-reassign'],
-    queryFn: () => accountsApi.list({ role: 'bpo', limit: 200 }).then(response => response.data as { data: Account[] }),
+    queryKey: ['tasks', 'assignable-bpos'],
+    queryFn: () => tasksApi.assignableBpos().then(response => response.data),
     enabled: canReassign,
   });
   const bpoAccounts = bpoResult?.data ?? [];
