@@ -64,6 +64,8 @@ export class FileIntegrationsService {
       || current.sourceScope !== data.sourceScope
       || current.delimiter !== data.delimiter
       || current.priceColumn !== data.priceColumn
+      || current.upcColumn !== data.upcColumn
+      || current.excludedUpcs.join('\n') !== (data.excludedUpcs as string[]).join('\n')
       || current.thresholdAmount?.toString() !== data.thresholdAmount?.toString();
     return this.prisma.$transaction(async tx => {
       if (fileSelectionChanged) {
@@ -167,6 +169,9 @@ export class FileIntegrationsService {
         throw new BadRequestException('Country, threshold amount and zero-based price column are required for price filters');
       }
       if (!dto.intervalMinutes) throw new BadRequestException('A recurrence interval is required for price filters');
+      if ((dto.excludedUpcs?.length ?? 0) > 0 && dto.upcColumn === undefined) {
+        throw new BadRequestException('A zero-based UPC column is required when selected UPCs must be removed');
+      }
     }
     if (dto.kind === FileIntegrationKind.store_file_splitter) {
       if (!dto.dailyTime && !dto.intervalMinutes) {
@@ -200,6 +205,7 @@ export class FileIntegrationsService {
       : dailyTime
         ? nextDailyFileIntegrationRun(dailyTime, timezone)
         : dto.intervalMinutes ? new Date(Date.now() + dto.intervalMinutes * 60_000) : null;
+    const excludedUpcs = [...new Set((dto.excludedUpcs ?? []).map(value => value.trim()).filter(Boolean))];
     return {
       name: dto.name.trim(), kind: dto.kind, country: dto.country ?? null,
       sftpApplicationId: dto.sftpApplicationId, active,
@@ -220,6 +226,8 @@ export class FileIntegrationsService {
         ? '|'
         : dto.delimiter?.trim() || null,
       priceColumn: dto.priceColumn ?? null,
+      upcColumn: dto.kind === FileIntegrationKind.price_filter ? dto.upcColumn ?? null : null,
+      excludedUpcs: dto.kind === FileIntegrationKind.price_filter ? excludedUpcs : [],
       maxFilesPerRun: dto.kind === FileIntegrationKind.complex_promotion_reader
         ? Math.min(dto.maxFilesPerRun ?? PROMOTION_SHOPS_PER_RUN_LIMIT, PROMOTION_SHOPS_PER_RUN_LIMIT)
         : dto.kind === FileIntegrationKind.store_file_splitter ? 1

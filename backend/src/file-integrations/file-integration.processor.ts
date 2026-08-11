@@ -8,7 +8,7 @@ import { mkdir, writeFile } from 'fs/promises';
 import { posix, resolve } from 'path';
 import SftpClient = require('ssh2-sftp-client');
 import { PrismaService } from '../prisma/prisma.service';
-import { detectDelimiter, looksLikeCityClub, parseAmount, wildcardToRegExp } from './file-integration.util';
+import { detectDelimiter, looksLikeCityClub, normalizeUpc, parseAmount, wildcardToRegExp } from './file-integration.util';
 import { lastTimestampDate, localDateKey, transformDailyStatusCsv } from './daily-status-activation.util';
 import { parsePromotionLines, promotionShopIdFromFileName } from './promotion-file.util';
 import { SftpConnectionService } from './sftp-connection.service';
@@ -36,6 +36,8 @@ interface FileResult {
   rowsKept: number;
   rowsRemoved: number;
   invalidAmounts: number;
+  rowsRemovedByAmount?: number;
+  rowsRemovedByUpc?: number;
   delimiter: string;
   outputFile?: string;
   beforeFile?: string;
@@ -209,19 +211,28 @@ export class FileIntegrationProcessor extends WorkerHost {
             }
 
             if (rule.priceColumn === null || rule.thresholdAmount === null) throw new Error('Price filter is missing its column or threshold');
+            if (rule.excludedUpcs.length > 0 && rule.upcColumn === null) throw new Error('Price filter has selected UPCs but no UPC column');
             const kept: string[] = [];
             const threshold = Number(rule.thresholdAmount);
+            const excludedUpcs = new Set(rule.excludedUpcs.map(normalizeUpc).filter(Boolean));
+            base.rowsRemovedByAmount = 0;
+            base.rowsRemovedByUpc = 0;
             for (const line of lines) {
               if (!line.trim()) { kept.push(line); continue; }
               base.rowsRead++;
               const columns = line.split(delimiter);
               const amount = parseAmount(columns[rule.priceColumn] ?? '');
-              if (amount === null) {
+              const upc = rule.upcColumn === null ? '' : normalizeUpc(columns[rule.upcColumn] ?? '');
+              if (upc && excludedUpcs.has(upc)) {
+                base.rowsRemoved++;
+                base.rowsRemovedByUpc++;
+              } else if (amount === null) {
                 base.invalidAmounts++;
                 base.rowsKept++;
                 kept.push(line);
               } else if (amount > threshold) {
                 base.rowsRemoved++;
+                base.rowsRemovedByAmount++;
               } else {
                 base.rowsKept++;
                 kept.push(line);

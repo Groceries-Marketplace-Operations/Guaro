@@ -21,6 +21,11 @@ export function parseAmount(value: string) {
   return Number.isFinite(number) ? number : null;
 }
 
+export function normalizeUpc(value: string) {
+  const trimmed = value.trim().replace(/^['"]|['"]$/g, '').trim();
+  return /^\d+[.]0+$/.test(trimmed) ? trimmed.replace(/[.]0+$/, '') : trimmed;
+}
+
 export function looksLikeCityClub(fileName: string, lines: string[]) {
   const text = [fileName, ...lines.slice(0, 10)].join(' ').toLowerCase();
   return text.includes('city club') || text.includes('cityclub') || /(^|[^a-z])cck([^a-z]|$)/i.test(text);

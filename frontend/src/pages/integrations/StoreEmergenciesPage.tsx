@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate } from 'react-router-dom';
 import Topbar from '../../components/layout/Topbar';
@@ -7,10 +7,23 @@ import Paginator from '../../components/ui/Paginator';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { brandsApi, storeEmergenciesApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
-import type { Brand, Paginated, StoreEmergency } from '../../types';
+import type { Brand, Paginated, StoreEmergency, StoreEmergencySummary } from '../../types';
+
+const INITIAL_NOW = Date.now();
 
 function localDateTime(date: Date) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function countdown(endsAt: string, now: number) {
+  if (!now) return '—';
+  const remaining = new Date(endsAt).getTime() - now;
+  if (remaining <= 0) return 'Reapertura vencida; restauración en proceso';
+  const minutes = Math.ceil(remaining / 60_000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const mins = minutes % 60;
+  return [days ? `${days}d` : '', hours ? `${hours}h` : '', `${mins}m`].filter(Boolean).join(' ');
 }
 
 export default function StoreEmergenciesPage() {
@@ -18,6 +31,7 @@ export default function StoreEmergenciesPage() {
   const qc = useQueryClient();
   const isAdmin = account?.roles.some(role => role === 'admin' || role === 'super_admin');
   const [page, setPage] = useState(1);
+  const [now, setNow] = useState(INITIAL_NOW);
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<StoreEmergency | null>(null);
   const [editingReopening, setEditingReopening] = useState<StoreEmergency | null>(null);
@@ -27,8 +41,13 @@ export default function StoreEmergenciesPage() {
     brandId: '',
     mode: 'all_brand' as 'all_brand' | 'shop_list',
     shopIds: '',
+    reason: '',
     endsAt: '',
   });
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const { data: brandsResult } = useQuery<{ data: Brand[] }>({
     queryKey: ['brands-emergencies'],
     queryFn: () => brandsApi.list({ page: 1, limit: 2000 }).then(response => response.data),
@@ -43,12 +62,19 @@ export default function StoreEmergenciesPage() {
       return result?.data.some(item => ['pending', 'running', 'restoring'].includes(item.status)) ? 4000 : 30_000;
     },
   });
+  const { data: summary } = useQuery<StoreEmergencySummary>({
+    queryKey: ['store-emergencies', 'summary'],
+    queryFn: () => storeEmergenciesApi.summary().then(response => response.data),
+    enabled: !!isAdmin,
+    refetchInterval: 15_000,
+  });
   const shopIds = useMemo(() => [...new Set(form.shopIds.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean))], [form.shopIds]);
   const create = useMutation({
     mutationFn: () => storeEmergenciesApi.create({
       brandId: form.brandId,
       mode: form.mode,
       shopIds: form.mode === 'shop_list' ? shopIds : undefined,
+      reason: form.reason.trim(),
       endsAt: new Date(form.endsAt).toISOString(),
     }),
     onSuccess: () => {
@@ -90,6 +116,20 @@ export default function StoreEmergenciesPage() {
       setError(Array.isArray(message) ? message.join(', ') : message ?? 'No se pudo modificar la hora de reapertura');
     },
   });
+  const retryFailures = useMutation({
+    mutationFn: (id: string) => storeEmergenciesApi.retryFailures(id),
+    onSuccess: response => {
+      const updated = response.data as StoreEmergency;
+      qc.invalidateQueries({ queryKey: ['store-emergencies'] });
+      if (detail?.id === updated.id) setDetail(updated);
+      setError('');
+    },
+    onError: (err: unknown) => {
+      const response = err as { response?: { data?: { message?: string | string[] } } };
+      const message = response.response?.data?.message;
+      setError(Array.isArray(message) ? message.join(', ') : message ?? 'No se pudieron reintentar las tiendas fallidas');
+    },
+  });
 
   if (!isAdmin) return <Navigate to="/" replace />;
   const brands = (brandsResult?.data ?? []).filter(brand => !!brand.applicationId);
@@ -111,7 +151,7 @@ export default function StoreEmergenciesPage() {
           <p>Apagado masivo o por shop_id, con reapertura automática en la fecha indicada.</p>
         </div>
         <button className="btn btn-primary" onClick={() => {
-          setForm(value => ({ ...value, endsAt: localDateTime(new Date(Date.now() + 60 * 60_000)) }));
+          setForm(value => ({ ...value, reason: '', endsAt: localDateTime(new Date(Date.now() + 60 * 60_000)) }));
           setOpen(true);
           setError('');
         }}>+ Nueva emergencia</button>
@@ -119,10 +159,22 @@ export default function StoreEmergenciesPage() {
       <div className="alert" style={{ marginBottom: 18, borderColor: '#ffc7b2', background: '#fff4ee', color: '#8b2d00' }}>
         Esta acción cambia tiendas reales a Offline usando únicamente las tiendas almacenadas localmente. Al vencer el periodo, el sistema intentará reabrir solo las tiendas que logró apagar.
       </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 18 }}>
+        {[
+          { label: 'Emergencias activas', value: summary?.activeEmergencies ?? '—', tone: '#f97316', hint: 'Pendientes, apagadas o restaurando' },
+          { label: 'Tiendas aún Offline', value: summary?.storesOffline ?? '—', tone: '#dc2626', hint: 'Apagadas y todavía no restauradas' },
+          { label: 'Tiendas con error', value: summary?.storesWithErrors ?? '—', tone: '#b45309', hint: 'Requieren revisión o reintento' },
+          { label: 'Próxima reapertura', value: summary?.nextReopening ? countdown(summary.nextReopening.endsAt, now) : '—', tone: '#2563eb', hint: summary?.nextReopening?.brand.brandName ?? 'Sin reaperturas pendientes' },
+        ].map(card => <div key={card.label} className="card" style={{ padding: 16, borderTop: `3px solid ${card.tone}` }}>
+          <div className="text-muted text-sm">{card.label}</div>
+          <div style={{ fontSize: '1.45rem', fontWeight: 800, marginTop: 4 }}>{card.value}</div>
+          <div className="text-muted" style={{ fontSize: '.7rem', marginTop: 4 }}>{card.hint}</div>
+        </div>)}
+      </div>
       {error && !open && !editingReopening && <div className="error-banner" style={{ marginBottom: 14 }}>{error}</div>}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Marca</th><th>Alcance</th><th>Tiendas</th><th>Estado</th><th>Inicio de apagado</th><th>Reapertura</th><th>Creada por</th><th></th></tr></thead>
+          <thead><tr><th>Marca / motivo</th><th>Alcance</th><th>Progreso</th><th>Estado</th><th>Inicio de apagado</th><th>Reapertura</th><th>Creada por</th><th></th></tr></thead>
           <tbody>
             {isLoading && <tr><td colSpan={8} className="text-muted">Cargando…</td></tr>}
             {!isLoading && !data?.data.length && <tr><td colSpan={8}><div className="empty-state"><p>No hay emergencias registradas.</p></div></td></tr>}
@@ -130,12 +182,17 @@ export default function StoreEmergenciesPage() {
               const offline = item.targets.filter(target => target.offlineStatus === 'done').length;
               const restored = item.targets.filter(target => target.restoreStatus === 'done').length;
               return <tr key={item.id}>
-                <td><strong>{item.brand.brandName}</strong><div className="text-muted text-sm">{item.brand.country}</div></td>
+                <td><strong>{item.brand.brandName}</strong><div className="text-muted text-sm">{item.brand.country} · {item.reason}</div></td>
                 <td>{item.mode === 'all_brand' ? 'Toda la marca' : 'Lista de shop_ids'}</td>
-                <td>{offline}/{item.targets.length} apagadas{restored > 0 ? ` · ${restored} reabiertas` : ''}</td>
+                <td style={{ minWidth: 170 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '.72rem', marginBottom: 5 }}><span>{offline}/{item.targets.length} apagadas</span><span>{restored} reabiertas</span></div>
+                  <div style={{ height: 7, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden' }}>
+                    <div style={{ width: `${item.targets.length ? Math.round((offline / item.targets.length) * 100) : 0}%`, height: '100%', background: restored > 0 ? '#22c55e' : '#f97316', transition: 'width .25s ease' }} />
+                  </div>
+                </td>
                 <td><StatusBadge status={item.status} />{item.errorMessage && <div style={{ color: 'var(--red)', fontSize: '.68rem', marginTop: 4 }}>{item.errorMessage}</div>}</td>
                 <td>{item.startedAt ? new Date(item.startedAt).toLocaleString() : <span className="text-muted">Pendiente</span>}</td>
-                <td>{new Date(item.endsAt).toLocaleString()}</td>
+                <td><div>{new Date(item.endsAt).toLocaleString()}</div>{['offline', 'partial_success'].includes(item.status) && <div className="text-muted" style={{ fontSize: '.68rem', marginTop: 3 }}>{countdown(item.endsAt, now)}</div>}</td>
                 <td>{item.createdBy.name}</td>
                 <td><div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                   {['pending', 'running', 'offline', 'partial_success'].includes(item.status) && <button
@@ -154,6 +211,13 @@ export default function StoreEmergenciesPage() {
                       if (window.confirm(`¿Encender ahora las tiendas apagadas de ${item.brand.brandName}?`)) restore.mutate(item.id);
                     }}
                   >Encender ahora</button>}
+                  {['failed', 'partial_success', 'restore_failed', 'partial_restored'].includes(item.status) && <button
+                    className="btn btn-ghost btn-sm"
+                    disabled={retryFailures.isPending}
+                    onClick={() => {
+                      if (window.confirm(`¿Reintentar únicamente las tiendas fallidas de ${item.brand.brandName}?`)) retryFailures.mutate(item.id);
+                    }}
+                  >Reintentar fallidas</button>}
                   <button className="btn btn-ghost btn-sm" onClick={() => setDetail(item)}>Ver tiendas</button>
                 </div></td>
               </tr>;
@@ -167,7 +231,7 @@ export default function StoreEmergenciesPage() {
     {open && <Modal title="Nueva emergencia de tiendas" onClose={() => setOpen(false)}
       footer={<>
         <button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancelar</button>
-        <button className="btn btn-primary" disabled={create.isPending || !form.brandId || !form.endsAt || (form.mode === 'shop_list' && shopIds.length === 0)}
+        <button className="btn btn-primary" disabled={create.isPending || !form.brandId || form.reason.trim().length < 5 || !form.endsAt || (form.mode === 'shop_list' && shopIds.length === 0)}
           onClick={startEmergency}>{create.isPending ? 'Iniciando…' : 'Apagar tiendas'}</button>
       </>}>
       {error && <div className="error-banner">{error}</div>}
@@ -187,6 +251,10 @@ export default function StoreEmergenciesPage() {
         <textarea className="form-input" rows={6} placeholder="Un shop_id por línea o separados por coma" value={form.shopIds} onChange={e => setForm(value => ({ ...value, shopIds: e.target.value }))} />
         <p className="form-hint">Todos deben existir localmente y pertenecer a la marca seleccionada.</p>
       </div>}
+      <div className="form-group"><label className="form-label">Motivo de la emergencia *</label>
+        <textarea className="form-input" rows={3} maxLength={500} placeholder="Ej. Incidente operativo, mantenimiento o contingencia de la marca" value={form.reason} onChange={event => setForm(value => ({ ...value, reason: event.target.value }))} />
+        <p className="form-hint">Quedará visible en el historial para auditoría ({form.reason.trim().length}/500).</p>
+      </div>
       <div className="form-group"><label className="form-label">Reabrir automáticamente el *</label>
         <input className="form-input" type="datetime-local" value={form.endsAt} onChange={e => setForm(value => ({ ...value, endsAt: e.target.value }))} />
       </div>
@@ -226,6 +294,7 @@ export default function StoreEmergenciesPage() {
     </Modal>}
 
     {detail && <Modal title={`Tiendas · ${detail.brand.brandName}`} onClose={() => setDetail(null)}>
+      <div className="alert alert-info" style={{ marginBottom: 12 }}><strong>Motivo:</strong> {detail.reason}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginBottom: 14 }}>
         <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--surface-2)' }}>
           <div className="text-muted text-sm">Inicio de apagado</div>

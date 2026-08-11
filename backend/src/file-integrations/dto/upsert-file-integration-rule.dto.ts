@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, Min, MinLength } from 'class-validator';
 import { Country, FileIntegrationKind } from '@prisma/client';
 
 export class UpsertFileIntegrationRuleDto {
@@ -68,6 +68,19 @@ export class UpsertFileIntegrationRuleDto {
   @Min(0)
   @Max(200)
   priceColumn?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(200)
+  upcColumn?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5000)
+  @IsString({ each: true })
+  excludedUpcs?: string[];
 
   @IsOptional()
   @Type(() => Number)

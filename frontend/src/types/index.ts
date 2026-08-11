@@ -455,6 +455,8 @@ export interface FileIntegrationFileResult {
   rowsRead: number;
   rowsKept: number;
   rowsRemoved: number;
+  rowsRemovedByAmount?: number;
+  rowsRemovedByUpc?: number;
   invalidAmounts: number;
   delimiter: string;
   outputFile?: string;
@@ -517,6 +519,8 @@ export interface FileIntegrationRule {
   thresholdAmount?: string;
   delimiter?: string;
   priceColumn?: number;
+  upcColumn?: number;
+  excludedUpcs: string[];
   maxFilesPerRun: number;
   fileState: { total: number; pending: number; running: number; done: number; failed: number };
   sftpApplicationId: string;
@@ -714,6 +718,7 @@ export interface StoreEmergency {
   id: string;
   mode: 'all_brand' | 'shop_list';
   requestedIds: string[];
+  reason: string;
   endsAt: string;
   status: string;
   startedAt?: string;
@@ -726,6 +731,17 @@ export interface StoreEmergency {
   brand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'>;
   createdBy: Pick<Account, 'id' | 'name' | 'email'>;
   targets: StoreEmergencyTarget[];
+}
+
+export interface StoreEmergencySummary {
+  activeEmergencies: number;
+  storesOffline: number;
+  storesWithErrors: number;
+  nextReopening?: {
+    id: string;
+    endsAt: string;
+    brand: { brandName: string };
+  };
 }
 
 export interface ForcedOpenTarget {

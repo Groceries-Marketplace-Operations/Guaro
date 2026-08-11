@@ -24,6 +24,8 @@ interface RuleForm {
   thresholdAmount: number;
   delimiter: string;
   priceColumn: number;
+  upcColumn: number;
+  excludedUpcs: string;
   maxFilesPerRun: number;
 }
 
@@ -34,9 +36,13 @@ const runningStatuses = new Set(['pending', 'running']);
 function initialForm(kind: FileIntegrationKind): RuleForm {
   return kind === 'price_filter'
     ? { name: '', kind, country: 'MX', sftpApplicationId: '', active: false, intervalMinutes: 1440,
-      filePattern: '*', sourceScope: 'city_club', thresholdAmount: 3000, delimiter: '', priceColumn: 4, maxFilesPerRun: 700 }
+      filePattern: '*', sourceScope: 'city_club', thresholdAmount: 3000, delimiter: '', priceColumn: 4, upcColumn: 1, excludedUpcs: '', maxFilesPerRun: 700 }
     : { name: '', kind, country: '', sftpApplicationId: '', active: false, intervalMinutes: 1440,
-      filePattern: '*', sourceScope: 'all', thresholdAmount: 0, delimiter: '', priceColumn: 0, maxFilesPerRun: 20 };
+      filePattern: '*', sourceScope: 'all', thresholdAmount: 0, delimiter: '', priceColumn: 0, upcColumn: 0, excludedUpcs: '', maxFilesPerRun: 20 };
+}
+
+function listValues(value: string) {
+  return [...new Set(value.split(/[\s,;]+/).map(item => item.trim()).filter(Boolean))];
 }
 
 function date(value?: string) {
@@ -83,6 +89,8 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
         country: form.country || undefined,
         thresholdAmount: isFilter ? form.thresholdAmount : undefined,
         priceColumn: isFilter ? form.priceColumn : undefined,
+        upcColumn: isFilter ? form.upcColumn : undefined,
+        excludedUpcs: isFilter ? listValues(form.excludedUpcs) : undefined,
         intervalMinutes: form.intervalMinutes || undefined,
         delimiter: form.delimiter || undefined,
       };
@@ -105,7 +113,8 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
       name: rule.name, kind, country: rule.country ?? '', sftpApplicationId: rule.sftpApplicationId,
       active: rule.active, intervalMinutes: rule.intervalMinutes ?? 1440, filePattern: rule.filePattern,
       sourceScope: rule.sourceScope, thresholdAmount: Number(rule.thresholdAmount ?? 0), delimiter: rule.delimiter ?? '',
-      priceColumn: rule.priceColumn ?? 0, maxFilesPerRun: rule.maxFilesPerRun,
+      priceColumn: rule.priceColumn ?? 0, upcColumn: rule.upcColumn ?? (rule.country === 'CO' ? 0 : 1),
+      excludedUpcs: (rule.excludedUpcs ?? []).join('\n'), maxFilesPerRun: rule.maxFilesPerRun,
     });
     setError(''); setOpen(true);
   };
@@ -181,6 +190,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
                   <span className="badge">{rule.sftpApplication.name}</span>
                   <span className="badge">{rule.filePattern}</span>
                   {isFilter && <span className="badge">&gt; {rule.thresholdAmount}</span>}
+                  {isFilter && rule.excludedUpcs.length > 0 && <span className="badge" style={{ color: '#b42318' }}>{rule.excludedUpcs.length} UPCs excluidos</span>}
                 </div>
                 <div className="text-muted" style={{ marginTop: 8, fontSize: 12 }}>
                   Cada {rule.intervalMinutes ?? '—'} min · Máx. {rule.maxFilesPerRun} {isFilter ? 'archivos' : 'tiendas'} · Última: {date(rule.lastRunAt)} · Próxima: {date(rule.nextRunAt)}
@@ -218,7 +228,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
               {expanded === latest.id && <div className="table-wrap" style={{ marginTop: 12 }}><table>
                 <thead><tr><th>Archivo</th><th>Filas</th><th>Conservadas</th><th>Eliminadas</th><th>Resultado</th></tr></thead>
                 <tbody>{(latest.result?.files ?? []).map(file => <tr key={file.fileName}>
-                  <td className="td-mono">{file.fileName}</td><td>{file.rowsRead}</td><td>{file.rowsKept}</td><td>{file.rowsRemoved}</td>
+                  <td className="td-mono">{file.fileName}</td><td>{file.rowsRead}</td><td>{file.rowsKept}</td><td>{file.rowsRemoved}<div className="text-muted" style={{ fontSize: '.65rem' }}>{file.rowsRemovedByAmount ?? 0} por monto · {file.rowsRemovedByUpc ?? 0} por UPC</div></td>
                   <td>{file.error ? <span style={{ color: 'var(--red)' }}>{file.error}</span> : file.skipped ?? (isFilter
                     ? <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {file.beforeFile && file.afterFile && <>
@@ -238,7 +248,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
 
     {open && <Modal title={editing ? 'Editar configuración' : 'Nueva configuración'} onClose={() => setOpen(false)} footer={<>
       <button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancelar</button>
-      <button className="btn btn-primary" disabled={save.isPending || !form.name || !form.sftpApplicationId} onClick={() => save.mutate()}>{save.isPending ? 'Guardando…' : 'Guardar'}</button>
+      <button className="btn btn-primary" disabled={save.isPending || !form.name || !form.sftpApplicationId || listValues(form.excludedUpcs).length > 5000} onClick={() => save.mutate()}>{save.isPending ? 'Guardando…' : 'Guardar'}</button>
     </>}>
       {error && <div className="error-banner">{error}</div>}
       <div className="form-group"><label className="form-label">Nombre *</label><input className="form-input" value={form.name} onChange={event => setForm(value => ({ ...value, name: event.target.value }))} /></div>
@@ -249,13 +259,17 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
       {isFilter && <>
         <div className="form-row">
           <div className="form-group"><label className="form-label">País *</label><select className="form-input" value={form.country} onChange={event => {
-            const country = event.target.value; setForm(value => ({ ...value, country, thresholdAmount: country === 'CO' ? 374000 : 3000, sourceScope: country === 'MX' ? 'city_club' : 'all' }));
+            const country = event.target.value; setForm(value => ({ ...value, country, thresholdAmount: country === 'CO' ? 374000 : 3000, sourceScope: country === 'MX' ? 'city_club' : 'all', upcColumn: country === 'CO' ? 0 : 1 }));
           }}><option value="MX">México</option><option value="CO">Colombia</option></select></div>
           <div className="form-group"><label className="form-label">Eliminar montos mayores a *</label><input className="form-input" type="number" min={0.01} value={form.thresholdAmount} onChange={event => setForm(value => ({ ...value, thresholdAmount: Number(event.target.value) }))} /></div>
         </div>
         <div className="form-row">
           <div className="form-group"><label className="form-label">Alcance</label><select className="form-input" value={form.sourceScope} onChange={event => setForm(value => ({ ...value, sourceScope: event.target.value }))}><option value="city_club">Solo City Club</option><option value="all">Todos los archivos</option></select></div>
           <div className="form-group"><label className="form-label">Columna del monto (inicia en 0)</label><input className="form-input" type="number" min={0} value={form.priceColumn} onChange={event => setForm(value => ({ ...value, priceColumn: Number(event.target.value) }))} /><p className="form-hint">En los archivos PVP actuales es la columna 4: la quinta posición separada por “|”.</p></div>
+        </div>
+        <div className="form-row">
+          <div className="form-group"><label className="form-label">UPCs adicionales a remover ({listValues(form.excludedUpcs).length}/5000)</label><textarea className="form-input" rows={5} placeholder={'Un UPC por línea, coma o espacio'} value={form.excludedUpcs} onChange={event => setForm(value => ({ ...value, excludedUpcs: event.target.value }))} /><p className="form-hint">Se remueven aunque su monto sea menor o igual al límite. La comparación conserva ceros a la izquierda y normaliza valores terminados en .0.</p></div>
+          <div className="form-group"><label className="form-label">Columna del UPC (inicia en 0)</label><input className="form-input" type="number" min={0} max={200} value={form.upcColumn} onChange={event => setForm(value => ({ ...value, upcColumn: Number(event.target.value) }))} /><p className="form-hint">Cencosud: 0. City Club: 1. El sistema procesa monto y UPC en una sola pasada.</p></div>
         </div>
       </>}
       <div className="form-row">

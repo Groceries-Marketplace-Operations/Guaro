@@ -145,13 +145,13 @@ export class StoreEmergencyProcessor extends WorkerHost {
     await this.prisma.storeEmergency.update({
       where: { id: emergencyId },
       data: {
-        status: restored === emergency.targets.length
+        status: restored === offlineSucceeded
           ? 'restored'
           : restored > 0 ? 'partial_restored' : 'restore_failed',
         restoredAt: restored > 0 ? now : null,
         finishedAt: now,
         errorMessage: restoreFailed > 0 || offlineSucceeded < emergency.targets.length
-          ? `${restored}/${emergency.targets.length} store(s) restored; ${restoreFailed} restore failure(s)`
+          ? `${restored}/${offlineSucceeded} offline store(s) restored; ${restoreFailed} restore failure(s); ${emergency.targets.length - offlineSucceeded} store(s) were never turned off`
           : null,
       },
     });

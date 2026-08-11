@@ -1050,6 +1050,8 @@ model FileIntegrationRule {
   thresholdAmount        Decimal?            @map("threshold_amount") @db.Decimal(14, 2)
   delimiter              String?
   priceColumn            Int?                @map("price_column")
+  upcColumn              Int?                @map("upc_column")
+  excludedUpcs           String[]            @default([]) @map("excluded_upcs")
   maxFilesPerRun         Int                 @default(250) @map("max_files_per_run")
   fileStateInitializedAt DateTime?           @map("file_state_initialized_at") @db.Timestamptz
   createdById            String?             @map("created_by") @db.Uuid
@@ -1461,6 +1463,7 @@ model StoreEmergency {
   brandId      String    @map("brand_id") @db.Uuid
   mode         String // all_brand | shop_list
   requestedIds String[]  @default([]) @map("requested_shop_ids")
+  reason       String    @db.VarChar(500)
   endsAt       DateTime  @map("ends_at") @db.Timestamptz
   status       String    @default("pending")
   createdById  String    @map("created_by_id") @db.Uuid

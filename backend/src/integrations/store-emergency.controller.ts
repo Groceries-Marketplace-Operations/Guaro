@@ -25,6 +25,11 @@ export class StoreEmergencyController {
     return this.service.list(page, limit);
   }
 
+  @Get('summary')
+  summary() {
+    return this.service.summary();
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
@@ -46,5 +51,11 @@ export class StoreEmergencyController {
   @Permissions('integrations.emergencies.execute')
   restoreNow(@Param('id') id: string) {
     return this.service.restoreNow(id);
+  }
+
+  @Post(':id/retry-failures')
+  @Permissions('integrations.emergencies.execute')
+  retryFailures(@Param('id') id: string) {
+    return this.service.retryFailures(id);
   }
 }

@@ -157,6 +157,8 @@ export const tasksApi = {
     client.patch(`/tasks/${taskId}/steps/${stepId}/start`),
   assignStep: (taskId: string, stepId: string, accountId: string) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/assign`, { accountId }),
+  bulkReassign: (taskIds: string[], accountId: string) =>
+    client.patch('/tasks/bulk-reassign', { taskIds, accountId }),
   downloadStepExport: (taskId: string, stepId: string, format: 'xlsx' | 'json' = 'xlsx') =>
     client.get<{ fileKey: string; mimeType: string; contentBase64: string }>(
       `/tasks/${taskId}/steps/${stepId}/download`,
@@ -318,10 +320,12 @@ export const autoFetchApi = {
 
 export const storeEmergenciesApi = {
   list: (page = 1, limit = 20) => client.get('/integrations/store-emergencies', { params: { page, limit } }),
+  summary: () => client.get('/integrations/store-emergencies/summary'),
   get: (id: string) => client.get(`/integrations/store-emergencies/${id}`),
   create: (data: object) => client.post('/integrations/store-emergencies', data),
   updateReopening: (id: string, endsAt: string) => client.patch(`/integrations/store-emergencies/${id}/reopening`, { endsAt }),
   restoreNow: (id: string) => client.post(`/integrations/store-emergencies/${id}/restore`),
+  retryFailures: (id: string) => client.post(`/integrations/store-emergencies/${id}/retry-failures`),
 };
 
 export const forcedOpenApi = {

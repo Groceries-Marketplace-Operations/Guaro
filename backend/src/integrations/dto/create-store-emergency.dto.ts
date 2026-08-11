@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsDate, IsIn, IsString, IsUUID, MinDate, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsDate, IsIn, IsString, IsUUID, MaxLength, MinDate, MinLength, ValidateIf } from 'class-validator';
 
 export class CreateStoreEmergencyDto {
   @IsUUID()
@@ -7,6 +7,11 @@ export class CreateStoreEmergencyDto {
 
   @IsIn(['all_brand', 'shop_list'])
   mode: 'all_brand' | 'shop_list';
+
+  @IsString()
+  @MinLength(5)
+  @MaxLength(500)
+  reason: string;
 
   @ValidateIf(dto => dto.mode === 'shop_list')
   @IsArray()

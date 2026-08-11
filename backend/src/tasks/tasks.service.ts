@@ -319,6 +319,7 @@ export class TasksService {
   // ── Step actions ──────────────────────────────────────────────────────────
 
   async assignStep(taskId: string, stepId: string, accountId: string, requester: JwtUser) {
+    this.assertAdminAssignment(requester);
     const viewer = {
       roles: requester.roles,
       accountId: requester.id,
@@ -355,6 +356,107 @@ export class TasksService {
 
     await this.engine.assignOrReassignStep(stepId, accountId);
     return this.findOne(taskId, viewer);
+  }
+
+  async bulkReassign(taskIds: string[], accountId: string, requester: JwtUser) {
+    this.assertAdminAssignment(requester);
+    const uniqueTaskIds = [...new Set(taskIds)];
+    const isSuperAdmin = requester.roles.includes(AccountRole.super_admin);
+    const target = await this.prisma.account.findFirst({
+      where: {
+        id: accountId,
+        deletedAt: null,
+        roles: { has: AccountRole.bpo },
+        ...(!isSuperAdmin ? { sectionId: requester.sectionId ?? undefined } : {}),
+      },
+      select: { id: true, name: true, email: true },
+    });
+    if (!target) {
+      throw new BadRequestException('Selected account is not an available BPO in your section');
+    }
+
+    const accessibleWhere = await this.taskWhere(
+      requester.roles,
+      requester.id,
+      requester.sectionId,
+    );
+    const tasks = await this.prisma.task.findMany({
+      where: { AND: [accessibleWhere, { id: { in: uniqueTaskIds } }] },
+      select: {
+        id: true,
+        stepInstances: {
+          where: {
+            status: { in: [StepStatus.pending, StepStatus.in_progress, StepStatus.blocked] },
+            stepDefinition: { executionType: { not: ExecutionType.automatic } },
+          },
+          select: {
+            id: true,
+            assignedToId: true,
+            stepDefinition: { select: { order: true, name: true } },
+          },
+          orderBy: { stepDefinition: { order: 'asc' } },
+        },
+      },
+    });
+    const taskById = new Map(tasks.map(task => [task.id, task]));
+    const results: Array<{
+      taskId: string;
+      status: 'reassigned' | 'unchanged' | 'skipped' | 'failed';
+      stepsReassigned: number;
+      message?: string;
+    }> = [];
+
+    for (const taskId of uniqueTaskIds) {
+      const task = taskById.get(taskId);
+      if (!task) {
+        results.push({ taskId, status: 'skipped', stepsReassigned: 0, message: 'Task is unavailable or outside your section' });
+        continue;
+      }
+      if (!task.stepInstances.length) {
+        results.push({ taskId, status: 'skipped', stepsReassigned: 0, message: 'No active human step can be reassigned' });
+        continue;
+      }
+
+      const currentOrder = task.stepInstances[0].stepDefinition.order;
+      const activeSteps = task.stepInstances.filter(step => step.stepDefinition.order === currentOrder);
+      const stepsToMove = activeSteps.filter(step => step.assignedToId !== accountId);
+      if (!stepsToMove.length) {
+        results.push({ taskId, status: 'unchanged', stepsReassigned: 0, message: 'The selected BPO already owns the active step' });
+        continue;
+      }
+
+      let stepsReassigned = 0;
+      try {
+        for (const step of stepsToMove) {
+          await this.engine.assignOrReassignStep(step.id, accountId);
+          stepsReassigned++;
+        }
+        results.push({ taskId, status: 'reassigned', stepsReassigned });
+      } catch (error) {
+        results.push({
+          taskId,
+          status: 'failed',
+          stepsReassigned,
+          message: error instanceof Error ? error.message : 'Unexpected reassignment error',
+        });
+      }
+    }
+
+    return {
+      requested: uniqueTaskIds.length,
+      reassigned: results.filter(result => result.status === 'reassigned').length,
+      unchanged: results.filter(result => result.status === 'unchanged').length,
+      skipped: results.filter(result => result.status === 'skipped').length,
+      failed: results.filter(result => result.status === 'failed').length,
+      target,
+      results,
+    };
+  }
+
+  private assertAdminAssignment(requester: JwtUser) {
+    if (!requester.roles.some(role => role === AccountRole.admin || role === AccountRole.super_admin)) {
+      throw new ForbiddenException('Only admins can assign or reassign BPOs');
+    }
   }
 
   async completeStep(taskId: string, stepId: string, result: unknown, note: string | undefined, requester: JwtUser) {

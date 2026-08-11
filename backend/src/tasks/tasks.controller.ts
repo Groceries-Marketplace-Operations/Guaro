@@ -16,6 +16,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Permissions } from '../access-control/permissions.decorator';
 import { BlockStepDto } from './dto/block-step.dto';
 import { AssignStepDto } from './dto/assign-step.dto';
+import { BulkReassignTasksDto } from './dto/bulk-reassign-tasks.dto';
 import { CompleteStepDto } from './dto/complete-step.dto';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { FailStepDto } from './dto/fail-step.dto';
@@ -145,6 +146,13 @@ export class TasksController {
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateTaskDto) {
     return this.tasksService.create(dto, u);
+  }
+
+  @Patch('bulk-reassign')
+  @Permissions('tasks.assign')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  bulkReassign(@Body() dto: BulkReassignTasksDto, @CurrentUser() u: JwtUser) {
+    return this.tasksService.bulkReassign(dto.taskIds, dto.accountId, u);
   }
 
   @Get('validation-assistant/:taskTypeId/context')
