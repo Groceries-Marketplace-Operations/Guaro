@@ -37,6 +37,7 @@ export const taskTypesApi = {
   get: (id: string) => client.get(`/task-types/${id}`),
   catalog: (params?: object) => client.get('/task-types/catalog', { params }),
   catalogItem: (id: string) => client.get(`/task-types/catalog/${id}`),
+  managementOptions: () => client.get('/task-types/management-options'),
   create: (data: object) => client.post('/task-types', data),
   update: (id: string, data: object) => client.patch(`/task-types/${id}`, data),
   delete: (id: string) => client.delete(`/task-types/${id}`),

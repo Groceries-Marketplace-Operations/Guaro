@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
-import { taskTypesApi, handlersApi, webhooksApi, accountsApi, sectionsApi } from '../../api';
+import { taskTypesApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
 import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account, Section } from '../../types';
@@ -129,12 +129,6 @@ export default function TaskTypeDetail() {
     finally { setSaving(false); }
   };
 
-  const { data: sections = [] } = useQuery<Section[]>({
-    queryKey: ['sections', 'task-type-edit'],
-    queryFn: () => sectionsApi.list().then(response => response.data),
-    enabled: openEditTT,
-  });
-
   // Drag-and-drop for steps
   const [stepDragIndex, setStepDragIndex] = useState<number | null>(null);
   const [stepDragOver, setStepDragOver] = useState<number | null>(null);
@@ -161,14 +155,19 @@ export default function TaskTypeDetail() {
   const [candidateId, setCandidateId] = useState('');
 
   const { data: tt } = useQuery<TaskType>({ queryKey: ['task-type', id], queryFn: () => taskTypesApi.get(id!).then(r => r.data) });
-  const { data: handlers = [] } = useQuery<Handler[]>({ queryKey: ['handlers'], queryFn: () => handlersApi.list().then(r => r.data) });
-  const { data: webhooks = [] } = useQuery<Webhook[]>({ queryKey: ['webhooks'], queryFn: () => webhooksApi.list().then(r => r.data) });
-  const { data: bpoAccountsResult } = useQuery<{ data: Account[] }>({
-    queryKey: ['accounts', 'bpo'],
-    queryFn: () => accountsApi.list({ role: 'bpo', limit: 200 }).then(r => r.data as { data: Account[] }),
-    enabled: !!openBpos,
+  const { data: managementOptions } = useQuery<{
+    sections: Section[];
+    handlers: Handler[];
+    webhooks: Webhook[];
+    bpos: Account[];
+  }>({
+    queryKey: ['task-types', 'management-options'],
+    queryFn: () => taskTypesApi.managementOptions().then(r => r.data),
   });
-  const bpoAccounts: Account[] = bpoAccountsResult?.data ?? [];
+  const sections = managementOptions?.sections ?? [];
+  const handlers = managementOptions?.handlers ?? [];
+  const webhooks = managementOptions?.webhooks ?? [];
+  const bpoAccounts = managementOptions?.bpos ?? [];
 
   const steps = [...(tt?.stepDefinitions ?? [])].sort((a, b) => a.order - b.order);
   const fields = [...(tt?.formFields ?? [])].sort((a, b) => a.order - b.order);
@@ -1033,7 +1032,7 @@ export default function TaskTypeDetail() {
             </div>
             <div className="form-group">
               <label className="form-label">Sección</label>
-              <select className="form-select" value={ttForm.sectionId} onChange={e => setTtForm(f => ({ ...f, sectionId: e.target.value }))} required>
+              <select className="form-select" value={ttForm.sectionId} onChange={e => setTtForm(f => ({ ...f, sectionId: e.target.value }))} required disabled={sections.length === 1}>
                 <option value="">Seleccionar sección…</option>
                 {sections.map(section => <option key={section.id} value={section.id}>{section.name}</option>)}
               </select>

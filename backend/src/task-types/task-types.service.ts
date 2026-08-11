@@ -48,8 +48,11 @@ export class TaskTypesService {
   async findAll(
     user: JwtUser,
     { page = 1, limit = 50, q }: { page?: number; limit?: number; q?: string } = {},
+    managementOnly = true,
   ) {
-    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds(user);
+    const allowedSectionIds = managementOnly
+      ? this.managementSectionIds(user)
+      : await this.sectionAccess.accessibleSectionIds(user);
 
     const where = {
       deletedAt: null,
@@ -87,7 +90,7 @@ export class TaskTypesService {
     options: { page?: number; limit?: number; q?: string } = {},
   ) {
     if (!(await this.permissionAccess.can(user, ['tasks.create_all_sections']))) {
-      return this.findAll(user, options);
+      return this.findAll(user, options, false);
     }
     const { page = 1, limit = 50, q } = options;
     const where = {
@@ -130,10 +133,38 @@ export class TaskTypesService {
 
   async findOneForUser(id: string, user: JwtUser) {
     const taskType = await this.findOne(id);
-    if (!(await this.sectionAccess.canAccess(user, taskType.sectionId))) {
-      throw new ForbiddenException('You do not have access to this task type');
-    }
+    this.assertAdminOfSection(user.roles, user.sectionId, taskType.sectionId);
     return taskType;
+  }
+
+  async managementOptions(user: JwtUser) {
+    const sectionIds = this.managementSectionIds(user);
+    const sectionWhere = sectionIds === null ? {} : { id: { in: sectionIds } };
+    const bpoWhere = sectionIds === null ? {} : { sectionId: { in: sectionIds } };
+    const [sections, handlers, webhooks, bpos] = await Promise.all([
+      this.prisma.section.findMany({
+        where: sectionWhere,
+        select: { id: true, name: true, order: true, createdAt: true },
+        orderBy: [{ order: 'asc' }, { name: 'asc' }],
+      }),
+      this.prisma.handler.findMany({ orderBy: { name: 'asc' } }),
+      this.prisma.webhook.findMany({ orderBy: { name: 'asc' } }),
+      this.prisma.account.findMany({
+        where: { deletedAt: null, roles: { has: AccountRole.bpo }, ...bpoWhere },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          roles: true,
+          sectionId: true,
+          adminModules: true,
+          bpoPermissions: true,
+          createdAt: true,
+        },
+        orderBy: [{ name: 'asc' }, { email: 'asc' }],
+      }),
+    ]);
+    return { sections, handlers, webhooks, bpos };
   }
 
   async findCatalogItem(id: string, user: JwtUser) {
@@ -283,13 +314,20 @@ export class TaskTypesService {
     });
   }
 
-  async reorderTaskTypes(order: { id: string; order: number }[]) {
+  async reorderTaskTypes(order: { id: string; order: number }[], user: JwtUser) {
     const uniqueIds = [...new Set(order.map(item => item.id))];
-    if (uniqueIds.length !== order.length || order.some(item => !Number.isInteger(item.order) || item.order < 0)) {
+    if (!order.length || uniqueIds.length !== order.length || order.some(item => !Number.isInteger(item.order) || item.order < 0)) {
       throw new BadRequestException('Task order must contain unique IDs and non-negative integer positions');
     }
-    const count = await this.prisma.taskType.count({ where: { id: { in: uniqueIds }, deletedAt: null } });
-    if (count !== uniqueIds.length) throw new BadRequestException('One or more task types do not exist');
+    const taskTypes = await this.prisma.taskType.findMany({
+      where: { id: { in: uniqueIds }, deletedAt: null },
+      select: { id: true, sectionId: true },
+    });
+    if (taskTypes.length !== uniqueIds.length) throw new BadRequestException('One or more task types do not exist');
+    if (new Set(taskTypes.map(taskType => taskType.sectionId)).size !== 1) {
+      throw new BadRequestException('Task types can only be reordered inside one section');
+    }
+    this.assertAdminOfSection(user.roles, user.sectionId, taskTypes[0].sectionId);
     await this.prisma.$transaction(order.map(item => this.prisma.taskType.update({ where: { id: item.id }, data: { order: item.order } })));
     return { updated: order.length };
   }
@@ -313,6 +351,7 @@ export class TaskTypesService {
 
   async reorderSteps(taskTypeId: string, order: { id: string; order: number }[], roles: AccountRole[], sectionId: string | null) {
     await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
+    await this.assertOrderedChildren('step', taskTypeId, order);
     // Use large temporary offsets to avoid unique constraint conflicts mid-transaction
     await this.prisma.$transaction([
       ...order.map(({ id, order: o }) =>
@@ -336,8 +375,19 @@ export class TaskTypesService {
   // ── Step candidates ───────────────────────────────────────────────────────
 
   async addCandidate(taskTypeId: string, stepId: string, accountId: string, roles: AccountRole[], sectionId: string | null) {
-    await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
+    const taskType = await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
     await this.assertStepBelongs(stepId, taskTypeId);
+    const isSuperAdmin = roles.includes(AccountRole.super_admin);
+    const account = await this.prisma.account.findFirst({
+      where: {
+        id: accountId,
+        deletedAt: null,
+        roles: { has: AccountRole.bpo },
+        ...(isSuperAdmin ? {} : { sectionId: taskType.sectionId }),
+      },
+      select: { id: true },
+    });
+    if (!account) throw new BadRequestException('Selected BPO is not available in this task type section');
     return this.prisma.stepDefinitionAccount.create({
       data: { stepDefinitionId: stepId, accountId },
     });
@@ -368,6 +418,13 @@ export class TaskTypesService {
   async removeStepWebhook(taskTypeId: string, stepId: string, stepWebhookId: string, roles: AccountRole[], sectionId: string | null) {
     await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
     await this.assertStepBelongs(stepId, taskTypeId);
+    const stepWebhook = await this.prisma.stepWebhook.findUnique({
+      where: { id: stepWebhookId },
+      select: { stepDefinitionId: true },
+    });
+    if (!stepWebhook || stepWebhook.stepDefinitionId !== stepId) {
+      throw new NotFoundException('Step webhook not found');
+    }
     return this.prisma.stepWebhook.delete({ where: { id: stepWebhookId } });
   }
 
@@ -375,6 +432,7 @@ export class TaskTypesService {
 
   async reorderFields(taskTypeId: string, order: { id: string; order: number }[], roles: AccountRole[], sectionId: string | null) {
     await this.assertTaskTypeAccess(taskTypeId, roles, sectionId);
+    await this.assertOrderedChildren('field', taskTypeId, order);
     await this.prisma.$transaction([
       ...order.map(({ id, order: o }) =>
         this.prisma.formField.update({ where: { id }, data: { order: o + 10000 } })
@@ -451,6 +509,12 @@ export class TaskTypesService {
     throw new ForbiddenException('No access to this section');
   }
 
+  private managementSectionIds(user: JwtUser): string[] | null {
+    if (user.roles.includes(AccountRole.super_admin)) return null;
+    if (user.roles.includes(AccountRole.admin) && user.sectionId) return [user.sectionId];
+    throw new ForbiddenException('Task Types can only be managed by an admin of the section');
+  }
+
   private async assertTaskTypeAccess(id: string, roles: AccountRole[], sectionId: string | null) {
     const tt = await this.prisma.taskType.findUnique({ where: { id } });
     if (!tt || tt.deletedAt) throw new NotFoundException('TaskType not found');
@@ -468,6 +532,23 @@ export class TaskTypesService {
     const field = await this.prisma.formField.findUnique({ where: { id: fieldId } });
     if (!field || field.taskTypeId !== taskTypeId) throw new NotFoundException('Field not found');
     return field;
+  }
+
+  private async assertOrderedChildren(
+    type: 'step' | 'field',
+    taskTypeId: string,
+    order: { id: string; order: number }[],
+  ) {
+    const uniqueIds = [...new Set(order.map(item => item.id))];
+    if (!order.length || uniqueIds.length !== order.length || order.some(item => !Number.isInteger(item.order) || item.order < 0)) {
+      throw new BadRequestException('Order must contain unique IDs and non-negative integer positions');
+    }
+    const count = type === 'step'
+      ? await this.prisma.stepDefinition.count({ where: { id: { in: uniqueIds }, taskTypeId } })
+      : await this.prisma.formField.count({ where: { id: { in: uniqueIds }, taskTypeId } });
+    if (count !== uniqueIds.length) {
+      throw new BadRequestException(`One or more ${type}s do not belong to this task type`);
+    }
   }
 
   private validateHandler(type: ExecutionType, handlerId?: string) {

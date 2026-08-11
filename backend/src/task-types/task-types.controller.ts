@@ -59,6 +59,11 @@ export class TaskTypesController {
     return this.taskTypesService.findCatalogItem(id, u);
   }
 
+  @Get('management-options')
+  managementOptions(@CurrentUser() u: JwtUser) {
+    return this.taskTypesService.managementOptions(u);
+  }
+
   // ── TaskType ──────────────────────────────────────────────────────────────
 
   @Get()
@@ -85,9 +90,9 @@ export class TaskTypesController {
   }
 
   @Patch('reorder')
-  @Roles(AccountRole.super_admin)
-  reorder(@Body('order') order: { id: string; order: number }[]) {
-    return this.taskTypesService.reorderTaskTypes(order);
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  reorder(@CurrentUser() u: JwtUser, @Body('order') order: { id: string; order: number }[]) {
+    return this.taskTypesService.reorderTaskTypes(order, u);
   }
 
   @Patch(':id')

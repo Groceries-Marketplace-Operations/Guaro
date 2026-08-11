@@ -440,6 +440,9 @@ export class AccessControlService {
     if (invalid.length) throw new BadRequestException(`Unknown permissions: ${invalid.join(', ')}`);
     const incompatible = unique.filter(permission => !PERMISSION_ALLOWED_ROLES.get(permission)?.includes(role));
     if (incompatible.length) throw new BadRequestException(`Permissions unavailable for ${role}: ${incompatible.join(', ')}`);
+    if (role === AccountRole.admin && !unique.includes('task_types.manage')) {
+      unique.push('task_types.manage');
+    }
     return unique;
   }
 
@@ -455,6 +458,9 @@ export class AccessControlService {
       if (!PERMISSION_KEY_SET.has(item.permission)) throw new BadRequestException(`Unknown permission: ${item.permission}`);
       if (!roles.some(role => PERMISSION_ALLOWED_ROLES.get(item.permission)?.includes(role))) {
         throw new BadRequestException(`Permission unavailable for this access profile: ${item.permission}`);
+      }
+      if (roles.includes(AccountRole.admin) && item.permission === 'task_types.manage' && !item.allowed) {
+        throw new BadRequestException('Task Types access is required for admin accounts');
       }
     }
     return overrides.map(item => ({ permission: item.permission, allowed: item.allowed }));

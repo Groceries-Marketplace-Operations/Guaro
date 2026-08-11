@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import Paginator from '../../components/ui/Paginator';
-import { taskTypesApi, sectionsApi } from '../../api';
+import { taskTypesApi } from '../../api';
 import { useT } from '../../i18n';
 import type { TaskType, Section, Paginated } from '../../types';
 
@@ -42,10 +42,17 @@ export default function TaskTypesList() {
 
   const types = result?.data ?? [];
   const total = result?.total ?? 0;
-  const { data: sections = [] } = useQuery<Section[]>({
-    queryKey: ['sections'],
-    queryFn: () => sectionsApi.list().then(r => r.data),
+  const { data: managementOptions } = useQuery<{ sections: Section[] }>({
+    queryKey: ['task-types', 'management-options'],
+    queryFn: () => taskTypesApi.managementOptions().then(r => r.data),
   });
+  const sections = managementOptions?.sections ?? [];
+
+  useEffect(() => {
+    if (sections.length === 1) {
+      setForm(current => current.sectionId ? current : { ...current, sectionId: sections[0].id });
+    }
+  }, [sections]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
@@ -95,10 +102,17 @@ export default function TaskTypesList() {
             <h1>{t('pages.taskTypesList.title')}</h1>
             <p>{subtitle}</p>
           </div>
-          <button className="btn btn-primary" onClick={() => setOpen(true)}>
+          <button className="btn btn-primary" onClick={() => setOpen(true)} disabled={sections.length === 0}>
             <PlusIcon /> {t('pages.taskTypesList.newTaskType')}
           </button>
         </div>
+
+        {sections.length === 1 && (
+          <div className="alert alert-info" style={{ marginBottom: 16 }}>
+            <strong>{t('pages.taskTypesList.managedArea')}:</strong> {sections[0].name}.{' '}
+            {t('pages.taskTypesList.managedAreaHint')}
+          </div>
+        )}
 
         <div className="toolbar" style={{ marginBottom: 16 }}>
           <input
@@ -206,7 +220,7 @@ export default function TaskTypesList() {
             </div>
             <div className="form-group">
               <label className="form-label">{t('pages.taskTypesList.sectionFormLabel')}</label>
-              <select className="form-select" value={form.sectionId} onChange={e => setForm(f => ({ ...f, sectionId: e.target.value }))} required>
+              <select className="form-select" value={form.sectionId} onChange={e => setForm(f => ({ ...f, sectionId: e.target.value }))} required disabled={sections.length === 1}>
                 <option value="">{t('pages.taskTypesList.sectionPlaceholder')}</option>
                 {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>

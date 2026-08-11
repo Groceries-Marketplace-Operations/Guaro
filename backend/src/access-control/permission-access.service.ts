@@ -23,7 +23,7 @@ export class PermissionAccessService {
       where: { role: { in: roles } },
       select: { permission: true },
     });
-    const permissions = [...new Set(rows.map(row => row.permission))];
+    const permissions = this.withMandatoryPermissions(roles, rows.map(row => row.permission));
     this.roleCache.set(cacheKey, { permissions, expiresAt: Date.now() + 30_000 });
     return [...permissions];
   }
@@ -51,7 +51,7 @@ export class PermissionAccessService {
     const effective = new Set(basePermissions);
     this.applyLayer(effective, sectionOverrides);
     this.applyLayer(effective, accountOverrides);
-    const permissions = [...effective];
+    const permissions = this.withMandatoryPermissions(user.roles, [...effective]);
     this.userCache.set(cacheKey, { permissions, expiresAt: Date.now() + 30_000 });
     return permissions;
   }
@@ -71,5 +71,11 @@ export class PermissionAccessService {
     for (const row of overrides) if (row.allowed) effective.add(row.permission);
     // If different roles conflict at the same layer, deny wins.
     for (const row of overrides) if (!row.allowed) effective.delete(row.permission);
+  }
+
+  private withMandatoryPermissions(roles: AccountRole[], permissions: string[]) {
+    const effective = new Set(permissions);
+    if (roles.includes(AccountRole.admin)) effective.add('task_types.manage');
+    return [...effective];
   }
 }
