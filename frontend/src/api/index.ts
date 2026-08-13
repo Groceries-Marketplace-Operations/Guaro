@@ -217,6 +217,7 @@ export const targetedMenuApi = {
 
 export const offerMenuUploadApi = {
   list: () => client.get('/integrations/offer-menu-upload/rules'),
+  execution: (id: string) => client.get(`/integrations/offer-menu-upload/executions/${id}`),
   create: (data: object) => client.post('/integrations/offer-menu-upload/rules', data),
   update: (id: string, data: object) => client.patch(`/integrations/offer-menu-upload/rules/${id}`, data),
   delete: (id: string) => client.delete(`/integrations/offer-menu-upload/rules/${id}`),

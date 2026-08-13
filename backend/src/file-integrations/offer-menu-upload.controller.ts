@@ -18,6 +18,12 @@ export class OfferMenuUploadController {
     return this.service.list();
   }
 
+  @Get('executions/:id')
+  @Permissions('integrations.custom')
+  execution(@Param('id') id: string) {
+    return this.service.execution(id);
+  }
+
   @Post('rules')
   @Permissions('integrations.custom.configure')
   create(@Body() dto: UpsertOfferMenuUploadRuleDto, @CurrentUser() user: JwtUser) {

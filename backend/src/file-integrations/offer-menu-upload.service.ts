@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertOfferMenuUploadRuleDto } from './dto/upsert-offer-menu-upload-rule.dto';
@@ -22,15 +23,66 @@ export class OfferMenuUploadService {
         application: { select: { id: true, appId: true, appName: true, country: true } },
         createdBy: { select: { id: true, name: true, email: true } },
         updatedBy: { select: { id: true, name: true, email: true } },
-        executions: { orderBy: { createdAt: 'desc' }, take: 5 },
+        executions: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            status: true,
+            trigger: true,
+            startedAt: true,
+            finishedAt: true,
+            durationMs: true,
+            sourceFile: true,
+            sourceModifiedAt: true,
+            sourceSize: true,
+            totalStores: true,
+            processedStores: true,
+            successfulStores: true,
+            failedStores: true,
+            totalItems: true,
+            uploadedItems: true,
+            failedItems: true,
+            currentStoreId: true,
+            errorMessage: true,
+            createdAt: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    const executionIds = rules.flatMap(rule => rule.executions.map(execution => execution.id));
+    const compactResults = executionIds.length
+      ? await this.prisma.$queryRaw<Array<{ id: string; result: Prisma.JsonValue | null }>>(Prisma.sql`
+          SELECT "id", "result" - 'stores' - 'submittedTasks' - 'csv' AS "result"
+          FROM "offer_menu_upload_execution"
+          WHERE "id"::text IN (${Prisma.join(executionIds)})
+        `)
+      : [];
+    const resultByExecution = new Map(compactResults.map(item => [item.id, item.result]));
+
     return rules.map(rule => ({
       ...rule,
       lastSourceSize: rule.lastSourceSize?.toString() ?? null,
-      executions: rule.executions.map(execution => ({ ...execution, sourceSize: execution.sourceSize?.toString() ?? null })),
+      executions: rule.executions.map(execution => ({
+        ...execution,
+        sourceSize: execution.sourceSize?.toString() ?? null,
+        result: resultByExecution.get(execution.id) ?? null,
+      })),
     }));
+  }
+
+  async execution(id: string) {
+    const execution = await this.prisma.offerMenuUploadExecution.findFirst({
+      where: { id, rule: { deletedAt: null } },
+    });
+    if (!execution) throw new NotFoundException('Offer menu upload execution not found');
+    return {
+      ...execution,
+      sourceSize: execution.sourceSize?.toString() ?? null,
+      result: this.storeDetailResult(execution.result),
+    };
   }
 
   async create(dto: UpsertOfferMenuUploadRuleDto, accountId: string) {
@@ -155,5 +207,23 @@ export class OfferMenuUploadService {
     const rule = await this.prisma.offerMenuUploadRule.findFirst({ where: { id, deletedAt: null } });
     if (!rule) throw new NotFoundException('Offer menu upload rule not found');
     return rule;
+  }
+
+  private storeDetailResult(value: Prisma.JsonValue | null) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const { submittedTasks: _submittedTasks, csv: _csv, ...summary } = value;
+    if (!Array.isArray(value.stores)) return summary;
+    return {
+      ...summary,
+      stores: value.stores.map(item => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+        const failedItems = Array.isArray(item.failedItems) ? item.failedItems : [];
+        return {
+          ...item,
+          failedItemCount: typeof item.failedItemCount === 'number' ? item.failedItemCount : failedItems.length,
+          failedItems: [],
+        };
+      }),
+    };
   }
 }

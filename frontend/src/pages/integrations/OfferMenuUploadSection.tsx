@@ -4,7 +4,7 @@ import Modal from '../../components/ui/Modal';
 import StatusBadge from '../../components/ui/StatusBadge';
 import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 import { applicationsApi, offerMenuUploadApi, sftpApplicationsApi } from '../../api';
-import type { Application, OfferMenuUploadRule, Paginated, SftpApplication } from '../../types';
+import type { Application, OfferMenuUploadExecution, OfferMenuUploadRule, Paginated, SftpApplication } from '../../types';
 
 interface FormState {
   name: string;
@@ -97,6 +97,11 @@ export default function OfferMenuUploadSection() {
     refetchInterval: query => (query.state.data as OfferMenuUploadRule[] | undefined)
       ?.some(rule => rule.executions.some(execution => activeStatuses.has(execution.status))) ? 3000 : 15000,
   });
+  const { data: executionDetail, isLoading: isLoadingDetail, isError: isDetailError } = useQuery<OfferMenuUploadExecution>({
+    queryKey: ['offer-menu-upload-execution', expanded],
+    queryFn: () => offerMenuUploadApi.execution(expanded!).then(response => response.data),
+    enabled: !!expanded,
+  });
   const { data: sftpData } = useQuery<Paginated<SftpApplication>>({
     queryKey: ['sftp-applications', 'offer-menu'],
     queryFn: () => sftpApplicationsApi.list({ page: 1, limit: 100 }).then(response => response.data),
@@ -162,7 +167,7 @@ export default function OfferMenuUploadSection() {
       {rules.map(rule => {
         const latest = rule.executions[0];
         const running = latest && activeStatuses.has(latest.status);
-        const stores = latest?.result?.stores ?? [];
+        const stores = expanded === latest?.id ? executionDetail?.result?.stores ?? [] : [];
         const phase = latest?.result?.phase;
         const totalStores = latest?.result?.totalStores ?? latest?.totalStores ?? 0;
         const submissionProcessed = latest?.result?.submissionProcessedStores ?? (phase === 'complete' ? totalStores : 0);
@@ -231,12 +236,15 @@ export default function OfferMenuUploadSection() {
               <span style={{ color: 'var(--green)' }}>{latest.successfulStores} exitosas</span>
               <span style={{ color: latest.failedStores ? 'var(--red)' : undefined }}>{latest.failedStores} fallidas</span>
               {latest.currentStoreId && <span>Procesando {latest.currentStoreId}</span>}
-              {stores.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(expanded === latest.id ? null : latest.id)}>{expanded === latest.id ? 'Ocultar detalle' : 'Ver tiendas'}</button>}
+              {latest.totalStores > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(expanded === latest.id ? null : latest.id)}>{expanded === latest.id ? 'Ocultar detalle' : 'Ver tiendas'}</button>}
             </div>
             <ExecutionTiming startedAt={latest.startedAt} finishedAt={latest.finishedAt} durationMs={latest.durationMs} />
             <p className="text-muted" style={{ marginTop: 7, fontSize: 12 }}>Archivo: {latest.sourceFile ?? '—'} · Modificado: {date(latest.sourceModifiedAt)}{latest.result?.skipped ? ` · Omitido: ${latest.result.reason}` : ''}</p>
             {latest.errorMessage && <p style={{ color: 'var(--red)', marginTop: 8 }}>{latest.errorMessage}</p>}
-            {expanded === latest.id && <div className="table-wrap" style={{ marginTop: 12 }}><table>
+            {expanded === latest.id && isLoadingDetail && <p className="text-muted" style={{ marginTop: 12 }}>Cargando detalle de tiendasâ€¦</p>}
+            {expanded === latest.id && isDetailError && <div className="error-banner" style={{ marginTop: 12 }}>No fue posible cargar el detalle de esta ejecuciÃ³n.</div>}
+            {expanded === latest.id && !isLoadingDetail && !isDetailError && stores.length === 0 && <p className="text-muted" style={{ marginTop: 12 }}>Esta ejecuciÃ³n no tiene resultados por tienda.</p>}
+            {expanded === latest.id && stores.length > 0 && <div className="table-wrap" style={{ marginTop: 12 }}><table>
               <thead><tr><th>STOREID</th><th>app_shop_id</th><th>Resultado</th><th>Ítems</th><th>Cargados</th><th>Task IDs / error</th></tr></thead>
               <tbody>{stores.map(store => <tr key={store.storeId}>
                 <td className="td-mono">{store.storeId}</td><td className="td-mono">{store.appShopId}</td><td><StatusBadge status={store.status} /></td>
