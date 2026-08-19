@@ -16,7 +16,7 @@ Panel interno para configurar y ejecutar tareas (workflows) sobre marcas, tienda
 8. [Sistema de colas y handlers](#8-sistema-de-colas-y-handlers)
 9. [Cómo crear un handler nuevo](#9-cómo-crear-un-handler-nuevo)
 10. [Webhooks](#10-webhooks)
-11. [Módulo de integraciones — Auto Open](#11-módulo-de-integraciones--auto-open)
+11. [Módulos de integraciones](#11-módulos-de-integraciones)
 12. [Frontend](#12-frontend)
 13. [Variables de entorno](#13-variables-de-entorno)
 14. [Seed y datos iniciales](#14-seed-y-datos-iniciales)
@@ -533,6 +533,18 @@ Requiere: rol `admin` + módulo `integrations` habilitado, o `super_admin`.
 | Método | Ruta | Descripción |
 |---|---|---|
 | POST | `/integrations/auto-open/notify` | Enviar notificación manual a uno o más webhooks |
+
+#### Custom Integrations — `/integrations/menu-copy`
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/integrations/menu-copy/executions` | Historial de Cross App Menu Copy y Forced Handshake |
+| POST | `/integrations/menu-copy/executions` | Copiar el menú de una tienda origen a una o hasta 500 tiendas destino |
+| POST | `/integrations/menu-copy/handshake` | Descargar y reenviar el menú a la misma tienda, por marca completa o lista de tiendas |
+| POST | `/integrations/menu-copy/executions/:id/retry` | Crear un nuevo intento con la configuración de una ejecución terminada |
+| POST | `/integrations/menu-copy/executions/:id/stop` | Solicitar la cancelación de una ejecución activa |
+
+Lectura requiere `integrations.custom`; crear, reintentar, detener o forzar handshake requiere `integrations.custom.execute`.
 
 #### Admin — `/admin`
 
@@ -1088,11 +1100,13 @@ Configurar su URL en `ALERT_WEBHOOK_URL` o crear uno en la UI y marcarlo como "d
 
 ---
 
-## 11. Módulo de integraciones — Auto Open
+## 11. Módulos de integraciones
+
+### 11.1 Auto Open
 
 El módulo de Auto Open permite configurar **pools** de marcas que se abren automáticamente a ciertas horas del día mediante un cron interno.
 
-### Cómo funciona
+#### Cómo funciona
 
 ```
 Cron (cada hora, en punto)
@@ -1105,7 +1119,7 @@ Cron (cada hora, en punto)
         → registra resultado por marca en los logs de la ejecución
 ```
 
-### Pool — campos configurables
+#### Pool — campos configurables
 
 | Campo | Descripción |
 |---|---|
@@ -1119,7 +1133,7 @@ Cron (cada hora, en punto)
 
 > **Prerequisito:** cada marca del pool debe tener una `Application` vinculada con `appId` y `appSecret` válidos. El frontend advierte si alguna marca del pool no tiene app.
 
-### Frontend — `/integrations/auto-open`
+#### Frontend — `/integrations/auto-open`
 
 Accesible para `super_admin` y para `admin` con el módulo `integrations` habilitado.
 
@@ -1129,14 +1143,233 @@ La página muestra tarjetas por pool. Cada tarjeta permite:
 - Ejecutar el pool manualmente (botón "Run now")
 - Ver el historial de ejecuciones (status, tiendas abiertas, errores)
 
-### Habilitar el módulo de integraciones para un Admin
+#### Habilitar el módulo de integraciones para un Admin
 
 Solo el `super_admin` puede hacerlo desde **Config → Usuarios → editar usuario**:
 - Marcar el módulo `integrations` en los `adminModules` de la cuenta.
 
-### Notificaciones manuales
+#### Notificaciones manuales
 
 La pestaña **Manual Notifications** dentro de `/integrations/auto-open` permite enviar un mensaje personalizado (título, cuerpo Markdown, color de acento) a uno o varios webhooks configurados. El mensaje no se guarda en la DB — se despacha en el momento vía `POST /integrations/auto-open/notify`.
+
+### 11.2 Custom Integrations — Cross App Menu Copy
+
+Cross App Menu Copy descarga el menú grocery de una tienda y lo envía a una o más tiendas destino. El trabajo se ejecuta de forma asíncrona en la cola BullMQ `menu-copy`, con concurrencia máxima de dos ejecuciones por worker.
+
+#### Acceso y configuración
+
+- Frontend: **Integrations → Custom Integrations → Cross App Menu Copy**, ruta `/integrations/custom`.
+- `integrations.custom`: permite consultar la sección y el historial.
+- `integrations.custom.execute`: permite iniciar, detener, reintentar y forzar handshakes.
+- Los permisos se administran en **Configuración → Usuarios**.
+- Tanto la aplicación origen como la aplicación destino deben estar activas y tener credenciales cifradas válidas.
+- Cada `shop_id` debe contener 19 dígitos y comenzar con `57`.
+
+#### Flujo de una copia
+
+1. Resuelve el `app_shop_id` de origen y destino. Primero consulta la tienda local; si falta, usa `POST /v1/shop/shop/list` de DiDi.
+2. Obtiene el token de la aplicación origen y descarga el menú completo.
+3. Conserva sólo productos con `app_item_id` y UPC. Los productos incompletos se omiten y la ejecución termina como `partial_success`.
+4. Conserva el orden exacto de los productos descargados y los corta en bloques consecutivos de máximo 3,500.
+5. Asigna al bloque 1 el primer nombre permitido, al bloque 2 el segundo y así sucesivamente.
+6. Cuando el endpoint es `uploadGrocery`, envía todos los bloques/categorías juntos en una sola solicitud. Esto evita intentar agregar otra categoría después de reemplazar el menú.
+7. Consulta el estado de la tarea de DiDi durante un máximo de 30 minutos. Si DiDi continúa procesando, vuelve a descargar el destino para verificar cuántos productos ya coinciden.
+8. Guarda el resultado, número de productos, número de bloques, referencia de DiDi y detalle de productos omitidos o fallidos.
+
+> **Regla de negocio:** el sistema **no clasifica productos por categoría**. La lista siguiente sirve únicamente para nombrar bloques consecutivos. No se analiza el nombre, UPC, descripción ni tipo de ningún artículo. Los duplicados de la lista son intencionales y no deben eliminarse ni reordenarse.
+
+#### Lista ordenada de nombres de bloque
+
+```text
+01. Panadería y Galletas
+02. Botanas
+03. Comidas Preparadas
+04. Bebidas
+05. Cerveza
+06. Abarrotes
+07. Vinos y Licores
+08. Comida Refrigerada
+09. Productos Lácteos
+10. Helados
+11. Embutidos
+12. Medicamentos
+13. Bienestar Sexual
+14. Belleza y Cuidado Personal
+15. Electrónicos
+16. Otros
+17. Mascotas
+18. Despensa y Productos Secos
+19. Jugos y Bebidas
+20. Higiene y Belleza
+21. Snacks y Botanas
+22. Cervezas, Vinos y Licores
+23. Congelados y Comidas Preparadas
+24. Farmacia
+25. Panadería y Tortillería
+26. Lácteos y Huevo
+27. Carnes Frías y Embutidos
+28. Carnes, Pescados y Mariscos
+29. Frutas y Verduras
+30. Bebés
+31. Artículos Variados y De Fiesta
+32. Cristalería
+33. Artículos De Oficina
+34. Ropa
+35. Otros
+36. Champagne y espumoso
+37. Cerveza
+38. Brandy
+39. Botanas
+40. Agua mineral
+41. Bebidas, Dulces & Snacks
+42. Congelados
+43. Despensa
+44. Lácteos
+45. Bebés
+46. Limpieza del hogar
+47. Cuidado de la Ropa
+48. Artículos para el hogar y autos
+49. Farmacia
+50. Cuidado Personal y Belleza
+51. Medicamentos
+52. Dermocosmética
+53. Suplementos y Vitamínicos
+54. Especialidades
+55. Diabetes
+```
+
+Con el tamaño actual, la capacidad máxima de esta lista es `55 × 3,500 = 192,500` productos. Si un menú requiere más bloques, la ejecución falla explícitamente y la lista debe ampliarse antes de reintentar.
+
+Ejemplo: un menú con 6,565 productos genera **dos** bloques, sin clasificación:
+
+| Bloque | Posiciones del menú | Cantidad | Nombre usado |
+|---|---:|---:|---|
+| 1 | 1–3,500 | 3,500 | Panadería y Galletas |
+| 2 | 3,501–6,565 | 3,065 | Botanas |
+
+#### Copia Cross App
+
+En la interfaz se selecciona:
+
+- aplicación y `shop_id` de origen;
+- aplicación destino;
+- uno o hasta 500 `shop_id` de destino;
+- `mergePolicy`: `1` para reemplazo o `0` para merge, según la operación requerida;
+- endpoint de carga, normalmente `uploadGrocery`.
+
+Una copia normal no permite usar como destino la misma tienda cuando origen y destino usan la misma aplicación. Para ese caso se debe usar **Forced Handshake**.
+
+Ejemplo API:
+
+```http
+POST /integrations/menu-copy/executions
+Authorization: Bearer <JWT>
+Content-Type: application/json
+
+{
+  "sourceApplicationId": "uuid-app-origen",
+  "sourceShopId": "57xxxxxxxxxxxxxxxxx",
+  "targetApplicationId": "uuid-app-destino",
+  "targetShopIds": [
+    "57xxxxxxxxxxxxxxxxx",
+    "57xxxxxxxxxxxxxxxxx"
+  ],
+  "mergePolicy": 1,
+  "uploadEndpoint": "uploadGrocery"
+}
+```
+
+#### Forced Handshake
+
+Forced Handshake toma el menú actual de una tienda y lo reenvía a **esa misma tienda**, usando la aplicación vinculada a su marca. Sirve para forzar el handshake de DiDi sin preparar una tienda origen distinta.
+
+Modos disponibles:
+
+- `all_brand`: crea una ejecución independiente para cada tienda activa de la marca.
+- `shop_list`: crea ejecuciones sólo para los `shop_id` indicados; todos deben pertenecer a la marca.
+
+Reglas:
+
+- La marca debe estar activa y tener una aplicación activa vinculada.
+- Se aceptan como máximo 5,000 tiendas por solicitud.
+- Usa siempre `mergePolicy = 1` y `uploadEndpoint = uploadGrocery`.
+- Si una tienda ya tiene un handshake `pending` o `running`, no se duplica: aparece en `skippedActive`.
+- Cada tienda es una ejecución aislada; el fallo de una tienda no cancela las demás.
+
+Ejemplo para toda una marca:
+
+```http
+POST /integrations/menu-copy/handshake
+Authorization: Bearer <JWT>
+Content-Type: application/json
+
+{
+  "brandId": "uuid-de-la-marca",
+  "mode": "all_brand"
+}
+```
+
+Ejemplo para tiendas específicas:
+
+```http
+POST /integrations/menu-copy/handshake
+Authorization: Bearer <JWT>
+Content-Type: application/json
+
+{
+  "brandId": "uuid-de-la-marca",
+  "mode": "shop_list",
+  "shopIds": [
+    "57xxxxxxxxxxxxxxxxx",
+    "57xxxxxxxxxxxxxxxxx"
+  ]
+}
+```
+
+#### Estados, pasos y operación
+
+Estados de ejecución:
+
+| Estado | Significado |
+|---|---|
+| `pending` | Creada y esperando worker |
+| `running` | En proceso |
+| `done` | Todos los productos elegibles se verificaron correctamente |
+| `partial_success` | DiDi aceptó la carga, pero hubo omitidos, fallidos o elementos aún sin verificar |
+| `failed` | No se pudo completar la descarga o el envío |
+| `cancelled` | Se detuvo manualmente o el servicio se reinició mientras estaba activa |
+
+El campo `currentStep` permite localizar el avance:
+
+`queued` → `resolving_source_shop` → `resolving_target_shop` → `downloading_source_menu` → `uploading_target_menu` → opcionalmente `verifying_target_menu` → `completed`.
+
+- **Retry** no modifica la ejecución histórica; crea otra ejecución con la misma configuración.
+- **Stop** marca `cancelRequested`; el worker comprueba esa marca entre fases y durante el sondeo de DiDi.
+- No lanzar reintentos repetidos ante `errno=10005`: DiDi está aplicando su ventana de frecuencia. Esperar la ventana indicada en el mensaje y usar **Retry** una sola vez.
+- `errno=80144` indica que DiDi rechazó el nombre del bloque. Verificar que se conserve la lista aprobada.
+- `errno=80151` con `grocery cate has changed, cannot merge` indica que se intentaron enviar categorías en solicitudes separadas. Para `uploadGrocery`, todos los bloques deben permanecer combinados en una solicitud.
+- Un token expirado se renueva durante el polling; si persiste `errno=10100`, revisar las credenciales y la relación marca–aplicación.
+
+#### Pruebas antes de desplegar
+
+Desde el directorio `backend`:
+
+```bash
+# Casos focalizados: lista, bloques combinados y handshake
+node --test --require ts-node/register --require tsconfig-paths/register \
+  test/menu-copy-categories-handshake.test.ts
+
+# Compilación backend
+npm run build
+```
+
+Desde `frontend`:
+
+```bash
+npm run build
+```
+
+El caso de regresión principal debe comprobar que 6,565 productos producen una sola carga con dos categorías de 3,500 y 3,065 elementos, llamadas `Panadería y Galletas` y `Botanas`, respectivamente.
 
 ---
 
@@ -1386,9 +1619,45 @@ cd backend && npm run start:dev
 cd frontend && npm run dev
 ```
 
-### Producción — Makefile
+### Producción — flujo automático de GitHub Actions
 
-El servidor tiene un `Makefile` con los comandos más usados. Instalar `make` si no está disponible:
+Producción se despliega desde `main`. Un push a `main` ejecuta primero el workflow **CI**:
+
+- backend: `npm ci`, `prisma generate` y `tsc --noEmit`;
+- frontend: `npm ci` y `tsc --noEmit`.
+
+Sólo cuando CI termina correctamente, el workflow **Deploy**:
+
+1. toma un lock para impedir dos despliegues simultáneos;
+2. crea un backup PostgreSQL previo al despliegue y conserva los cinco más recientes;
+3. ejecuta `git pull origin main` en el servidor;
+4. construye backend y frontend con Docker Compose;
+5. levanta los contenedores;
+6. valida que el backend responda `401` en `/auth/me` sin autenticación;
+7. limpia artefactos Docker no utilizados.
+
+Flujo recomendado:
+
+```bash
+# Validar localmente según los módulos modificados
+cd backend && npm run build
+cd ../frontend && npm run build
+
+# Crear un commit acotado y revisar que no incluya cambios ajenos
+git status --short
+git add <archivos-del-cambio>
+git diff --cached --check
+git commit -m "docs: document cross-app menu and handshake"
+
+# El push a main inicia CI y, si pasa, el deploy automático
+git push origin HEAD:main
+```
+
+No ejecutar además un despliegue manual mientras GitHub Actions está desplegando. Verificar en GitHub que **CI** y **Deploy** finalicen en verde.
+
+### Producción — Makefile (operación manual de contingencia)
+
+El servidor conserva un `Makefile` para diagnóstico o contingencia. No es el flujo habitual. Instalar `make` si no está disponible:
 
 ```bash
 apt install make -y
@@ -1405,15 +1674,10 @@ apt install make -y
 | `make import-brands` | Correr el script de importación de brands (requiere `/tmp/brands.xlsx`) |
 | `make import-applications` | Correr el script de importación de apps (requiere `/tmp/apps.xlsx`) |
 
-### Flujo habitual de actualización
+### Flujo manual de contingencia
 
 ```bash
-# Local: commit y push
-git add .
-git commit -m "feat: descripción"
-git push
-
-# Servidor
+# Sólo si el deploy automático no está activo y se autorizó la intervención
 make deploy       # pull + build + up
 make migrate      # solo si hay nuevas migraciones de Prisma
 ```
