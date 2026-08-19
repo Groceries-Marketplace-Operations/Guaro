@@ -18,6 +18,12 @@ import { SendNotificationDto } from './dto/send-notification.dto';
 export class AutoOpenPoolsController {
   constructor(private svc: AutoOpenPoolsService) {}
 
+  @Get('capabilities')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  capabilities() {
+    return this.svc.capabilities();
+  }
+
   @Get('pools')
   @Roles(AccountRole.admin, AccountRole.super_admin)
   list() {

@@ -4,7 +4,7 @@ import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { integrationsApi, webhooksApi, brandsApi } from '../../api';
 import { useT } from '../../i18n';
-import type { AutoOpenPool, AutoOpenExecution, Webhook, Brand, Country } from '../../types';
+import type { AutoOpenCapabilities, AutoOpenPool, AutoOpenExecution, Webhook, Brand, Country } from '../../types';
 
 type ApiErr = { response?: { data?: { message?: string | string[] } } };
 function errMsg(e: unknown) {
@@ -219,6 +219,12 @@ export default function IntegrationsPage() {
     queryFn: () => integrationsApi.listPools().then(r => r.data as AutoOpenPool[]),
   });
 
+  const { data: autoOpenCapabilities, isError: capabilitiesError } = useQuery<AutoOpenCapabilities>({
+    queryKey: ['auto-open-capabilities'],
+    queryFn: () => integrationsApi.autoOpenCapabilities().then(r => r.data as AutoOpenCapabilities),
+  });
+  const liveModeAvailable = autoOpenCapabilities?.liveModeAvailable === true;
+
   const { data: webhooks = [] } = useQuery<Webhook[]>({
     queryKey: ['webhooks'],
     queryFn: () => webhooksApi.list().then(r => r.data as Webhook[]),
@@ -380,6 +386,21 @@ export default function IntegrationsPage() {
         {tab === 'auto-open' && (<>
         {isLoading && <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Loading…</p>}
         {err && !modalOpen && <div className="error-banner" style={{ marginBottom: 12 }}>{err}</div>}
+        <div style={{
+          marginBottom: 12, borderRadius: 8, padding: '10px 14px', fontSize: '0.8rem',
+          border: `1px solid ${liveModeAvailable ? '#ABEFC6' : '#FECDCA'}`,
+          background: liveModeAvailable ? '#ECFDF3' : '#FEF3F2',
+          color: liveModeAvailable ? '#067647' : '#B42318',
+        }}>
+          <strong>{liveModeAvailable ? 'Servidor listo para LIVE.' : 'LIVE bloqueado por el servidor.'}</strong>{' '}
+          {capabilitiesError
+            ? 'No fue posible verificar la barrera de escrituras remotas; por seguridad sólo se permite dry run.'
+            : autoOpenCapabilities
+              ? (liveModeAvailable
+                ? 'La barrera de escrituras remotas está habilitada; cada pool todavía debe cambiarse explícitamente de DRY RUN a LIVE.'
+                : 'La barrera AUTO_OPEN_REMOTE_WRITE_ENABLED está deshabilitada; sólo se permiten simulaciones.')
+              : 'Verificando la barrera de escrituras remotas…'}
+        </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {pools.map(pool => (
@@ -423,7 +444,8 @@ export default function IntegrationsPage() {
                   <button
                     className="btn btn-primary btn-sm"
                     style={{ padding: '4px 12px', opacity: runningId === pool.id ? 0.6 : 1 }}
-                    disabled={runningId === pool.id}
+                    disabled={runningId === pool.id || (!pool.dryRun && !liveModeAvailable)}
+                    title={!pool.dryRun && !liveModeAvailable ? 'El servidor no permite ejecuciones LIVE' : undefined}
                     onClick={() => runNow(pool)}
                   >
                     {runningId === pool.id ? t('pages.integrations.running') : t('pages.integrations.runNow')}
@@ -637,16 +659,22 @@ export default function IntegrationsPage() {
               <input
                 type="checkbox"
                 checked={form.dryRun}
+                disabled={form.dryRun && !liveModeAvailable}
                 onChange={event => setForm(value => ({ ...value, dryRun: event.target.checked }))}
                 style={{ marginTop: 3, accentColor: 'var(--orange)' }}
               />
               <span>
                 <strong>Modo simulación (recomendado)</strong>
                 <span style={{ display: 'block', fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                  Consulta el estado real y muestra cuántas tiendas abriría, pero nunca envía el POST de apertura.
+                  Usa las tiendas locales y emergencias vigentes para mostrar cuántas intentaría abrir, pero nunca envía el POST de apertura.
                 </span>
               </span>
             </label>
+            {form.dryRun && !liveModeAvailable && (
+              <p className="form-hint" style={{ color: '#B42318' }}>
+                No se puede desactivar el modo simulación hasta habilitar la barrera LIVE en el servidor.
+              </p>
+            )}
             {!form.dryRun && (
               <div className="error-banner" style={{ marginTop: 10 }}>
                 Modo LIVE: esta configuración puede abrir tiendas reales. El servidor también debe tener habilitada la barrera de escrituras remotas.

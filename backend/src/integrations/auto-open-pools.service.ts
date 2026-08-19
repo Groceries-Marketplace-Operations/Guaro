@@ -37,6 +37,18 @@ export class AutoOpenPoolsService {
     return this.config.get<string>('AUTO_OPEN_REMOTE_WRITE_ENABLED')?.trim().toLowerCase() === 'true';
   }
 
+  capabilities() {
+    const remoteWritesEnabled = this.remoteWritesEnabled();
+    return {
+      dryRunAvailable: true,
+      remoteWritesEnabled,
+      liveModeAvailable: remoteWritesEnabled,
+      reason: remoteWritesEnabled
+        ? 'The server remote-write gate is enabled. Each pool must still be explicitly switched out of dry-run.'
+        : 'Live Auto Open is disabled on this server. AUTO_OPEN_REMOTE_WRITE_ENABLED must be enabled after reviewing a dry-run.',
+    };
+  }
+
   async ensureManagedKaPools() {
     for (const definition of MANAGED_KA_POOLS) {
       await this.prisma.$transaction(async tx => {

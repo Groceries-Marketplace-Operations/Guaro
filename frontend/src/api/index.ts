@@ -283,6 +283,7 @@ export const assignmentRulesApi = {
 
 /* ── Integrations: Auto Open ─────────────────────────────────── */
 export const integrationsApi = {
+  autoOpenCapabilities: () => client.get('/integrations/auto-open/capabilities'),
   listPools: () => client.get('/integrations/auto-open/pools'),
   createPool: (data: object) => client.post('/integrations/auto-open/pools', data),
   updatePool: (id: string, data: object) => client.patch(`/integrations/auto-open/pools/${id}`, data),

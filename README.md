@@ -1174,6 +1174,8 @@ Una apertura real requiere simultáneamente:
 
 Si cualquiera de las dos primeras condiciones falla, el backend no permite iniciar una ejecución LIVE. No basta con cambiar el selector del frontend.
 
+La pantalla consulta `GET /integrations/auto-open/capabilities` y muestra si el servidor está listo para LIVE. Si el gate está cerrado o no puede verificarse, conserva el pool en dry run y explica la causa antes de guardar o ejecutar.
+
 Auto Open **no consulta el estado remoto actual** antes de abrir. Tampoco filtra por el `Shop.status` local: procesa todas las tiendas locales no eliminadas de las marcas incluidas. En LIVE obtiene el token, revalida emergencias y envía:
 
 ```json

@@ -6,6 +6,7 @@ import {
   buildEmergencyProtection,
   LIVE_AUTO_OPEN_EMERGENCY_STATUSES,
 } from '../src/integrations/auto-open.processor';
+import { AutoOpenPoolsService } from '../src/integrations/auto-open-pools.service';
 import { hourInTimezone } from '../src/integrations/auto-open.scheduler';
 
 interface FakeBrandRun {
@@ -205,4 +206,28 @@ test('emergency protection separates full-brand and selected-store scopes', () =
 
 test('Mexico local schedule is deterministic', () => {
   assert.equal(hourInTimezone(new Date('2026-08-18T15:00:00.000Z'), 'America/Mexico_City'), 9);
+});
+
+test('Auto Open capabilities expose the server LIVE gate without mutating configuration', () => {
+  const disabled = new AutoOpenPoolsService(
+    {} as never,
+    {} as never,
+    { get: () => undefined } as never,
+    {} as never,
+  );
+  assert.deepEqual(disabled.capabilities(), {
+    dryRunAvailable: true,
+    remoteWritesEnabled: false,
+    liveModeAvailable: false,
+    reason: 'Live Auto Open is disabled on this server. AUTO_OPEN_REMOTE_WRITE_ENABLED must be enabled after reviewing a dry-run.',
+  });
+
+  const enabled = new AutoOpenPoolsService(
+    {} as never,
+    {} as never,
+    { get: (key: string) => key === 'AUTO_OPEN_REMOTE_WRITE_ENABLED' ? ' TRUE ' : undefined } as never,
+    {} as never,
+  );
+  assert.equal(enabled.capabilities().liveModeAvailable, true);
+  assert.equal(enabled.capabilities().remoteWritesEnabled, true);
 });

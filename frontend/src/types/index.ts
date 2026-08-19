@@ -223,6 +223,13 @@ export interface Invitation {
 
 export type AutoOpenStatus = 'pending' | 'running' | 'done' | 'partial_success' | 'failed' | 'cancelled';
 
+export interface AutoOpenCapabilities {
+  dryRunAvailable: boolean;
+  remoteWritesEnabled: boolean;
+  liveModeAvailable: boolean;
+  reason: string;
+}
+
 export interface AutoOpenPool {
   id: string;
   managedKey?: string;
