@@ -252,6 +252,15 @@ export interface AutoOpenExecution {
   shopsOpened: number;
   shopsWouldOpen: number;
   shopsSkippedEmergency: number;
+  shopsFailed: number;
+  totalBrands: number;
+  brandsCompleted: number;
+  brandsFailed: number;
+  progressPercent: number;
+  currentBrand?: string;
+  errorMessage?: string;
+  heartbeatAt?: string;
+  brandRuns?: AutoOpenBrandExecution[];
   logs?: {
     mode?: 'dry_run' | 'live';
     brands: Array<{
@@ -260,11 +269,33 @@ export interface AutoOpenExecution {
       shopsOpened: number;
       shopsWouldOpen: number;
       shopsSkippedEmergency: number;
+      shopsFailed?: number;
       blockedByEmergency?: boolean;
       error?: string;
+      shopErrors?: Array<{ shopId: string; appShopId: string; error: string }>;
     }>;
   };
   createdAt: string;
+}
+
+export interface AutoOpenBrandExecution {
+  id: string;
+  executionId: string;
+  brandId: string;
+  brandName: string;
+  status: AutoOpenStatus;
+  startedAt?: string;
+  finishedAt?: string;
+  totalShops: number;
+  shopsProcessed: number;
+  shopsOpened: number;
+  shopsWouldOpen: number;
+  shopsSkippedEmergency: number;
+  shopsFailed: number;
+  errorMessage?: string;
+  shopErrors?: Array<{ shopId: string; appShopId: string; error: string }>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AssistantCheck {

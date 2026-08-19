@@ -23,6 +23,7 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: npx tsc --noEmit
+      - run: npm test
 
   frontend:
     name: Frontend — typecheck

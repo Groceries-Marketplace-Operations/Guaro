@@ -690,6 +690,20 @@ export default function IntegrationsPage() {
 
 function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: string) => string }) {
   const [expanded, setExpanded] = useState(false);
+  const detailBrands = execution.brandRuns?.length
+    ? execution.brandRuns.map(run => ({
+      brandName: run.brandName,
+      shopsProcessed: run.shopsProcessed,
+      shopsOpened: run.shopsOpened,
+      shopsWouldOpen: run.shopsWouldOpen,
+      shopsSkippedEmergency: run.shopsSkippedEmergency,
+      shopsFailed: run.shopsFailed,
+      error: run.errorMessage,
+      shopErrors: run.shopErrors,
+      status: run.status,
+    }))
+    : (execution.logs?.brands ?? []).map(run => ({ ...run, status: run.error ? 'failed' : 'done' }));
+  const hasDetails = detailBrands.length > 0;
   const dur = execution.startedAt && execution.finishedAt
     ? Math.round((new Date(execution.finishedAt).getTime() - new Date(execution.startedAt).getTime()) / 1000)
     : null;
@@ -697,8 +711,8 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
       <div
-        onClick={() => execution.logs && setExpanded(e => !e)}
-        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: execution.logs ? 'pointer' : 'default', background: 'var(--surface-2)' }}
+        onClick={() => hasDetails && setExpanded(e => !e)}
+        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: hasDetails ? 'pointer' : 'default', background: 'var(--surface-2)', flexWrap: 'wrap' }}
       >
         <span style={{
           fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, flexShrink: 0,
@@ -712,36 +726,54 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
         <span style={{ fontSize: '0.68rem', fontWeight: 700, color: execution.dryRun ? '#175CD3' : '#B42318' }}>
           {execution.dryRun ? 'DRY RUN' : 'LIVE'}
         </span>
+        {execution.status === 'running' && execution.totalBrands > 0 && (
+          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#175CD3' }}>
+            {execution.progressPercent}% · {execution.brandsCompleted}/{execution.totalBrands} marcas
+            {execution.currentBrand ? ` · ${execution.currentBrand}` : ''}
+          </span>
+        )}
         {['done', 'partial_success'].includes(execution.status) && (
           <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#027A48' }}>
             {execution.dryRun
               ? `${execution.shopsWouldOpen}/${execution.totalShops} abriría`
               : `${execution.shopsOpened}/${execution.totalShops} ${t('pages.integrations.shopsOpened')}`}
             {execution.shopsSkippedEmergency > 0 ? ` · ${execution.shopsSkippedEmergency} protegidas` : ''}
+            {execution.shopsFailed > 0 ? ` · ${execution.shopsFailed} fallidas` : ''}
           </span>
+        )}
+        {execution.status === 'failed' && execution.errorMessage && (
+          <span style={{ fontSize: '0.78rem', color: 'var(--red)' }}>{execution.errorMessage}</span>
         )}
         {dur !== null && (
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>{dur}s</span>
         )}
-        {execution.logs && (
+        {hasDetails && (
           <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
         )}
       </div>
-      {expanded && execution.logs && (
+      {expanded && hasDetails && (
         <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {execution.logs.brands.map((b, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem' }}>
-              <span style={{ color: b.error ? 'var(--red)' : '#027A48', fontWeight: 700, flexShrink: 0 }}>
-                {b.error ? '✗' : '✓'}
-              </span>
-              <span style={{ fontWeight: 500 }}>{b.brandName}</span>
-              {b.error
-                ? <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>{b.error}</span>
-                : <span style={{ color: 'var(--text-muted)' }}>
-                  {execution.dryRun ? `${b.shopsWouldOpen}/${b.shopsProcessed} abriría` : `${b.shopsOpened}/${b.shopsProcessed} abiertas`}
-                  {b.shopsSkippedEmergency > 0 ? ` · ${b.shopsSkippedEmergency} protegidas` : ''}
+          {detailBrands.map((b, i) => (
+            <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem', flexWrap: 'wrap' }}>
+                <span style={{ color: b.error ? 'var(--red)' : b.status === 'running' ? '#175CD3' : '#027A48', fontWeight: 700, flexShrink: 0 }}>
+                  {b.error ? '✗' : b.status === 'running' ? '…' : '✓'}
                 </span>
-              }
+                <span style={{ fontWeight: 500 }}>{b.brandName}</span>
+                {b.error
+                  ? <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>{b.error}</span>
+                  : <span style={{ color: 'var(--text-muted)' }}>
+                    {execution.dryRun ? `${b.shopsWouldOpen}/${b.shopsProcessed} abriría` : `${b.shopsOpened}/${b.shopsProcessed} abiertas`}
+                    {b.shopsSkippedEmergency > 0 ? ` · ${b.shopsSkippedEmergency} protegidas` : ''}
+                    {(b.shopsFailed ?? 0) > 0 ? ` · ${b.shopsFailed} fallidas` : ''}
+                  </span>
+                }
+              </div>
+              {b.shopErrors?.slice(0, 5).map((shopError, index) => (
+                <div key={`${shopError.shopId}-${index}`} style={{ marginLeft: 24, color: 'var(--red)', fontSize: '0.72rem' }}>
+                  {shopError.shopId}: {shopError.error}
+                </div>
+              ))}
             </div>
           ))}
         </div>

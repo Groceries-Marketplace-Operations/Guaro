@@ -1118,7 +1118,7 @@ Configurar su URL en `ALERT_WEBHOOK_URL` o crear uno en la UI y marcarlo como "d
 
 ### 11.1 Auto Open
 
-Auto Open administra **pools** de marcas y ejecuta aperturas programadas o manuales. La ejecución es asíncrona en la cola BullMQ `auto-open`, con un solo job procesándose a la vez por instancia del backend.
+Auto Open administra **pools** de marcas y ejecuta aperturas programadas o manuales. La ejecución es asíncrona en la cola BullMQ `auto-open`: un job prepara el pool y crea un job independiente por marca. El worker procesa hasta tres jobs de marca en paralelo, conserva checkpoints por lote y agrega los resultados en una sola ejecución visible.
 
 #### Cómo funciona
 
@@ -1127,14 +1127,16 @@ Cron (cada hora, en punto)
     → revisa todos los pools activos
     → convierte el slot a la zona IANA configurada en el pool
     → comprueba si la hora local está en executionHours[]
-    → si sí: lanza una ejecución (AutoOpenExecution)
-        → toma todas las marcas y tiendas locales no eliminadas del pool
-        → carga un snapshot de emergencias vivas
-        → itera sobre las marcas del pool
-        → omite marcas o tiendas protegidas por emergencias
-        → revalida la emergencia de cada tienda justo antes de la apertura
-        → en modo LIVE llama a setStatus de DiDi; en DRY RUN sólo contabiliza
-        → registra métricas y logs por marca al finalizar el pool completo
+    → si sí: crea una ejecución agregada (AutoOpenExecution)
+        → crea un checkpoint (AutoOpenBrandExecution) por cada marca activa
+        → encola un job independiente por marca
+        → cada job toma tiendas locales no eliminadas en lotes de 20
+        → consulta en bloque las emergencias vivas de la marca/lote
+        → omite las tiendas protegidas
+        → en LIVE revalida la emergencia justo antes de cada escritura
+        → en LIVE llama a setStatus de DiDi; en DRY RUN sólo contabiliza
+        → guarda progreso, errores y métricas después de cada lote
+        → agrega el resultado cuando terminan todas las marcas
 ```
 
 La ejecución manual desde **Run now** usa exactamente el mismo worker y las mismas protecciones. Las ejecuciones programadas guardan `scheduledSlot`; las manuales lo dejan en `null`.
@@ -1181,13 +1183,13 @@ Auto Open **no consulta el estado remoto actual** antes de abrir. Tampoco filtra
 }
 ```
 
-Procesa lotes de 20 tiendas, de forma secuencial dentro del pool, y espera 1.5 segundos entre lotes de una misma marca.
+Procesa lotes de 20 tiendas y espera 1.5 segundos entre lotes LIVE de una misma marca. Las marcas son trabajos independientes, por lo que un error de Application o de una tienda no interrumpe las demás marcas.
 
 > **Prerequisito:** cada marca que se espere procesar debe tener una `Application` vinculada con `appId` y `appSecret` válidos. Una marca sin Application se registra como error de marca y hace que la ejecución termine `partial_success`.
 
 #### Protección por emergencias
 
-Auto Open consulta `StoreEmergency` antes de iniciar el recorrido y vuelve a consultar inmediatamente antes de cada escritura remota. También hace la segunda comprobación en `dryRun` para que la simulación represente la protección real.
+Auto Open consulta `StoreEmergency` en bloque antes de cada lote. En LIVE vuelve a consultar inmediatamente antes de cada escritura remota, de modo que una emergencia creada durante la ejecución todavía protege la tienda. En `dryRun` se usa el snapshot del lote y nunca se llama a DiDi.
 
 | Modo de emergencia | Protección aplicada |
 |---|---|
@@ -1204,7 +1206,7 @@ La protección comienza desde `pending`, antes de que termine el apagado remoto.
 
 La emergencia se crea con una fecha futura `endsAt`. El worker de emergencias apaga con `biz_status=2` y `auto_switch=1`. Un scheduler revisa cada minuto las emergencias vencidas, las cambia a `restoring` y reabre únicamente las tiendas que sí fueron apagadas. Al terminar quedan `restored`, `partial_restored` o `restore_failed`.
 
-> **Limitación vigente:** `partial_restored` y `restore_failed` todavía no forman parte de la lista de estados protegidos por Auto Open. No habilitar LIVE hasta decidir si las tiendas con restauración fallida deben continuar protegidas individualmente.
+`partial_restored` **no se considera una emergencia viva para Auto Open**. Es una decisión funcional explícita: una vez terminada la fase `restoring`, Auto Open no bloquea la marca ni las tiendas por ese estado histórico. `restored` y `restore_failed` tampoco forman parte de la lista viva. Los únicos estados que bloquean son los cinco documentados arriba y además deben conservar `finishedAt = null`.
 
 #### Estados y métricas de ejecución
 
@@ -1213,40 +1215,37 @@ La emergencia se crea con una fecha futura `endsAt`. El worker de emergencias ap
 | `pending` | Ejecución creada y esperando la cola |
 | `running` | El worker reclamó la ejecución |
 | `done` | No hubo errores a nivel de marca |
-| `partial_success` | Al menos una marca tuvo un error, normalmente Application faltante |
+| `partial_success` | Al menos una marca o apertura individual tuvo error |
 | `failed` | Fallo general del job antes de completar el pool |
 | `totalShops` | Tiendas procesadas después de obtener los datos necesarios |
 | `shopsWouldOpen` | Tiendas que se intentarían abrir; en dry run es la métrica principal |
 | `shopsOpened` | Aperturas confirmadas por DiDi; siempre cero en dry run |
 | `shopsSkippedEmergency` | Tiendas omitidas por protección de emergencia |
+| `shopsFailed` | Aperturas individuales que devolvieron error |
+| `totalBrands` / `brandsCompleted` | Progreso agregado de marcas |
+| `progressPercent` / `currentBrand` | Porcentaje y marca que se está procesando |
+| `heartbeatAt` | Último checkpoint recibido por la ejecución |
 
-Los logs almacenan el detalle por marca. Un fallo individual de apertura puede reflejarse como diferencia entre `shopsWouldOpen` y `shopsOpened` sin convertir automáticamente toda la ejecución a `partial_success`; revisar siempre los contadores y no sólo el estado general.
+Cada marca conserva su propio estado, contadores, mensaje de error y hasta 20 errores de tienda (`shopId`, `appShopId`, causa). Cualquier fallo individual deja la ejecución agregada en `partial_success`; ya no es necesario inferirlo comparando contadores.
 
 #### Volumen, duración y progreso
 
-El cooldown mínimo aproximado de un pool es la suma de `1.5 s × (lotes de la marca - 1)`, sin contar consultas a DB, tokens ni llamadas remotas. Un pool muy grande puede tardar varios minutos incluso en simulación.
+El cooldown mínimo aproximado por marca LIVE es `1.5 s × (lotes de la marca - 1)`, sin contar consultas, tokens ni llamadas remotas. Hasta tres marcas avanzan en paralelo. En dry run no se aplica cooldown ni se solicitan tokens.
 
-Los contadores de `AutoOpenExecution` se guardan al terminar el pool completo, no después de cada marca. Por eso una ejecución larga puede mostrar ceros mientras está trabajando y perder el progreso visible si el proceso se reinicia.
+Los contadores se guardan después de cada lote y al terminar cada marca. La UI puede mostrar progreso real, marca actual, fallos y resultados aun cuando el pool completo todavía está trabajando.
 
 #### Reinicios y ejecuciones huérfanas
 
-El processor reclama una ejecución únicamente cuando su estado es `pending`. Si el backend se reinicia después de haberla cambiado a `running`:
+Al iniciar el backend y cada cinco minutos, `AutoOpenRecoveryService` reconcilia PostgreSQL con BullMQ:
 
-1. BullMQ puede volver a entregar el job como stalled/retry;
-2. el nuevo intento encuentra `running` y sale sin ejecutar;
-3. BullMQ puede marcar ese intento como completado;
-4. PostgreSQL conserva la ejecución en `running` indefinidamente.
+1. vuelve a encolar ejecuciones `pending` sin job;
+2. devuelve a `pending` los checkpoints de marca que quedaron `running` por un reinicio;
+3. vuelve a encolar únicamente las marcas incompletas;
+4. conserva las marcas ya terminadas y no repite sus aperturas;
+5. cierra como `failed` una ejecución antigua sin checkpoints que haya perdido su job;
+6. recalcula el resultado agregado cuando todas las marcas ya son terminales.
 
-Antes de cualquier despliegue, comprobar que no existan ejecuciones Auto Open `pending` o `running`. Si existe una ejecución huérfana —DB en `running`, pero job inexistente/completado en Redis— no lanzar otra sin revisar el modo y el impacto. En `dryRun` puede cerrarse como interrumpida; en LIVE primero debe verificarse qué tiendas alcanzaron a recibir la llamada remota.
-
-Correcciones recomendadas antes de activar LIVE a gran escala:
-
-- reconciliación de ejecuciones huérfanas al iniciar el backend;
-- checkpoints por marca o lote;
-- jobs separados por marca con ejecución agregada;
-- revalidación de emergencias por lote para reducir consultas, conservando una comprobación final antes de escribir;
-- estado de error explícito por tienda;
-- protección para restauraciones parciales o fallidas.
+El endpoint **Run now** rechaza iniciar otro recorrido del mismo pool mientras exista uno `pending` o `running`. Esto evita solapamientos manuales y programados.
 
 #### Frontend — `/integrations/auto-open`
 
@@ -1260,7 +1259,9 @@ La página muestra tarjetas por pool. Cada tarjeta permite:
 - Ver las horas en la zona horaria configurada
 - Editar horario, modo, webhook y timezone
 - Ejecutar el pool manualmente (botón "Run now")
-- Ver historial, tiendas simuladas/abiertas y protegidas por emergencias
+- Ver historial, porcentaje de avance y marca actual
+- Abrir el detalle por marca, incluyendo tiendas simuladas/abiertas, protegidas y fallidas
+- Consultar los primeros errores de tienda sin revisar logs del contenedor
 
 #### Snapshot de producción — 19 de agosto de 2026
 
@@ -1779,7 +1780,7 @@ git push origin HEAD:main
 
 No ejecutar además un despliegue manual mientras GitHub Actions está desplegando. Verificar en GitHub que **CI** y **Deploy** finalicen en verde.
 
-> **Preflight obligatorio de integraciones:** el workflow reconstruye y reinicia el backend incluso si el cambio es sólo documental. Antes de hacer push a `main`, revisar que Cross App Menu Copy/Forced Handshake y Auto Open no tengan ejecuciones `pending` o `running`. Un reinicio cancela Menu Copy activo y actualmente puede dejar Auto Open huérfano en `running`. Esperar a que terminen o programar una ventana de despliegue.
+> **Preflight obligatorio de integraciones:** el workflow reconstruye y reinicia el backend incluso si el cambio es sólo documental. Antes de hacer push a `main`, revisar Cross App Menu Copy/Forced Handshake y Auto Open. Menu Copy activo debe terminar o cancelarse en una ventana controlada. Auto Open conserva checkpoints por marca y se recupera automáticamente al iniciar; aun así, revisar el modo LIVE y los contadores antes y después del despliegue.
 
 ### Producción — Makefile (operación manual de contingencia)
 

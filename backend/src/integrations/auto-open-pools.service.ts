@@ -145,11 +145,24 @@ export class AutoOpenPoolsService {
 
   async runNow(id: string) {
     await this.ensureManagedKaPools();
-    return this.enqueue(await this.findOne(id), null);
+    const pool = await this.findOne(id);
+    const active = await this.prisma.autoOpenExecution.findFirst({
+      where: { poolId: id, status: { in: ['pending', 'running'] } },
+      select: { id: true, status: true },
+    });
+    if (active) {
+      throw new BadRequestException(`Auto Open pool already has an active ${active.status} execution: ${active.id}`);
+    }
+    return this.enqueue(pool, null);
   }
 
   async runScheduled(id: string, scheduledSlot: Date) {
     try {
+      const active = await this.prisma.autoOpenExecution.findFirst({
+        where: { poolId: id, status: { in: ['pending', 'running'] } },
+        select: { id: true },
+      });
+      if (active) return null;
       return await this.enqueue(await this.findOne(id), scheduledSlot);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return null;
@@ -180,6 +193,7 @@ export class AutoOpenPoolsService {
         orderBy: { createdAt: 'desc' },
         skip: (safePage - 1) * safeLimit,
         take: safeLimit,
+        include: { brandRuns: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
       }),
       this.prisma.autoOpenExecution.count({ where: { poolId } }),
     ]);
@@ -193,8 +207,9 @@ export class AutoOpenPoolsService {
       data: { poolId: pool.id, status: 'pending', dryRun: pool.dryRun, remoteWritesEnabled, scheduledSlot },
     });
     try {
-      await this.queue.add('run-pool', { executionId: execution.id }, {
-        jobId: scheduledSlot ? `auto-open-${pool.id}-${scheduledSlot.getTime()}` : execution.id,
+      await this.queue.add('prepare-pool', { executionId: execution.id }, {
+        jobId: `auto-open-prepare-${execution.id}`,
+        attempts: 1,
         removeOnComplete: 500,
         removeOnFail: 500,
       });

@@ -942,14 +942,51 @@ model AutoOpenExecution {
   shopsOpened           Int            @default(0) @map("shops_opened")
   shopsWouldOpen        Int            @default(0) @map("shops_would_open")
   shopsSkippedEmergency Int            @default(0) @map("shops_skipped_emergency")
+  shopsFailed           Int            @default(0) @map("shops_failed")
+  totalBrands           Int            @default(0) @map("total_brands")
+  brandsCompleted       Int            @default(0) @map("brands_completed")
+  brandsFailed          Int            @default(0) @map("brands_failed")
+  progressPercent       Int            @default(0) @map("progress_percent")
+  currentBrand          String?        @map("current_brand")
+  errorMessage          String?        @map("error_message") @db.Text
+  heartbeatAt           DateTime?      @map("heartbeat_at") @db.Timestamptz
   logs                  Json?
   createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
-  pool AutoOpenPool @relation(fields: [poolId], references: [id])
+  pool       AutoOpenPool             @relation(fields: [poolId], references: [id])
+  brandRuns  AutoOpenBrandExecution[]
 
   @@index([poolId])
+  @@index([status, heartbeatAt])
   @@unique([poolId, scheduledSlot])
   @@map("auto_open_execution")
+}
+
+model AutoOpenBrandExecution {
+  id                    String         @id @default(uuid()) @db.Uuid
+  executionId           String         @map("execution_id") @db.Uuid
+  brandId               String         @map("brand_id") @db.Uuid
+  brandName             String         @map("brand_name")
+  status                AutoOpenStatus @default(pending)
+  startedAt             DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt            DateTime?      @map("finished_at") @db.Timestamptz
+  totalShops            Int            @default(0) @map("total_shops")
+  shopsProcessed        Int            @default(0) @map("shops_processed")
+  shopsOpened           Int            @default(0) @map("shops_opened")
+  shopsWouldOpen        Int            @default(0) @map("shops_would_open")
+  shopsSkippedEmergency Int            @default(0) @map("shops_skipped_emergency")
+  shopsFailed           Int            @default(0) @map("shops_failed")
+  errorMessage          String?        @map("error_message") @db.Text
+  shopErrors            Json?          @map("shop_errors")
+  createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  execution AutoOpenExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, brandId])
+  @@index([executionId, status])
+  @@index([status, updatedAt])
+  @@map("auto_open_brand_execution")
 }
 
 // -------------------- Integrations: Auto Turn Off Items ---------------------

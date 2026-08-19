@@ -28,6 +28,7 @@ import { ForcedOpenProcessor } from './forced-open.processor';
 import { AutoOpenPoolsController } from './auto-open-pools.controller';
 import { AutoOpenPoolsService } from './auto-open-pools.service';
 import { AutoOpenProcessor } from './auto-open.processor';
+import { AutoOpenRecoveryService } from './auto-open-recovery.service';
 import { AutoOpenScheduler } from './auto-open.scheduler';
 
 @Module({
@@ -64,6 +65,7 @@ import { AutoOpenScheduler } from './auto-open.scheduler';
     ForcedOpenProcessor,
     AutoOpenPoolsService,
     AutoOpenProcessor,
+    AutoOpenRecoveryService,
     AutoOpenScheduler,
   ],
 })

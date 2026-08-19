@@ -1,31 +1,74 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Job } from 'bullmq';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { WebhookSenderService } from '../webhooks/webhook-sender.service';
+import { AutoOpenStatus, Prisma } from '@prisma/client';
+import { Job, Queue } from 'bullmq';
 import { decrypt } from '../common/crypto.util';
+import { PrismaService } from '../prisma/prisma.service';
 import {
-  DIDI_BASE,
   BATCH_SIZE,
   COOLDOWN_BATCH_MS,
+  DIDI_BASE,
   getAuthToken,
   parseJsonKeepingIds,
   sleep,
 } from '../queue/handlers/didi-food.util';
+import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 
-interface BrandLog {
+interface AutoOpenJobData {
+  executionId: string;
+  brandRunId?: string;
+}
+
+interface ShopError {
+  shopId: string;
+  appShopId: string;
+  error: string;
+}
+
+export interface BrandLog {
   brandName: string;
   shopsProcessed: number;
   shopsOpened: number;
   shopsWouldOpen: number;
   shopsSkippedEmergency: number;
+  shopsFailed: number;
   blockedByEmergency?: boolean;
   error?: string;
+  shopErrors?: ShopError[];
 }
 
-const LIVE_EMERGENCY_STATUSES = ['pending', 'running', 'offline', 'partial_success', 'restoring'];
+function serializedShopErrors(value: Prisma.JsonValue): ShopError[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const errors = value.filter((item): item is Prisma.JsonObject => (
+    item !== null && !Array.isArray(item) && typeof item === 'object'
+  )).flatMap(item => (
+    typeof item.shopId === 'string'
+    && typeof item.appShopId === 'string'
+    && typeof item.error === 'string'
+      ? [{ shopId: item.shopId, appShopId: item.appShopId, error: item.error }]
+      : []
+  ));
+  return errors.length ? errors : undefined;
+}
+
+// Product decision: partial_restored and restore_failed are intentionally not
+// live emergencies for Auto Open.
+export const LIVE_AUTO_OPEN_EMERGENCY_STATUSES = [
+  'pending',
+  'running',
+  'offline',
+  'partial_success',
+  'restoring',
+] as const;
+
+const TERMINAL_BRAND_STATUSES: AutoOpenStatus[] = [
+  AutoOpenStatus.done,
+  AutoOpenStatus.partial_success,
+  AutoOpenStatus.failed,
+  AutoOpenStatus.cancelled,
+];
+const MAX_RECORDED_SHOP_ERRORS = 20;
 
 export function buildEmergencyProtection(emergencies: Array<{
   brandId: string;
@@ -44,21 +87,21 @@ export function buildEmergencyProtection(emergencies: Array<{
   return { blockedBrands, blockedShopsByBrand };
 }
 
-async function openShop(authToken: string): Promise<boolean> {
-  try {
-    const response = await fetch(`${DIDI_BASE}/v1/shop/shop/setStatus`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ auth_token: authToken, biz_status: 1, auto_switch: 3 }),
-    });
-    const body = parseJsonKeepingIds(await response.text());
-    return body.errno === 0;
-  } catch {
-    return false;
+async function openShop(authToken: string): Promise<void> {
+  const endpoint = 'POST /v1/shop/shop/setStatus';
+  const response = await fetch(`${DIDI_BASE}/v1/shop/shop/setStatus`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auth_token: authToken, biz_status: 1, auto_switch: 3 }),
+  });
+  const body = parseJsonKeepingIds(await response.text());
+  if (!response.ok || body.errno !== 0) {
+    throw new Error(`${endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
   }
 }
 
-@Processor('auto-open', { concurrency: 1 })
+@Injectable()
+@Processor('auto-open', { concurrency: 3 })
 export class AutoOpenProcessor extends WorkerHost {
   private readonly logger = new Logger(AutoOpenProcessor.name);
 
@@ -66,172 +109,81 @@ export class AutoOpenProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly webhooks: WebhookSenderService,
+    @InjectQueue('auto-open') private readonly queue: Queue,
   ) {
     super();
   }
 
-  async process(job: Job<{ executionId: string }>): Promise<void> {
-    const { executionId } = job.data;
-    const claimed = await this.prisma.autoOpenExecution.updateMany({
-      where: { id: executionId, status: 'pending' },
-      data: { status: 'running', startedAt: new Date() },
-    });
-    if (claimed.count === 0) {
-      this.logger.warn(`Auto Open execution ${executionId} was already claimed or completed`);
+  async process(job: Job<AutoOpenJobData>): Promise<void> {
+    if (job.name === 'run-brand' && job.data.brandRunId) {
+      await this.processBrand(job.data.executionId, job.data.brandRunId);
       return;
     }
-
-    try {
-      await this.execute(executionId);
-    } catch (error) {
-      const message = (error as Error).message;
-      this.logger.error(`Auto Open execution ${executionId} failed: ${message}`);
-      await this.prisma.autoOpenExecution.updateMany({
-        where: { id: executionId, status: 'running' },
-        data: { status: 'failed', finishedAt: new Date(), logs: { error: message } },
-      });
-      throw error;
-    }
+    await this.prepareExecution(job.data.executionId);
   }
 
-  private async execute(executionId: string) {
+  async reconcileExecution(executionId: string): Promise<void> {
     const execution = await this.prisma.autoOpenExecution.findUnique({
       where: { id: executionId },
       include: {
-        pool: {
-          include: {
-            brands: {
-              include: {
-                brand: {
-                  include: {
-                    application: { select: { appId: true, appSecret: true } },
-                    shops: { where: { deletedAt: null }, select: { id: true, appShopId: true } },
-                  },
-                },
-              },
-            },
-          },
-        },
+        pool: { select: { id: true, name: true, country: true, webhookId: true } },
+        brandRuns: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
       },
     });
-    if (!execution) throw new Error(`Execution ${executionId} not found`);
+    if (!execution || execution.status !== AutoOpenStatus.running) return;
 
-    const serverWritesEnabled = this.config.get<string>('AUTO_OPEN_REMOTE_WRITE_ENABLED')?.trim().toLowerCase() === 'true';
-    if (!execution.dryRun && (!execution.remoteWritesEnabled || !serverWritesEnabled)) {
-      throw new Error('Live Auto Open was stopped because remote writes are disabled on this server');
-    }
+    const completed = execution.brandRuns.filter(run => TERMINAL_BRAND_STATUSES.includes(run.status)).length;
+    const brandsFailed = execution.brandRuns.filter(run => run.status !== AutoOpenStatus.done && TERMINAL_BRAND_STATUSES.includes(run.status)).length;
+    const totalShops = execution.brandRuns.reduce((total, run) => total + run.totalShops, 0);
+    const shopsOpened = execution.brandRuns.reduce((total, run) => total + run.shopsOpened, 0);
+    const shopsWouldOpen = execution.brandRuns.reduce((total, run) => total + run.shopsWouldOpen, 0);
+    const shopsSkippedEmergency = execution.brandRuns.reduce((total, run) => total + run.shopsSkippedEmergency, 0);
+    const shopsFailed = execution.brandRuns.reduce((total, run) => total + run.shopsFailed, 0);
+    const allComplete = execution.totalBrands === completed;
+    const progressPercent = execution.totalBrands > 0
+      ? Math.min(100, Math.floor((completed / execution.totalBrands) * 100))
+      : 100;
+    const logs = {
+      mode: execution.dryRun ? 'dry_run' : 'live',
+      brands: execution.brandRuns.map(run => ({
+        brandName: run.brandName,
+        shopsProcessed: run.shopsProcessed,
+        shopsOpened: run.shopsOpened,
+        shopsWouldOpen: run.shopsWouldOpen,
+        shopsSkippedEmergency: run.shopsSkippedEmergency,
+        shopsFailed: run.shopsFailed,
+        ...(run.errorMessage ? { error: run.errorMessage } : {}),
+        ...(serializedShopErrors(run.shopErrors) ? { shopErrors: serializedShopErrors(run.shopErrors) } : {}),
+      })),
+    } satisfies { mode: string; brands: BrandLog[] };
 
-    const encKey = this.config.get<string>('APP_SECRET_ENCRYPTION_KEY') ?? '';
-    const brandLogs: BrandLog[] = [];
-    let totalShops = 0;
-    let totalOpened = 0;
-    let totalWouldOpen = 0;
-    let totalSkippedEmergency = 0;
-
-    const brandIds = execution.pool.brands.map(item => item.brand.id);
-    const liveEmergencies = brandIds.length > 0
-      ? await this.prisma.storeEmergency.findMany({
-        where: { brandId: { in: brandIds }, status: { in: LIVE_EMERGENCY_STATUSES }, finishedAt: null },
-        select: { brandId: true, mode: true, targets: { select: { shopId: true } } },
-      })
-      : [];
-    const { blockedBrands, blockedShopsByBrand } = buildEmergencyProtection(liveEmergencies);
-
-    for (const { brand } of execution.pool.brands) {
-      const emptyLog = { shopsProcessed: 0, shopsOpened: 0, shopsWouldOpen: 0, shopsSkippedEmergency: 0 };
-      if (!brand.application) {
-        brandLogs.push({ brandName: brand.brandName, ...emptyLog, error: 'No application linked' });
-        continue;
-      }
-      if (blockedBrands.has(brand.id)) {
-        totalSkippedEmergency += brand.shops.length;
-        brandLogs.push({
-          brandName: brand.brandName,
-          ...emptyLog,
-          shopsSkippedEmergency: brand.shops.length,
-          blockedByEmergency: true,
-        });
-        continue;
-      }
-
-      const blockedShopIds = blockedShopsByBrand.get(brand.id) ?? new Set<string>();
-      let shopsSkippedEmergency = brand.shops.filter(shop => blockedShopIds.has(shop.id)).length;
-      const shops = brand.shops.filter(shop => !blockedShopIds.has(shop.id));
-      totalSkippedEmergency += shopsSkippedEmergency;
-      let shopsProcessed = 0;
-      let shopsOpened = 0;
-      let shopsWouldOpen = 0;
-
-      try {
-        const appId = brand.application.appId;
-        const appSecret = encKey ? decrypt(brand.application.appSecret, encKey) : brand.application.appSecret;
-        for (let index = 0; index < shops.length; index += BATCH_SIZE) {
-          const batch = shops.slice(index, index + BATCH_SIZE);
-          for (const shop of batch) {
-            if (execution.dryRun) {
-              if (await this.hasLiveEmergency(brand.id, shop.id)) {
-                shopsSkippedEmergency++;
-                totalSkippedEmergency++;
-                continue;
-              }
-              shopsProcessed++;
-              shopsWouldOpen++;
-              continue;
-            }
-
-            try {
-              const token = await getAuthToken(appId, appSecret, shop.appShopId);
-              // Re-check immediately before the remote write. A new emergency may
-              // have started after the initial pool snapshot or while obtaining the token.
-              if (await this.hasLiveEmergency(brand.id, shop.id)) {
-                shopsSkippedEmergency++;
-                totalSkippedEmergency++;
-                this.logger.warn(`Skipped Auto Open shop ${shop.appShopId}: protected by a live emergency`);
-                continue;
-              }
-              shopsProcessed++;
-              shopsWouldOpen++;
-              if (await openShop(token)) {
-                shopsOpened++;
-                this.logger.log(`Opened shop ${shop.appShopId} (brand: ${brand.brandName})`);
-              }
-            } catch {
-              this.logger.warn(`Could not obtain token for Auto Open shop ${shop.appShopId}`);
-            }
-          }
-          if (index + BATCH_SIZE < shops.length) await sleep(COOLDOWN_BATCH_MS);
-        }
-        brandLogs.push({ brandName: brand.brandName, shopsProcessed, shopsOpened, shopsWouldOpen, shopsSkippedEmergency });
-      } catch (error) {
-        brandLogs.push({
-          brandName: brand.brandName,
-          shopsProcessed,
-          shopsOpened,
-          shopsWouldOpen,
-          shopsSkippedEmergency,
-          error: (error as Error).message,
-        });
-      }
-      totalShops += shopsProcessed;
-      totalOpened += shopsOpened;
-      totalWouldOpen += shopsWouldOpen;
-    }
-
-    await this.prisma.autoOpenExecution.update({
-      where: { id: executionId },
+    const finalStatus = brandsFailed > 0 || shopsFailed > 0
+      ? AutoOpenStatus.partial_success
+      : AutoOpenStatus.done;
+    const updated = await this.prisma.autoOpenExecution.updateMany({
+      where: { id: executionId, status: AutoOpenStatus.running },
       data: {
-        status: brandLogs.some(log => log.error) ? 'partial_success' : 'done',
-        finishedAt: new Date(),
+        brandsCompleted: completed,
+        brandsFailed,
         totalShops,
-        shopsOpened: totalOpened,
-        shopsWouldOpen: totalWouldOpen,
-        shopsSkippedEmergency: totalSkippedEmergency,
-        logs: {
-          mode: execution.dryRun ? 'dry_run' : 'live',
-          brands: brandLogs,
-        } as unknown as Prisma.InputJsonValue,
+        shopsOpened,
+        shopsWouldOpen,
+        shopsSkippedEmergency,
+        shopsFailed,
+        progressPercent,
+        heartbeatAt: new Date(),
+        logs: logs as unknown as Prisma.InputJsonValue,
+        ...(allComplete ? {
+          status: finalStatus,
+          finishedAt: new Date(),
+          currentBrand: null,
+          errorMessage: brandsFailed || shopsFailed
+            ? `${brandsFailed} brand(s) with errors; ${shopsFailed} store opening(s) failed`
+            : null,
+        } : {}),
       },
     });
+    if (!allComplete || !updated.count) return;
 
     if (execution.pool.webhookId) {
       await this.webhooks.sendToWebhook(execution.pool.webhookId, {
@@ -239,26 +191,329 @@ export class AutoOpenProcessor extends WorkerHost {
         attachments: [{
           title: execution.dryRun ? 'Dry-run complete — no stores were changed' : 'Live execution complete',
           text: [
+            `**Brands completed:** ${completed}/${execution.totalBrands}`,
             `**Shops processed:** ${totalShops}`,
-            `**Would open:** ${totalWouldOpen}`,
-            `**Actually opened:** ${totalOpened}`,
-            `**Protected by emergencies:** ${totalSkippedEmergency}`,
+            `**Would open:** ${shopsWouldOpen}`,
+            `**Actually opened:** ${shopsOpened}`,
+            `**Failed:** ${shopsFailed}`,
+            `**Protected by emergencies:** ${shopsSkippedEmergency}`,
           ].join('\n'),
-          color: execution.dryRun ? '#2D9CDB' : '#00C853',
+          color: brandsFailed || shopsFailed ? '#F79009' : execution.dryRun ? '#2D9CDB' : '#00C853',
         }],
       });
     }
     this.logger.log(
-      `Auto Open ${executionId} ${execution.dryRun ? 'dry-run' : 'live'} done: ` +
-      `${totalOpened} opened, ${totalWouldOpen} attempted, ${totalSkippedEmergency} protected`,
+      `Auto Open ${executionId} ${execution.dryRun ? 'dry-run' : 'live'} finished: `
+      + `${completed}/${execution.totalBrands} brands, ${shopsOpened} opened, ${shopsFailed} failed, `
+      + `${shopsSkippedEmergency} protected`,
     );
+  }
+
+  private async prepareExecution(executionId: string): Promise<void> {
+    const claimed = await this.prisma.autoOpenExecution.updateMany({
+      where: { id: executionId, status: AutoOpenStatus.pending },
+      data: {
+        status: AutoOpenStatus.running,
+        startedAt: new Date(),
+        heartbeatAt: new Date(),
+        errorMessage: null,
+      },
+    });
+    if (!claimed.count) {
+      const existing = await this.prisma.autoOpenExecution.findUnique({
+        where: { id: executionId },
+        select: { status: true },
+      });
+      if (existing?.status === AutoOpenStatus.running) await this.enqueuePendingBrandRuns(executionId);
+      return;
+    }
+
+    try {
+      const execution = await this.prisma.autoOpenExecution.findUnique({
+        where: { id: executionId },
+        include: {
+          pool: {
+            include: {
+              brands: {
+                include: { brand: { select: { id: true, brandName: true, deletedAt: true } } },
+                orderBy: { brand: { brandName: 'asc' } },
+              },
+            },
+          },
+        },
+      });
+      if (!execution) throw new Error(`Execution ${executionId} not found`);
+      this.assertRemoteWriteGates(execution.dryRun, execution.remoteWritesEnabled);
+
+      const brands = execution.pool.brands.filter(item => !item.brand.deletedAt).map(item => item.brand);
+      await this.prisma.$transaction([
+        this.prisma.autoOpenBrandExecution.createMany({
+          data: brands.map(brand => ({ executionId, brandId: brand.id, brandName: brand.brandName })),
+          skipDuplicates: true,
+        }),
+        this.prisma.autoOpenExecution.update({
+          where: { id: executionId },
+          data: {
+            totalBrands: brands.length,
+            brandsCompleted: 0,
+            brandsFailed: 0,
+            progressPercent: brands.length ? 0 : 100,
+            heartbeatAt: new Date(),
+            ...(brands.length ? {} : {
+              status: AutoOpenStatus.done,
+              finishedAt: new Date(),
+              logs: { mode: execution.dryRun ? 'dry_run' : 'live', brands: [] },
+            }),
+          },
+        }),
+      ]);
+      if (brands.length) await this.enqueuePendingBrandRuns(executionId);
+    } catch (error) {
+      const message = (error as Error).message;
+      await this.prisma.autoOpenExecution.updateMany({
+        where: { id: executionId, status: AutoOpenStatus.running },
+        data: {
+          status: AutoOpenStatus.failed,
+          finishedAt: new Date(),
+          heartbeatAt: new Date(),
+          errorMessage: message,
+          logs: { error: message },
+        },
+      });
+      this.logger.error(`Auto Open execution ${executionId} could not be prepared: ${message}`);
+      throw error;
+    }
+  }
+
+  private async enqueuePendingBrandRuns(executionId: string) {
+    const runs = await this.prisma.autoOpenBrandExecution.findMany({
+      where: { executionId, status: AutoOpenStatus.pending },
+      select: { id: true },
+    });
+    if (!runs.length) {
+      await this.reconcileExecution(executionId);
+      return;
+    }
+    await this.queue.addBulk(runs.map(run => ({
+      name: 'run-brand',
+      data: { executionId, brandRunId: run.id },
+      opts: {
+        jobId: `auto-open-brand-${run.id}`,
+        attempts: 1,
+        removeOnComplete: 500,
+        removeOnFail: 500,
+      },
+    })));
+  }
+
+  private async processBrand(executionId: string, brandRunId: string): Promise<void> {
+    const claimed = await this.prisma.autoOpenBrandExecution.updateMany({
+      where: { id: brandRunId, executionId, status: AutoOpenStatus.pending },
+      data: { status: AutoOpenStatus.running, startedAt: new Date(), finishedAt: null, errorMessage: null },
+    });
+    if (!claimed.count) return;
+
+    try {
+      const execution = await this.prisma.autoOpenExecution.findUnique({
+        where: { id: executionId },
+        select: { id: true, status: true, dryRun: true, remoteWritesEnabled: true },
+      });
+      const brandRun = await this.prisma.autoOpenBrandExecution.findUnique({
+        where: { id: brandRunId },
+        select: { brandId: true, brandName: true },
+      });
+      if (!execution || execution.status !== AutoOpenStatus.running || !brandRun) {
+        await this.prisma.autoOpenBrandExecution.updateMany({
+          where: { id: brandRunId, executionId, status: AutoOpenStatus.running },
+          data: {
+            status: AutoOpenStatus.cancelled,
+            finishedAt: new Date(),
+            errorMessage: 'Parent execution is no longer active',
+          },
+        });
+        return;
+      }
+      this.assertRemoteWriteGates(execution.dryRun, execution.remoteWritesEnabled);
+
+      const brand = await this.prisma.brand.findFirst({
+        where: { id: brandRun.brandId, deletedAt: null },
+        select: {
+          id: true,
+          brandName: true,
+          application: { select: { appId: true, appSecret: true, deletedAt: true } },
+          shops: {
+            where: { deletedAt: null },
+            select: { id: true, shopId: true, appShopId: true },
+            orderBy: [{ shopId: 'asc' }, { id: 'asc' }],
+          },
+        },
+      });
+      if (!brand) {
+        await this.finishBrand(executionId, brandRunId, AutoOpenStatus.failed, {
+          totalShops: 0, shopsProcessed: 0, shopsOpened: 0, shopsWouldOpen: 0,
+          shopsSkippedEmergency: 0, shopsFailed: 0, errorMessage: 'Brand is no longer active', shopErrors: [],
+        });
+        return;
+      }
+      if (!brand.application || brand.application.deletedAt) {
+        await this.finishBrand(executionId, brandRunId, AutoOpenStatus.failed, {
+          totalShops: brand.shops.length, shopsProcessed: 0, shopsOpened: 0, shopsWouldOpen: 0,
+          shopsSkippedEmergency: 0, shopsFailed: 0, errorMessage: 'No active application linked', shopErrors: [],
+        });
+        return;
+      }
+
+      let appSecret = '';
+      if (!execution.dryRun) {
+        const encryptionKey = this.config.get<string>('APP_SECRET_ENCRYPTION_KEY') ?? '';
+        appSecret = encryptionKey ? decrypt(brand.application.appSecret, encryptionKey) : brand.application.appSecret;
+      }
+
+      let shopsProcessed = 0;
+      let shopsOpened = 0;
+      let shopsWouldOpen = 0;
+      let shopsSkippedEmergency = 0;
+      let shopsFailed = 0;
+      const shopErrors: ShopError[] = [];
+
+      await this.prisma.autoOpenBrandExecution.update({
+        where: { id: brandRunId },
+        data: { totalShops: brand.shops.length },
+      });
+      for (let index = 0; index < brand.shops.length; index += BATCH_SIZE) {
+        const batch = brand.shops.slice(index, index + BATCH_SIZE);
+        const protection = await this.emergencyProtectionForBatch(brand.id, batch.map(shop => shop.id));
+
+        for (const shop of batch) {
+          if (protection.blockAll || protection.blockedShopIds.has(shop.id)) {
+            shopsSkippedEmergency++;
+            continue;
+          }
+          shopsProcessed++;
+          shopsWouldOpen++;
+          if (execution.dryRun) continue;
+
+          try {
+            const token = await getAuthToken(brand.application.appId, appSecret, shop.appShopId);
+            if (await this.hasLiveEmergency(brand.id, shop.id)) {
+              shopsProcessed--;
+              shopsWouldOpen--;
+              shopsSkippedEmergency++;
+              continue;
+            }
+            await openShop(token);
+            shopsOpened++;
+          } catch (error) {
+            shopsFailed++;
+            if (shopErrors.length < MAX_RECORDED_SHOP_ERRORS) {
+              shopErrors.push({ shopId: shop.shopId, appShopId: shop.appShopId, error: (error as Error).message });
+            }
+          }
+        }
+
+        await this.checkpointBrand(executionId, brandRunId, brand.brandName, {
+          shopsProcessed, shopsOpened, shopsWouldOpen, shopsSkippedEmergency, shopsFailed, shopErrors,
+        });
+        if (!execution.dryRun && index + BATCH_SIZE < brand.shops.length) await sleep(COOLDOWN_BATCH_MS);
+      }
+
+      await this.finishBrand(executionId, brandRunId, shopsFailed ? AutoOpenStatus.partial_success : AutoOpenStatus.done, {
+        totalShops: brand.shops.length,
+        shopsProcessed,
+        shopsOpened,
+        shopsWouldOpen,
+        shopsSkippedEmergency,
+        shopsFailed,
+        errorMessage: shopsFailed ? `${shopsFailed} store opening(s) failed` : null,
+        shopErrors,
+      });
+    } catch (error) {
+      const message = (error as Error).message;
+      this.logger.error(`Auto Open brand run ${brandRunId} failed: ${message}`);
+      await this.finishBrand(executionId, brandRunId, AutoOpenStatus.failed, { errorMessage: message });
+    }
+  }
+
+  private async checkpointBrand(
+    executionId: string,
+    brandRunId: string,
+    brandName: string,
+    metrics: {
+      shopsProcessed: number;
+      shopsOpened: number;
+      shopsWouldOpen: number;
+      shopsSkippedEmergency: number;
+      shopsFailed: number;
+      shopErrors: ShopError[];
+    },
+  ) {
+    await this.prisma.$transaction([
+      this.prisma.autoOpenBrandExecution.update({
+        where: { id: brandRunId },
+        data: { ...metrics, shopErrors: metrics.shopErrors as unknown as Prisma.InputJsonValue },
+      }),
+      this.prisma.autoOpenExecution.updateMany({
+        where: { id: executionId, status: AutoOpenStatus.running },
+        data: { currentBrand: brandName, heartbeatAt: new Date() },
+      }),
+    ]);
+  }
+
+  private async finishBrand(
+    executionId: string,
+    brandRunId: string,
+    status: AutoOpenStatus,
+    data: Partial<{
+      totalShops: number;
+      shopsProcessed: number;
+      shopsOpened: number;
+      shopsWouldOpen: number;
+      shopsSkippedEmergency: number;
+      shopsFailed: number;
+      errorMessage: string | null;
+      shopErrors: ShopError[];
+    }>,
+  ) {
+    await this.prisma.autoOpenBrandExecution.update({
+      where: { id: brandRunId },
+      data: {
+        ...data,
+        shopErrors: undefined,
+        status,
+        finishedAt: new Date(),
+        ...(data.shopErrors ? { shopErrors: data.shopErrors as unknown as Prisma.InputJsonValue } : {}),
+      },
+    });
+    await this.reconcileExecution(executionId);
+  }
+
+  private async emergencyProtectionForBatch(brandId: string, shopIds: string[]) {
+    const emergencies = await this.prisma.storeEmergency.findMany({
+      where: {
+        brandId,
+        status: { in: [...LIVE_AUTO_OPEN_EMERGENCY_STATUSES] },
+        finishedAt: null,
+        OR: [
+          { mode: 'all_brand' },
+          { mode: 'shop_list', targets: { some: { shopId: { in: shopIds } } } },
+        ],
+      },
+      select: {
+        mode: true,
+        targets: { where: { shopId: { in: shopIds } }, select: { shopId: true } },
+      },
+    });
+    return {
+      blockAll: emergencies.some(emergency => emergency.mode === 'all_brand'),
+      blockedShopIds: new Set(emergencies.flatMap(emergency => emergency.targets.map(target => target.shopId))),
+    };
   }
 
   private async hasLiveEmergency(brandId: string, shopUuid: string) {
     const emergency = await this.prisma.storeEmergency.findFirst({
       where: {
         brandId,
-        status: { in: LIVE_EMERGENCY_STATUSES },
+        status: { in: [...LIVE_AUTO_OPEN_EMERGENCY_STATUSES] },
         finishedAt: null,
         OR: [
           { mode: 'all_brand' },
@@ -268,5 +523,12 @@ export class AutoOpenProcessor extends WorkerHost {
       select: { id: true },
     });
     return emergency !== null;
+  }
+
+  private assertRemoteWriteGates(dryRun: boolean, executionWritesEnabled: boolean) {
+    const serverWritesEnabled = this.config.get<string>('AUTO_OPEN_REMOTE_WRITE_ENABLED')?.trim().toLowerCase() === 'true';
+    if (!dryRun && (!executionWritesEnabled || !serverWritesEnabled)) {
+      throw new Error('Live Auto Open was stopped because remote writes are disabled on this server');
+    }
   }
 }
