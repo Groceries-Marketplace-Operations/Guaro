@@ -150,6 +150,9 @@ export default function Sidebar() {
       {hasAnyPermission(account, integrationPermissions) && (
         <div className="sidebar-section">
           <div className="sidebar-section-label">{t('nav.integrations')}</div>
+          {can('integrations.forced_open') && <NavLink to="/integrations/auto-open" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconBriefcase /> {t('nav.autoOpenStores')}
+          </NavLink>}
           {can('integrations.forced_open') && <NavLink to="/integrations/forced-open" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> {t('nav.forcedOpenStores')}
           </NavLink>}

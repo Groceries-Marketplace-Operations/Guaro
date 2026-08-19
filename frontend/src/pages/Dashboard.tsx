@@ -213,7 +213,7 @@ export default function Dashboard() {
     const cards: IntegrationCard[] = [];
     if (canSeeAutoOpen) {
       const pools = autoOpenQuery.data ?? [];
-      cards.push({ id: 'auto-open', title: 'Auto Open Stores', description: t('pages.dashboard.integrationAutoOpen'), href: '/integrations/forced-open', active: pools.filter(pool => pool.active).length, total: pools.length, running: 0, issues: 0, tone: 'green' });
+      cards.push({ id: 'auto-open', title: 'Auto Open Stores', description: t('pages.dashboard.integrationAutoOpen'), href: '/integrations/auto-open', active: pools.filter(pool => pool.active).length, total: pools.length, running: 0, issues: 0, tone: 'green' });
     }
     if (canSeeTurnOff) {
       const pools = turnOffQuery.data ?? [];

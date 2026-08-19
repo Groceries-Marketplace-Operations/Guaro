@@ -1,5 +1,5 @@
 import { Country } from '@prisma/client';
-import { IsArray, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 
 export class CreatePoolDto {
   @IsString() @IsNotEmpty()
@@ -13,6 +13,9 @@ export class CreatePoolDto {
 
   @IsOptional() @IsString()
   timezone?: string;
+
+  @IsOptional() @IsBoolean()
+  dryRun?: boolean;
 
   @IsOptional() @IsUUID()
   webhookId?: string;

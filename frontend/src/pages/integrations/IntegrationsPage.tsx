@@ -20,21 +20,6 @@ const TIMEZONES = [
   { label: 'Tijuana',      value: 'America/Tijuana' },
 ];
 
-function getTzOffset(tz: string): number {
-  const now = new Date();
-  const local = new Date(now.toLocaleString('en-US', { timeZone: tz }));
-  const utc   = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
-  return (local.getTime() - utc.getTime()) / 3_600_000;
-}
-
-function localToUtc(h: number, tz: string): number {
-  return ((h - getTzOffset(tz)) % 24 + 24) % 24;
-}
-
-function utcToLocal(h: number, tz: string): number {
-  return ((h + getTzOffset(tz)) % 24 + 24) % 24;
-}
-
 function fmtHour(h: number) {
   return `${String(h).padStart(2, '0')}:00`;
 }
@@ -47,12 +32,14 @@ const statusColor: Record<string, string> = {
   running: 'var(--orange)',
   done:    '#027A48',
   failed:  'var(--red)',
+  partial_success: '#B54708',
 };
 const statusBg: Record<string, string> = {
   pending: 'var(--surface-2)',
   running: 'var(--orange-muted)',
   done:    'var(--green-bg)',
   failed:  'rgba(220,53,69,0.1)',
+  partial_success: '#FFFAEB',
 };
 
 // ── Brand search multi-select ─────────────────────────────────────────────────
@@ -146,30 +133,22 @@ function BrandSearch({ brands, selected, onChange }: BrandSearchProps) {
 
 // ── Hour picker ───────────────────────────────────────────────────────────────
 interface HourPickerProps {
-  /** UTC hours stored in DB */
-  utcHours: number[];
-  timezone: string;
-  onChange: (utcHours: number[]) => void;
+  hours: number[];
+  onChange: (hours: number[]) => void;
 }
 
-function HourPicker({ utcHours, timezone, onChange }: HourPickerProps) {
-  const localSelected = useMemo(
-    () => utcHours.map(h => utcToLocal(h, timezone)),
-    [utcHours, timezone],
-  );
-
+function HourPicker({ hours, onChange }: HourPickerProps) {
   const toggle = (localH: number) => {
-    const utcH = localToUtc(localH, timezone);
-    const next = localSelected.includes(localH)
-      ? utcHours.filter(h => h !== utcH)
-      : [...utcHours, utcH].sort((a, b) => a - b);
+    const next = hours.includes(localH)
+      ? hours.filter(h => h !== localH)
+      : [...hours, localH].sort((a, b) => a - b);
     onChange(next);
   };
 
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
       {HOURS.map(localH => {
-        const sel = localSelected.includes(localH);
+        const sel = hours.includes(localH);
         return (
           <button key={localH} type="button" onClick={() => toggle(localH)}
             style={{
@@ -192,15 +171,16 @@ function HourPicker({ utcHours, timezone, onChange }: HourPickerProps) {
 interface PoolForm {
   name: string;
   country: Country;
-  executionHours: number[]; // UTC
+  executionHours: number[]; // local hours in selected timezone
   timezone: string;
+  dryRun: boolean;
   webhookId: string;
   brandIds: string[];
 }
 
 const EMPTY_FORM: PoolForm = {
   name: '', country: 'CO', executionHours: [],
-  timezone: 'America/Bogota', webhookId: '', brandIds: [],
+  timezone: 'America/Mexico_City', dryRun: true, webhookId: '', brandIds: [],
 };
 
 // ── Color options for notifications ──────────────────────────────────────────
@@ -277,6 +257,7 @@ export default function IntegrationsPage() {
       country: pool.country,
       executionHours: [...pool.executionHours],
       timezone: pool.timezone ?? 'America/Bogota',
+      dryRun: pool.dryRun,
       webhookId: pool.webhookId ?? '',
       brandIds: pool.brands.map(b => b.brandId),
     });
@@ -292,6 +273,7 @@ export default function IntegrationsPage() {
         country: form.country,
         executionHours: form.executionHours,
         timezone: form.timezone,
+        dryRun: form.dryRun,
         webhookId: form.webhookId || undefined,
         brandIds: form.brandIds,
       };
@@ -310,8 +292,13 @@ export default function IntegrationsPage() {
   };
 
   const toggleActive = async (pool: AutoOpenPool) => {
-    await integrationsApi.updatePool(pool.id, { active: !pool.active }).catch(() => null);
-    qc.invalidateQueries({ queryKey: ['auto-open-pools'] });
+    setErr('');
+    try {
+      await integrationsApi.updatePool(pool.id, { active: !pool.active });
+      qc.invalidateQueries({ queryKey: ['auto-open-pools'] });
+    } catch (error) {
+      setErr(errMsg(error));
+    }
   };
 
   const runNow = async (pool: AutoOpenPool) => {
@@ -320,6 +307,8 @@ export default function IntegrationsPage() {
       await integrationsApi.runPool(pool.id);
       setSelectedPoolId(pool.id);
       qc.invalidateQueries({ queryKey: ['auto-open-executions', pool.id] });
+    } catch (error) {
+      setErr(errMsg(error));
     } finally {
       setRunningId(null);
     }
@@ -358,7 +347,7 @@ export default function IntegrationsPage() {
     if (!pool.executionHours.length) return '—';
     const tz = pool.timezone ?? 'UTC';
     return pool.executionHours
-      .map(h => fmtHour(utcToLocal(h, tz)))
+      .map(fmtHour)
       .join(', ') + ` (${tzLabel(tz)})`;
   };
 
@@ -390,6 +379,7 @@ export default function IntegrationsPage() {
         {/* ── Auto Open tab ─────────────────────────────────────────────── */}
         {tab === 'auto-open' && (<>
         {isLoading && <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Loading…</p>}
+        {err && !modalOpen && <div className="error-banner" style={{ marginBottom: 12 }}>{err}</div>}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {pools.map(pool => (
@@ -411,6 +401,14 @@ export default function IntegrationsPage() {
                   <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', flexShrink: 0 }}>
                     {pool.brands.length} brands
                   </span>
+                  <span style={{
+                    fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                    background: pool.dryRun ? '#EAF4FF' : '#FFF0EC',
+                    color: pool.dryRun ? '#175CD3' : '#B42318',
+                  }}>
+                    {pool.dryRun ? 'DRY RUN' : 'LIVE'}
+                  </span>
+                  {pool.managedKey && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>KA · system pool</span>}
                   {pool.executionHours.length > 0 && (
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>
                       🕐 {formatPoolHours(pool)}
@@ -603,6 +601,7 @@ export default function IntegrationsPage() {
             <div className="form-group">
               <label className="form-label">Country</label>
               <select className="form-select" value={form.country}
+                disabled={!!editingPool?.managedKey}
                 onChange={e => setForm(f => ({ ...f, country: e.target.value as Country, brandIds: [] }))}>
                 {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -625,15 +624,33 @@ export default function IntegrationsPage() {
                 </span>
               )}
             </label>
-            <HourPicker
-              utcHours={form.executionHours}
-              timezone={form.timezone}
-              onChange={h => setForm(f => ({ ...f, executionHours: h }))}
-            />
+            <HourPicker hours={form.executionHours} onChange={h => setForm(f => ({ ...f, executionHours: h }))} />
             {form.executionHours.length > 0 && (
               <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 5 }}>
-                UTC: {form.executionHours.map(fmtHour).join(', ')}
+                Horario local: {form.executionHours.map(fmtHour).join(', ')}
               </p>
+            )}
+          </div>
+
+          <div className="form-group">
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={form.dryRun}
+                onChange={event => setForm(value => ({ ...value, dryRun: event.target.checked }))}
+                style={{ marginTop: 3, accentColor: 'var(--orange)' }}
+              />
+              <span>
+                <strong>Modo simulación (recomendado)</strong>
+                <span style={{ display: 'block', fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                  Consulta el estado real y muestra cuántas tiendas abriría, pero nunca envía el POST de apertura.
+                </span>
+              </span>
+            </label>
+            {!form.dryRun && (
+              <div className="error-banner" style={{ marginTop: 10 }}>
+                Modo LIVE: esta configuración puede abrir tiendas reales. El servidor también debe tener habilitada la barrera de escrituras remotas.
+              </div>
             )}
           </div>
 
@@ -661,6 +678,9 @@ export default function IntegrationsPage() {
               selected={form.brandIds}
               onChange={ids => setForm(f => ({ ...f, brandIds: ids }))}
             />
+            {editingPool?.managedKey && (
+              <p className="form-hint">Las marcas KA activas de este país se sincronizan automáticamente.</p>
+            )}
           </div>
         </Modal>
       )}
@@ -689,9 +709,15 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
         <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', flexShrink: 0 }}>
           {new Date(execution.createdAt).toLocaleString()}
         </span>
-        {execution.status === 'done' && (
+        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: execution.dryRun ? '#175CD3' : '#B42318' }}>
+          {execution.dryRun ? 'DRY RUN' : 'LIVE'}
+        </span>
+        {['done', 'partial_success'].includes(execution.status) && (
           <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#027A48' }}>
-            {execution.shopsOpened}/{execution.totalShops} {t('pages.integrations.shopsOpened')}
+            {execution.dryRun
+              ? `${execution.shopsWouldOpen}/${execution.totalShops} abriría`
+              : `${execution.shopsOpened}/${execution.totalShops} ${t('pages.integrations.shopsOpened')}`}
+            {execution.shopsSkippedEmergency > 0 ? ` · ${execution.shopsSkippedEmergency} protegidas` : ''}
           </span>
         )}
         {dur !== null && (
@@ -711,7 +737,10 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
               <span style={{ fontWeight: 500 }}>{b.brandName}</span>
               {b.error
                 ? <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>{b.error}</span>
-                : <span style={{ color: 'var(--text-muted)' }}>{b.shopsOpened}/{b.shopsProcessed} opened</span>
+                : <span style={{ color: 'var(--text-muted)' }}>
+                  {execution.dryRun ? `${b.shopsWouldOpen}/${b.shopsProcessed} abriría` : `${b.shopsOpened}/${b.shopsProcessed} abiertas`}
+                  {b.shopsSkippedEmergency > 0 ? ` · ${b.shopsSkippedEmergency} protegidas` : ''}
+                </span>
               }
             </div>
           ))}

@@ -25,6 +25,10 @@ import { StoreEmergencyScheduler } from './store-emergency.scheduler';
 import { ForcedOpenController } from './forced-open.controller';
 import { ForcedOpenService } from './forced-open.service';
 import { ForcedOpenProcessor } from './forced-open.processor';
+import { AutoOpenPoolsController } from './auto-open-pools.controller';
+import { AutoOpenPoolsService } from './auto-open-pools.service';
+import { AutoOpenProcessor } from './auto-open.processor';
+import { AutoOpenScheduler } from './auto-open.scheduler';
 
 @Module({
   imports: [
@@ -35,12 +39,13 @@ import { ForcedOpenProcessor } from './forced-open.processor';
     BullModule.registerQueue({ name: 'auto-fetch' }),
     BullModule.registerQueue({ name: 'store-emergency' }),
     BullModule.registerQueue({ name: 'forced-open' }),
+    BullModule.registerQueue({ name: 'auto-open' }),
     PrismaModule,
     WebhooksModule,
     ConfigModule,
     CatalogModule,
   ],
-  controllers: [AutoTurnOffController, AutoFetchController, StoreEmergencyController, ForcedOpenController],
+  controllers: [AutoTurnOffController, AutoFetchController, StoreEmergencyController, ForcedOpenController, AutoOpenPoolsController],
   providers: [
     AutoTurnOffService,
     AutoTurnOffCoordinator,
@@ -57,6 +62,9 @@ import { ForcedOpenProcessor } from './forced-open.processor';
     StoreEmergencyScheduler,
     ForcedOpenService,
     ForcedOpenProcessor,
+    AutoOpenPoolsService,
+    AutoOpenProcessor,
+    AutoOpenScheduler,
   ],
 })
 export class IntegrationsModule {}

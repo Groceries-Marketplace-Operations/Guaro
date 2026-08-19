@@ -22,4 +22,7 @@ export class UpdatePoolDto {
 
   @IsOptional() @IsBoolean()
   active?: boolean;
+
+  @IsOptional() @IsBoolean()
+  dryRun?: boolean;
 }

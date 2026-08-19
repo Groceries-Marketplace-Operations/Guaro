@@ -30,6 +30,7 @@ import AutoFetchPage from './pages/integrations/AutoFetchPage';
 import StoreEmergenciesPage from './pages/integrations/StoreEmergenciesPage';
 import SftpApplicationsPage from './pages/admin/SftpApplicationsPage';
 import ForcedOpenStoresPage from './pages/integrations/ForcedOpenStoresPage';
+import IntegrationsPage from './pages/integrations/IntegrationsPage';
 import FileIntegrationsPage from './pages/integrations/FileIntegrationsPage';
 import PromotionApiPage from './pages/integrations/PromotionApiPage';
 import PermissionRoute from './auth/PermissionRoute';
@@ -86,7 +87,7 @@ export default function App() {
               <Route path="config" element={protectedPage(['config.users', 'config.invitations', 'config.handlers', 'config.webhooks'], <Config />)} />
               <Route path="settings" element={protectedPage('settings.manage', <SettingsPage />)} />
               <Route path="applications" element={protectedPage('applications.manage', <ApplicationsPage />)} />
-              <Route path="integrations/auto-open" element={protectedPage('integrations.forced_open', <ForcedOpenStoresPage />)} />
+              <Route path="integrations/auto-open" element={protectedPage('integrations.forced_open', <IntegrationsPage />)} />
               <Route path="integrations/forced-open" element={protectedPage('integrations.forced_open', <ForcedOpenStoresPage />)} />
               <Route path="integrations/auto-turn-off" element={protectedPage('integrations.auto_turn_off', <AutoTurnOffItemsPage />)} />
               <Route path="integrations/auto-stores-fetch" element={protectedPage('integrations.auto_stores_fetch', <AutoFetchPage kind="stores" />)} />

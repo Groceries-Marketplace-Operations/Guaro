@@ -225,9 +225,11 @@ export type AutoOpenStatus = 'pending' | 'running' | 'done' | 'partial_success' 
 
 export interface AutoOpenPool {
   id: string;
+  managedKey?: string;
   name: string;
   country: Country;
   active: boolean;
+  dryRun: boolean;
   executionHours: number[];
   timezone: string;
   webhookId?: string;
@@ -241,11 +243,27 @@ export interface AutoOpenExecution {
   id: string;
   poolId: string;
   status: AutoOpenStatus;
+  dryRun: boolean;
+  remoteWritesEnabled: boolean;
+  scheduledSlot?: string;
   startedAt?: string;
   finishedAt?: string;
   totalShops: number;
   shopsOpened: number;
-  logs?: { brands: Array<{ brandName: string; shopsProcessed: number; shopsOpened: number; error?: string }> };
+  shopsWouldOpen: number;
+  shopsSkippedEmergency: number;
+  logs?: {
+    mode?: 'dry_run' | 'live';
+    brands: Array<{
+      brandName: string;
+      shopsProcessed: number;
+      shopsOpened: number;
+      shopsWouldOpen: number;
+      shopsSkippedEmergency: number;
+      blockedByEmergency?: boolean;
+      error?: string;
+    }>;
+  };
   createdAt: string;
 }
 
