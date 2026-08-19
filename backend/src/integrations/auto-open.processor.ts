@@ -26,6 +26,92 @@ interface ShopError {
   error: string;
 }
 
+interface BrandNotificationInput {
+  executionId: string;
+  poolName: string;
+  country: string;
+  dryRun: boolean;
+  brandName: string;
+  status: AutoOpenStatus;
+  totalShops: number;
+  shopsProcessed: number;
+  shopsOpened: number;
+  shopsWouldOpen: number;
+  shopsSkippedEmergency: number;
+  shopsFailed: number;
+  errorMessage: string | null;
+  shopErrors: ShopError[];
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  frontendUrl: string;
+}
+
+function elapsedLabel(startedAt: Date | null, finishedAt: Date | null) {
+  if (!startedAt || !finishedAt) return 'No disponible';
+  const elapsedSeconds = Math.max(0, Math.round((finishedAt.getTime() - startedAt.getTime()) / 1000));
+  const hours = Math.floor(elapsedSeconds / 3600);
+  const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+  const seconds = elapsedSeconds % 60;
+  return [hours ? `${hours} h` : null, minutes ? `${minutes} min` : null, `${seconds} s`].filter(Boolean).join(' ');
+}
+
+function oneLine(value: string, maxLength = 280) {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  return compact.length > maxLength ? `${compact.slice(0, maxLength - 1)}…` : compact;
+}
+
+export function buildAutoOpenBrandNotification(input: BrandNotificationInput) {
+  const mode = input.dryRun ? 'DRY RUN' : 'LIVE';
+  const statusLabel = input.status === AutoOpenStatus.done
+    ? 'Completada'
+    : input.status === AutoOpenStatus.partial_success
+      ? 'Completada con errores'
+      : input.status === AutoOpenStatus.cancelled
+        ? 'Cancelada'
+        : 'Fallida';
+  const color = input.status === AutoOpenStatus.done
+    ? '#00C853'
+    : input.status === AutoOpenStatus.cancelled
+      ? '#667085'
+      : input.status === AutoOpenStatus.partial_success
+        ? '#F79009'
+        : '#D92D20';
+  const detailUrl = `${input.frontendUrl.replace(/\/$/, '')}/integrations/auto-open`;
+  const shopErrorLines = input.shopErrors.map((error, index) => (
+    `${index + 1}. shop_id ${error.shopId} · app_shop_id ${error.appShopId} · ${oneLine(error.error)}`
+  ));
+  const lines = [
+    `**Pool:** ${input.poolName}`,
+    `**País:** ${input.country}`,
+    `**Modo:** ${mode}`,
+    `**Estado:** ${statusLabel}`,
+    `**Tiendas totales:** ${input.totalShops}`,
+    `**Procesadas:** ${input.shopsProcessed}`,
+    `**Candidatas para apertura:** ${input.shopsWouldOpen}`,
+    `**Abiertas:** ${input.shopsOpened}`,
+    `**Protegidas por emergencias:** ${input.shopsSkippedEmergency}`,
+    `**Fallidas:** ${input.shopsFailed}`,
+    `**Inicio:** ${input.startedAt?.toISOString() ?? 'No disponible'}`,
+    `**Fin:** ${input.finishedAt?.toISOString() ?? 'No disponible'}`,
+    `**Duración:** ${elapsedLabel(input.startedAt, input.finishedAt)}`,
+    `**ID de ejecución:** ${input.executionId}`,
+    ...(input.errorMessage ? [`**Error general:** ${oneLine(input.errorMessage, 500)}`] : []),
+    ...(shopErrorLines.length ? [
+      `**Errores de tiendas (${shopErrorLines.length}/${input.shopsFailed} registrados):**`,
+      ...shopErrorLines,
+    ] : []),
+    `**Detalle:** ${detailUrl}`,
+  ];
+  return {
+    text: `${input.status === AutoOpenStatus.done ? '✅' : input.status === AutoOpenStatus.cancelled ? '⏹️' : '⚠️'} **Auto Open · ${input.brandName}**`,
+    attachments: [{
+      title: `${input.brandName} · ${input.country} · ${mode}`,
+      text: lines.join('\n'),
+      color,
+    }],
+  };
+}
+
 export interface BrandLog {
   brandName: string;
   shopsProcessed: number;
@@ -474,7 +560,7 @@ export class AutoOpenProcessor extends WorkerHost {
       shopErrors: ShopError[];
     }>,
   ) {
-    await this.prisma.autoOpenBrandExecution.update({
+    const brandRun = await this.prisma.autoOpenBrandExecution.update({
       where: { id: brandRunId },
       data: {
         ...data,
@@ -484,7 +570,60 @@ export class AutoOpenProcessor extends WorkerHost {
         ...(data.shopErrors ? { shopErrors: data.shopErrors as unknown as Prisma.InputJsonValue } : {}),
       },
     });
+    await this.notifyBrandCompletion(executionId, brandRun).catch(error => {
+      this.logger.error(`Auto Open brand notification failed for ${brandRunId}: ${(error as Error).message}`);
+    });
     await this.reconcileExecution(executionId);
+  }
+
+  private async notifyBrandCompletion(
+    executionId: string,
+    brandRun: {
+      brandName: string;
+      status: AutoOpenStatus;
+      totalShops: number;
+      shopsProcessed: number;
+      shopsOpened: number;
+      shopsWouldOpen: number;
+      shopsSkippedEmergency: number;
+      shopsFailed: number;
+      errorMessage: string | null;
+      shopErrors: Prisma.JsonValue;
+      startedAt: Date | null;
+      finishedAt: Date | null;
+    },
+  ) {
+    const execution = await this.prisma.autoOpenExecution.findUnique({
+      where: { id: executionId },
+      select: {
+        id: true,
+        dryRun: true,
+        pool: { select: { name: true, country: true, webhookId: true } },
+      },
+    });
+    if (!execution?.pool.webhookId) return;
+    await this.webhooks.sendToWebhook(
+      execution.pool.webhookId,
+      buildAutoOpenBrandNotification({
+        executionId: execution.id,
+        poolName: execution.pool.name,
+        country: execution.pool.country,
+        dryRun: execution.dryRun,
+        brandName: brandRun.brandName,
+        status: brandRun.status,
+        totalShops: brandRun.totalShops,
+        shopsProcessed: brandRun.shopsProcessed,
+        shopsOpened: brandRun.shopsOpened,
+        shopsWouldOpen: brandRun.shopsWouldOpen,
+        shopsSkippedEmergency: brandRun.shopsSkippedEmergency,
+        shopsFailed: brandRun.shopsFailed,
+        errorMessage: brandRun.errorMessage,
+        shopErrors: serializedShopErrors(brandRun.shopErrors) ?? [],
+        startedAt: brandRun.startedAt,
+        finishedAt: brandRun.finishedAt,
+        frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:5173',
+      }),
+    );
   }
 
   private async emergencyProtectionForBatch(brandId: string, shopIds: string[]) {

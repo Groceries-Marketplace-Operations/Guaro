@@ -1176,7 +1176,7 @@ Cada vez que se consulta la configuración o corre el scheduler, estos pools se 
 | `executionHours` | Horas locales 0–23 interpretadas en `timezone`. `[3, 9, 15, 21]` corre cada seis horas |
 | `timezone` | Zona horaria IANA usada tanto por scheduler como por frontend, por ejemplo `America/Mexico_City` |
 | `dryRun` | Si es `true`, calcula el resultado sin enviar aperturas a DiDi |
-| `webhookId` | Webhook que recibe un mensaje al terminar cada ejecución |
+| `webhookId` | Webhook que recibe una notificación detallada por cada marca y un resumen al terminar la ejecución |
 | `brands[]` | Lista de marcas en el pool (con sus Application vinculadas) |
 
 #### Dry run y habilitación LIVE
@@ -1252,6 +1252,12 @@ mantiene utilizable el módulo con emergencias de miles de tiendas.
 | `heartbeatAt` | Último checkpoint recibido por la ejecución |
 
 Cada marca conserva su propio estado, contadores, mensaje de error y hasta 20 errores de tienda (`shopId`, `appShopId`, causa). Cualquier fallo individual deja la ejecución agregada en `partial_success`; ya no es necesario inferirlo comparando contadores.
+
+#### Notificaciones por marca
+
+Los pools KA administrados usan el webhook **Auto Open Stores — Operations**. Al finalizar cada marca se envía un mensaje independiente con país, pool, modo LIVE/DRY RUN, estado, tiendas totales y procesadas, candidatas, abiertas, protegidas por emergencias, fallidas, inicio, fin, duración, ID de ejecución, error general y hasta los 20 errores de tienda conservados por el sistema. Al finalizar todas las marcas se mantiene el resumen agregado del pool.
+
+La notificación no altera la apertura ni el estado de la ejecución: un fallo del webhook se registra en logs, pero no revierte ni repite escrituras remotas de Auto Open.
 
 #### Volumen, duración y progreso
 

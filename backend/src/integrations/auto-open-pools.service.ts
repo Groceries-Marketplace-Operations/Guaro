@@ -24,6 +24,8 @@ const MANAGED_KA_POOLS = [
   { key: 'ka-CR', name: 'KA Auto Open — Costa Rica', country: Country.CR },
 ] as const;
 
+export const AUTO_OPEN_NOTIFICATION_WEBHOOK_ID = 'a0700000-0000-4000-8000-000000000001';
+
 @Injectable()
 export class AutoOpenPoolsService {
   constructor(
@@ -62,8 +64,9 @@ export class AutoOpenPoolsService {
             dryRun: true,
             executionHours: [3, 9, 15, 21],
             timezone: 'America/Mexico_City',
+            webhook: { connect: { id: AUTO_OPEN_NOTIFICATION_WEBHOOK_ID } },
           },
-          update: {},
+          update: { webhook: { connect: { id: AUTO_OPEN_NOTIFICATION_WEBHOOK_ID } } },
           select: { id: true },
         });
         const brands = await tx.brand.findMany({
