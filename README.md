@@ -534,6 +534,20 @@ Requiere: rol `admin` + módulo `integrations` habilitado, o `super_admin`.
 |---|---|---|
 | POST | `/integrations/auto-open/notify` | Enviar notificación manual a uno o más webhooks |
 
+#### Store Emergencies — `/integrations/store-emergencies`
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/integrations/store-emergencies` | Historial paginado de emergencias |
+| GET | `/integrations/store-emergencies/summary` | Emergencias activas, tiendas apagadas, errores y próxima reapertura |
+| GET | `/integrations/store-emergencies/:id` | Detalle y resultado por tienda |
+| POST | `/integrations/store-emergencies` | Crear apagado para toda una marca o una lista de tiendas |
+| PATCH | `/integrations/store-emergencies/:id/reopening` | Cambiar la fecha futura de reapertura |
+| POST | `/integrations/store-emergencies/:id/restore` | Reabrir ahora una emergencia offline |
+| POST | `/integrations/store-emergencies/:id/retry-failures` | Reintentar únicamente apagados o restauraciones fallidas |
+
+Lectura requiere `integrations.emergencies`; mutaciones requieren `integrations.emergencies.execute`.
+
 #### Custom Integrations — `/integrations/menu-copy`
 
 | Método | Ruta | Descripción |
@@ -1104,20 +1118,36 @@ Configurar su URL en `ALERT_WEBHOOK_URL` o crear uno en la UI y marcarlo como "d
 
 ### 11.1 Auto Open
 
-El módulo de Auto Open permite configurar **pools** de marcas que se abren automáticamente a ciertas horas del día mediante un cron interno.
+Auto Open administra **pools** de marcas y ejecuta aperturas programadas o manuales. La ejecución es asíncrona en la cola BullMQ `auto-open`, con un solo job procesándose a la vez por instancia del backend.
 
 #### Cómo funciona
 
 ```
 Cron (cada hora, en punto)
     → revisa todos los pools activos
-    → para cada pool, comprueba si la hora UTC actual está en executionHours[]
+    → convierte el slot a la zona IANA configurada en el pool
+    → comprueba si la hora local está en executionHours[]
     → si sí: lanza una ejecución (AutoOpenExecution)
+        → toma todas las marcas y tiendas locales no eliminadas del pool
+        → carga un snapshot de emergencias vivas
         → itera sobre las marcas del pool
-        → para cada marca, llama a la API de DiDi Food con las credenciales de la Application vinculada
-        → abre todas las tiendas (Shop) de esa marca que estén en estado integrated/online
-        → registra resultado por marca en los logs de la ejecución
+        → omite marcas o tiendas protegidas por emergencias
+        → revalida la emergencia de cada tienda justo antes de la apertura
+        → en modo LIVE llama a setStatus de DiDi; en DRY RUN sólo contabiliza
+        → registra métricas y logs por marca al finalizar el pool completo
 ```
+
+La ejecución manual desde **Run now** usa exactamente el mismo worker y las mismas protecciones. Las ejecuciones programadas guardan `scheduledSlot`; las manuales lo dejan en `null`.
+
+#### Pools KA administrados
+
+El backend mantiene automáticamente tres pools:
+
+- `ka-MX`: KA Auto Open — Mexico;
+- `ka-CO`: KA Auto Open — Colombia;
+- `ka-CR`: KA Auto Open — Costa Rica.
+
+Cada vez que se consulta la configuración o corre el scheduler, estos pools se sincronizan con **todas las marcas KA activas** del país. No se pueden eliminar; sólo desactivar. Su país y lista de marcas no se editan manualmente. Los pools nuevos empiezan desactivados, en `dryRun` y con `[3, 9, 15, 21]` en `America/Mexico_City`.
 
 #### Pool — campos configurables
 
@@ -1126,27 +1156,121 @@ Cron (cada hora, en punto)
 | `name` | Nombre descriptivo del pool (ej. "CO — Restaurantes QSR") |
 | `country` | CO / MX / CR |
 | `active` | Si está desactivado, el cron lo ignora |
-| `executionHours` | Array de horas en formato UTC (0–23). Ej: `[11, 17]` = 11:00 UTC y 17:00 UTC |
-| `timezone` | Zona horaria de referencia para mostrar en el frontend (IANA). No afecta el cron (que siempre usa UTC). Opciones: `America/Bogota`, `America/Mexico_City`, `America/Sao_Paulo`, `America/Tijuana` |
+| `executionHours` | Horas locales 0–23 interpretadas en `timezone`. `[3, 9, 15, 21]` corre cada seis horas |
+| `timezone` | Zona horaria IANA usada tanto por scheduler como por frontend, por ejemplo `America/Mexico_City` |
+| `dryRun` | Si es `true`, calcula el resultado sin enviar aperturas a DiDi |
 | `webhookId` | Webhook que recibe un mensaje al terminar cada ejecución |
 | `brands[]` | Lista de marcas en el pool (con sus Application vinculadas) |
 
-> **Prerequisito:** cada marca del pool debe tener una `Application` vinculada con `appId` y `appSecret` válidos. El frontend advierte si alguna marca del pool no tiene app.
+#### Dry run y habilitación LIVE
+
+Una apertura real requiere simultáneamente:
+
+1. pool con `dryRun = false`;
+2. variable del servidor `AUTO_OPEN_REMOTE_WRITE_ENABLED=true`;
+3. Application activa y credenciales descifrables para cada marca.
+
+Si cualquiera de las dos primeras condiciones falla, el backend no permite iniciar una ejecución LIVE. No basta con cambiar el selector del frontend.
+
+Auto Open **no consulta el estado remoto actual** antes de abrir. Tampoco filtra por el `Shop.status` local: procesa todas las tiendas locales no eliminadas de las marcas incluidas. En LIVE obtiene el token, revalida emergencias y envía:
+
+```json
+{
+  "biz_status": 1,
+  "auto_switch": 3
+}
+```
+
+Procesa lotes de 20 tiendas, de forma secuencial dentro del pool, y espera 1.5 segundos entre lotes de una misma marca.
+
+> **Prerequisito:** cada marca que se espere procesar debe tener una `Application` vinculada con `appId` y `appSecret` válidos. Una marca sin Application se registra como error de marca y hace que la ejecución termine `partial_success`.
+
+#### Protección por emergencias
+
+Auto Open consulta `StoreEmergency` antes de iniciar el recorrido y vuelve a consultar inmediatamente antes de cada escritura remota. También hace la segunda comprobación en `dryRun` para que la simulación represente la protección real.
+
+| Modo de emergencia | Protección aplicada |
+|---|---|
+| `all_brand` | Omite todas las tiendas de la marca |
+| `shop_list` | Omite únicamente las tiendas seleccionadas |
+
+Estados que actualmente se consideran vivos:
+
+```text
+pending, running, offline, partial_success, restoring
+```
+
+La protección comienza desde `pending`, antes de que termine el apagado remoto. Una emergencia que nazca mientras Auto Open está recorriendo el pool también se detecta en la revalidación por tienda.
+
+La emergencia se crea con una fecha futura `endsAt`. El worker de emergencias apaga con `biz_status=2` y `auto_switch=1`. Un scheduler revisa cada minuto las emergencias vencidas, las cambia a `restoring` y reabre únicamente las tiendas que sí fueron apagadas. Al terminar quedan `restored`, `partial_restored` o `restore_failed`.
+
+> **Limitación vigente:** `partial_restored` y `restore_failed` todavía no forman parte de la lista de estados protegidos por Auto Open. No habilitar LIVE hasta decidir si las tiendas con restauración fallida deben continuar protegidas individualmente.
+
+#### Estados y métricas de ejecución
+
+| Campo/estado | Significado |
+|---|---|
+| `pending` | Ejecución creada y esperando la cola |
+| `running` | El worker reclamó la ejecución |
+| `done` | No hubo errores a nivel de marca |
+| `partial_success` | Al menos una marca tuvo un error, normalmente Application faltante |
+| `failed` | Fallo general del job antes de completar el pool |
+| `totalShops` | Tiendas procesadas después de obtener los datos necesarios |
+| `shopsWouldOpen` | Tiendas que se intentarían abrir; en dry run es la métrica principal |
+| `shopsOpened` | Aperturas confirmadas por DiDi; siempre cero en dry run |
+| `shopsSkippedEmergency` | Tiendas omitidas por protección de emergencia |
+
+Los logs almacenan el detalle por marca. Un fallo individual de apertura puede reflejarse como diferencia entre `shopsWouldOpen` y `shopsOpened` sin convertir automáticamente toda la ejecución a `partial_success`; revisar siempre los contadores y no sólo el estado general.
+
+#### Volumen, duración y progreso
+
+El cooldown mínimo aproximado de un pool es la suma de `1.5 s × (lotes de la marca - 1)`, sin contar consultas a DB, tokens ni llamadas remotas. Un pool muy grande puede tardar varios minutos incluso en simulación.
+
+Los contadores de `AutoOpenExecution` se guardan al terminar el pool completo, no después de cada marca. Por eso una ejecución larga puede mostrar ceros mientras está trabajando y perder el progreso visible si el proceso se reinicia.
+
+#### Reinicios y ejecuciones huérfanas
+
+El processor reclama una ejecución únicamente cuando su estado es `pending`. Si el backend se reinicia después de haberla cambiado a `running`:
+
+1. BullMQ puede volver a entregar el job como stalled/retry;
+2. el nuevo intento encuentra `running` y sale sin ejecutar;
+3. BullMQ puede marcar ese intento como completado;
+4. PostgreSQL conserva la ejecución en `running` indefinidamente.
+
+Antes de cualquier despliegue, comprobar que no existan ejecuciones Auto Open `pending` o `running`. Si existe una ejecución huérfana —DB en `running`, pero job inexistente/completado en Redis— no lanzar otra sin revisar el modo y el impacto. En `dryRun` puede cerrarse como interrumpida; en LIVE primero debe verificarse qué tiendas alcanzaron a recibir la llamada remota.
+
+Correcciones recomendadas antes de activar LIVE a gran escala:
+
+- reconciliación de ejecuciones huérfanas al iniciar el backend;
+- checkpoints por marca o lote;
+- jobs separados por marca con ejecución agregada;
+- revalidación de emergencias por lote para reducir consultas, conservando una comprobación final antes de escribir;
+- estado de error explícito por tienda;
+- protección para restauraciones parciales o fallidas.
 
 #### Frontend — `/integrations/auto-open`
 
-Accesible para `super_admin` y para `admin` con el módulo `integrations` habilitado.
+Accesible con estos permisos:
+
+- `integrations.forced_open`: consultar pools y resultados;
+- `integrations.forced_open.configure`: crear o editar pools;
+- `integrations.forced_open.execute`: ejecutar pools y enviar notificaciones.
 
 La página muestra tarjetas por pool. Cada tarjeta permite:
-- Ver las horas de ejecución convertidas a la zona horaria configurada
-- Editar marcas del pool, horas, webhook, timezone
+- Ver las horas en la zona horaria configurada
+- Editar horario, modo, webhook y timezone
 - Ejecutar el pool manualmente (botón "Run now")
-- Ver el historial de ejecuciones (status, tiendas abiertas, errores)
+- Ver historial, tiendas simuladas/abiertas y protegidas por emergencias
 
-#### Habilitar el módulo de integraciones para un Admin
+#### Snapshot de producción — 19 de agosto de 2026
 
-Solo el `super_admin` puede hacerlo desde **Config → Usuarios → editar usuario**:
-- Marcar el módulo `integrations` en los `adminModules` de la cuenta.
+| Pool | Marcas | Tiendas locales aproximadas | Horario MX | Modo |
+|---|---:|---:|---|---|
+| KA México | 57 | 12,769 | 03, 09, 15, 21 | Activo, dry run |
+| KA Colombia | 47 | 1,239 | 03, 09, 15, 21 | Activo, dry run |
+| KA Costa Rica | 20 | 353 | 03, 09, 15, 21 | Activo, dry run |
+
+`AUTO_OPEN_REMOTE_WRITE_ENABLED` está deshabilitado. Además, 27 marcas KA de MX, 24 de CO y 9 de CR no tienen Application vinculada; los pools administrados las incluyen y producen `partial_success` hasta completar esa configuración.
 
 #### Notificaciones manuales
 
@@ -1654,6 +1778,8 @@ git push origin HEAD:main
 ```
 
 No ejecutar además un despliegue manual mientras GitHub Actions está desplegando. Verificar en GitHub que **CI** y **Deploy** finalicen en verde.
+
+> **Preflight obligatorio de integraciones:** el workflow reconstruye y reinicia el backend incluso si el cambio es sólo documental. Antes de hacer push a `main`, revisar que Cross App Menu Copy/Forced Handshake y Auto Open no tengan ejecuciones `pending` o `running`. Un reinicio cancela Menu Copy activo y actualmente puede dejar Auto Open huérfano en `running`. Esperar a que terminen o programar una ventana de despliegue.
 
 ### Producción — Makefile (operación manual de contingencia)
 
