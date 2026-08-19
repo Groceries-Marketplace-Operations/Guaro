@@ -2,6 +2,63 @@ type JsonObject = Record<string, unknown>;
 
 export const GROCERY_DESTINATION_CATEGORY_SIZE = 3500;
 const CATEGORY_PREFIX = 'Cate_Grocery_';
+export const ALLOWED_GROCERY_CATEGORY_NAMES = [
+  'Panadería y Galletas',
+  'Botanas',
+  'Comidas Preparadas',
+  'Bebidas',
+  'Cerveza',
+  'Abarrotes',
+  'Vinos y Licores',
+  'Comida Refrigerada',
+  'Productos Lácteos',
+  'Helados',
+  'Embutidos',
+  'Medicamentos',
+  'Bienestar Sexual',
+  'Belleza y Cuidado Personal',
+  'Electrónicos',
+  'Otros',
+  'Mascotas',
+  'Despensa y Productos Secos',
+  'Jugos y Bebidas',
+  'Higiene y Belleza',
+  'Snacks y Botanas',
+  'Cervezas, Vinos y Licores',
+  'Congelados y Comidas Preparadas',
+  'Farmacia',
+  'Panadería y Tortillería',
+  'Lácteos y Huevo',
+  'Carnes Frías y Embutidos',
+  'Carnes, Pescados y Mariscos',
+  'Frutas y Verduras',
+  'Bebés',
+  'Artículos Variados y De Fiesta',
+  'Cristalería',
+  'Artículos De Oficina',
+  'Ropa',
+  'Otros',
+  'Champagne y espumoso',
+  'Cerveza',
+  'Brandy',
+  'Botanas',
+  'Agua mineral',
+  'Bebidas, Dulces & Snacks',
+  'Congelados',
+  'Despensa',
+  'Lácteos',
+  'Bebés',
+  'Limpieza del hogar',
+  'Cuidado de la Ropa',
+  'Artículos para el hogar y autos',
+  'Farmacia',
+  'Cuidado Personal y Belleza',
+  'Medicamentos',
+  'Dermocosmética',
+  'Suplementos y Vitamínicos',
+  'Especialidades',
+  'Diabetes',
+] as const;
 const DESTINATION_ITEM_FIELDS = [
   'upc',
   'app_item_id',
@@ -77,6 +134,7 @@ export function buildFlatGroceryUploads(
   sourceMenu: JsonObject,
   selectedItems: JsonObject[],
   categorySize = GROCERY_DESTINATION_CATEGORY_SIZE,
+  combineCategories = false,
 ): FlatGroceryUpload[] {
   if (!Number.isInteger(categorySize) || categorySize < 1) {
     throw new Error('Destination category size must be a positive integer');
@@ -86,32 +144,57 @@ export function buildFlatGroceryUploads(
   const baseMenu = sourceMenus[0];
   if (!baseMenu) throw new Error('The downloaded source menu contains no menu definition');
 
-  const uploads: FlatGroceryUpload[] = [];
+  const categories: JsonObject[] = [];
+  const categoryIds: string[] = [];
+  const items: JsonObject[] = [];
+  const requiredCategories = Math.ceil(selectedItems.length / categorySize);
+  if (combineCategories && requiredCategories > ALLOWED_GROCERY_CATEGORY_NAMES.length) {
+    throw new Error(
+      `The menu needs ${requiredCategories} category blocks but only ${ALLOWED_GROCERY_CATEGORY_NAMES.length} approved names are configured`,
+    );
+  }
+
   for (let offset = 0; offset < selectedItems.length; offset += categorySize) {
-    const items = selectedItems
-      .slice(offset, offset + categorySize)
-      .map(sanitizeGroceryDestinationItem);
-    const categoryNumber = uploads.length + 1;
+    const chunk = selectedItems.slice(offset, offset + categorySize).map(sanitizeGroceryDestinationItem);
+    const categoryNumber = categories.length + 1;
     const categoryId = `${CATEGORY_PREFIX}${categoryNumber}`;
-    const itemIds = items.map(item => text(item.app_item_id));
+    const categoryName = combineCategories
+      ? ALLOWED_GROCERY_CATEGORY_NAMES[categoryNumber - 1]
+      : categoryId;
+    const itemIds = chunk.map(item => text(item.app_item_id));
     if (itemIds.some(id => !id)) {
       throw new Error(`Destination category ${categoryId} contains an item without app_item_id`);
     }
-    if (items.some(item => !text(item.upc))) {
+    if (chunk.some(item => !text(item.upc))) {
       throw new Error(`Destination category ${categoryId} contains an item without UPC`);
     }
-
-    uploads.push({
-      menus: [{ ...baseMenu, app_category_ids: [categoryId] }],
-      categories: [{
-        app_category_id: categoryId,
-        category_name: categoryId,
-        app_item_ids: itemIds,
-        priority: categoryNumber,
-      }],
-      items,
-      categoryIds: [categoryId],
+    categories.push({
+      app_category_id: categoryId,
+      category_name: categoryName,
+      app_item_ids: itemIds,
+      priority: categoryNumber,
     });
+    categoryIds.push(categoryId);
+    items.push(...chunk);
   }
-  return uploads;
+
+  const combined = {
+    menus: [{ ...baseMenu, app_category_ids: categoryIds }],
+    categories,
+    items,
+    categoryIds,
+  };
+  if (combineCategories) return [combined];
+
+  const itemById = new Map(items.map(item => [text(item.app_item_id), item]));
+  return categories.map((category, index) => {
+    const categoryId = categoryIds[index];
+    const itemIds = category.app_item_ids as string[];
+    return {
+      menus: [{ ...baseMenu, app_category_ids: [categoryId] }],
+      categories: [category],
+      items: itemIds.map(itemId => itemById.get(itemId)!).filter(Boolean),
+      categoryIds: [categoryId],
+    };
+  });
 }

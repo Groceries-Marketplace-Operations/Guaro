@@ -93,12 +93,17 @@ export class MenuCopyProcessor extends WorkerHost {
       const items = sourceItems.filter(isGroceryDestinationItemUploadable);
       const skippedItems = sourceItems.length - items.length;
       if (!items.length) throw new Error('The source menu contains no items with both app_item_id and UPC');
-      const uploads = buildFlatGroceryUploads(menu, items);
+      const uploads = buildFlatGroceryUploads(
+        menu,
+        items,
+        undefined,
+        execution.uploadEndpoint === 'uploadGrocery',
+      );
 
       await this.step(executionId, 'uploading_target_menu', {
         exportTaskId: downloaded.taskId,
         itemCount: items.length,
-        categoryCount: uploads.length,
+        categoryCount: uploads.reduce((total, upload) => total + upload.categoryIds.length, 0),
       });
       const targetToken = await getAuthToken(targetApplication.appId, targetSecret, targetAppShopId);
       const uploadTaskIds: string[] = [];

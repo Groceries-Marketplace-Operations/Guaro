@@ -6,6 +6,7 @@ import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 import { menuCopyApi } from '../../api';
 import type { MenuCopyExecution } from '../../types';
 import ApplicationSearchField from './ApplicationSearchField';
+import BrandSearchField from './BrandSearchField';
 
 interface FormState {
   sourceApplicationId: string;
@@ -17,12 +18,22 @@ interface FormState {
   mergePolicy: number;
   uploadEndpoint: 'uploadGrocery' | 'updateItemsync';
 }
+
+interface HandshakeFormState {
+  brandId: string;
+  brandSearch: string;
+  mode: 'all_brand' | 'shop_list';
+  shopIds: string;
+}
 const activeStatuses = new Set(['pending', 'running']);
 const shopIdPattern = /^57\d{17}$/;
 
 const initialForm = (): FormState => ({
   sourceApplicationId: '', sourceApplicationSearch: '', sourceShopId: '',
   targetApplicationId: '', targetApplicationSearch: '', targetShopIds: '', mergePolicy: 0, uploadEndpoint: 'uploadGrocery',
+});
+const initialHandshakeForm = (): HandshakeFormState => ({
+  brandId: '', brandSearch: '', mode: 'all_brand', shopIds: '',
 });
 
 const stepLabels: Record<string, string> = {
@@ -53,6 +64,9 @@ export default function CrossAppMenuCopySection() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<FormState>(initialForm);
   const [error, setError] = useState('');
+  const [handshakeOpen, setHandshakeOpen] = useState(false);
+  const [handshakeForm, setHandshakeForm] = useState<HandshakeFormState>(initialHandshakeForm);
+  const [handshakeError, setHandshakeError] = useState('');
   const [sourceExecution, setSourceExecution] = useState<MenuCopyExecution | null>(null);
   const { data: executions = [], isLoading } = useQuery<MenuCopyExecution[]>({
     queryKey: ['menu-copy-executions'],
@@ -80,6 +94,26 @@ export default function CrossAppMenuCopySection() {
     onSuccess: refresh,
     onError: reason => window.alert(apiError(reason)),
   });
+  const retry = useMutation({
+    mutationFn: (id: string) => menuCopyApi.retry(id),
+    onSuccess: refresh,
+    onError: reason => window.alert(apiError(reason)),
+  });
+  const handshakeShopIds = parseTargetShopIds(handshakeForm.shopIds);
+  const handshake = useMutation({
+    mutationFn: () => menuCopyApi.handshake({
+      brandId: handshakeForm.brandId,
+      mode: handshakeForm.mode,
+      ...(handshakeForm.mode === 'shop_list' ? { shopIds: handshakeShopIds } : {}),
+    }),
+    onSuccess: () => {
+      refresh();
+      setHandshakeOpen(false);
+      setHandshakeForm(initialHandshakeForm());
+      setHandshakeError('');
+    },
+    onError: reason => setHandshakeError(apiError(reason)),
+  });
 
   const valid = !!form.sourceApplicationId && !!form.targetApplicationId
     && shopIdPattern.test(form.sourceShopId.trim())
@@ -97,6 +131,14 @@ export default function CrossAppMenuCopySection() {
     setForm(initialForm());
     setError('');
     setOpen(true);
+  };
+
+  const submitHandshake = () => {
+    const scope = handshakeForm.mode === 'all_brand'
+      ? 'todas las tiendas activas de la marca'
+      : `${handshakeShopIds.length} tienda(s)`;
+    if (!window.confirm(`Se descargará y reenviará el menú de ${scope} a la misma tienda, reemplazando su estructura actual. ¿Continuar?`)) return;
+    handshake.mutate();
   };
 
   const openFromExecution = (execution: MenuCopyExecution) => {
@@ -121,10 +163,13 @@ export default function CrossAppMenuCopySection() {
         <div>
           <strong>Cross-App Menu Copy</strong>
           <p className="text-muted" style={{ marginTop: 5, fontSize: 12 }}>
-            Copia los ítems entre tiendas de la misma o de diferentes aplicaciones en categorías planas Cate_Grocery_N de hasta 3,500 ítems. Cada destino se procesa y reporta por separado.
+            Copia menús entre tiendas en bloques de hasta 3,500 ítems. Los nombres se toman en orden de la lista aprobada, sin clasificar productos, y todos los bloques se envían juntos para evitar cambios parciales de estructura.
           </p>
         </div>
-        <button className="btn btn-primary" onClick={openCreate}>+ Nueva copia</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn-ghost" onClick={() => { setHandshakeForm(initialHandshakeForm()); setHandshakeError(''); setHandshakeOpen(true); }}>Forzar handshake</button>
+          <button className="btn btn-primary" onClick={openCreate}>+ Nueva copia</button>
+        </div>
       </div>
     </div>
 
@@ -133,12 +178,15 @@ export default function CrossAppMenuCopySection() {
     <div style={{ display: 'grid', gap: 12 }}>
       {executions.map(execution => {
         const running = activeStatuses.has(execution.status);
+        const isHandshake = execution.sourceApplicationId === execution.targetApplicationId
+          && execution.sourceShopId === execution.targetShopId;
         return <article key={execution.id} className="card" style={{ padding: 18 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
             <div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <strong>{execution.sourceApplication.appName} → {execution.targetApplication.appName}</strong>
                 <StatusBadge status={execution.status} />
+                {isHandshake && <span className="badge">Forced handshake</span>}
                 <span className="badge">{execution.uploadEndpoint === 'updateItemsync' ? 'updateItemsync' : 'uploadGrocery'}</span>
                 {execution.uploadEndpoint === 'uploadGrocery' && <span className="badge">{execution.mergePolicy === 1 ? 'Reemplazar' : 'Merge'}</span>}
               </div>
@@ -153,13 +201,37 @@ export default function CrossAppMenuCopySection() {
               {execution.errorMessage && <p style={{ color: 'var(--red)', marginTop: 7 }}>{execution.errorMessage}</p>}
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              {!running && <button className="btn btn-ghost btn-sm" onClick={() => openFromExecution(execution)}>Editar y repetir</button>}
+              {!running && !isHandshake && <button className="btn btn-ghost btn-sm" onClick={() => openFromExecution(execution)}>Editar y repetir</button>}
+              {!running && <button className="btn btn-ghost btn-sm" disabled={retry.isPending} onClick={() => {
+                if (window.confirm('Se creará una nueva ejecución con exactamente los mismos datos. ¿Reintentar?')) retry.mutate(execution.id);
+              }}>Reintentar ahora</button>}
               {running && <button className="btn btn-ghost btn-sm" disabled={stop.isPending} onClick={() => stop.mutate(execution.id)}>Detener</button>}
             </div>
           </div>
         </article>;
       })}
     </div>
+
+    {handshakeOpen && <Modal title="Forzar handshake de menú" onClose={() => setHandshakeOpen(false)} footer={<>
+      <button className="btn btn-ghost" onClick={() => setHandshakeOpen(false)}>Cancelar</button>
+      <button className="btn btn-primary" disabled={!handshakeForm.brandId || handshake.isPending
+        || (handshakeForm.mode === 'shop_list' && (!handshakeShopIds.length || handshakeShopIds.length > 5000
+          || handshakeShopIds.some(shopId => !shopIdPattern.test(shopId))))} onClick={submitHandshake}>
+        {handshake.isPending ? 'Creando…' : 'Ejecutar handshake'}
+      </button>
+    </>}>
+      {handshakeError && <div className="error-banner">{handshakeError}</div>}
+      <div className="alert alert-info" style={{ marginBottom: 14 }}>
+        El sistema descarga el menú de cada tienda y lo vuelve a enviar a esa misma tienda mediante Cross App. La ejecución queda registrada individualmente por shop_id.
+      </div>
+      <div className="form-group"><label className="form-label">Marca *</label><BrandSearchField value={handshakeForm.brandId} displayValue={handshakeForm.brandSearch} onChange={(brandId, brandSearch) => setHandshakeForm(value => ({ ...value, brandId, brandSearch, shopIds: '' }))} /></div>
+      <div className="form-group"><label className="form-label">Alcance *</label><select className="form-input" value={handshakeForm.mode} onChange={event => setHandshakeForm(value => ({ ...value, mode: event.target.value as HandshakeFormState['mode'], shopIds: '' }))}><option value="all_brand">Todas las tiendas activas de la marca</option><option value="shop_list">Tiendas seleccionadas</option></select></div>
+      {handshakeForm.mode === 'shop_list' && <div className="form-group">
+        <label className="form-label">Shop IDs *</label>
+        <textarea className="form-input td-mono" rows={7} value={handshakeForm.shopIds} placeholder={'Un shop_id por línea\n5764…'} onChange={event => setHandshakeForm(value => ({ ...value, shopIds: event.target.value }))} />
+        <p className="form-hint">{handshakeShopIds.length} tienda(s), máximo 5,000. Todas deben pertenecer a la marca seleccionada.</p>
+      </div>}
+    </Modal>}
 
     {open && <Modal title={sourceExecution ? 'Editar y volver a ejecutar la copia' : 'Copiar menú entre aplicaciones'} onClose={() => setOpen(false)} footer={<>
       <button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancelar</button>

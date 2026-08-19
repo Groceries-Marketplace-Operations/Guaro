@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Permissions } from '../access-control/permissions.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
+import { CreateMenuHandshakeDto } from './dto/create-menu-handshake.dto';
 import { CreateMenuCopyDto } from './dto/create-menu-copy.dto';
 import { MenuCopyService } from './menu-copy.service';
 
@@ -25,6 +26,18 @@ export class MenuCopyController {
   @Permissions('integrations.custom.execute')
   create(@Body() dto: CreateMenuCopyDto, @CurrentUser() user: JwtUser) {
     return this.service.create(dto, user.id);
+  }
+
+  @Post('handshake')
+  @Permissions('integrations.custom.execute')
+  handshake(@Body() dto: CreateMenuHandshakeDto, @CurrentUser() user: JwtUser) {
+    return this.service.createHandshake(dto, user.id);
+  }
+
+  @Post('executions/:id/retry')
+  @Permissions('integrations.custom.execute')
+  retry(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    return this.service.retry(id, user.id);
   }
 
   @Post('executions/:id/stop')

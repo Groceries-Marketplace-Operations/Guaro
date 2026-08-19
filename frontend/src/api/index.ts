@@ -228,6 +228,8 @@ export const offerMenuUploadApi = {
 export const menuCopyApi = {
   list: () => client.get('/integrations/menu-copy/executions'),
   create: (data: object) => client.post('/integrations/menu-copy/executions', data),
+  handshake: (data: object) => client.post('/integrations/menu-copy/handshake', data),
+  retry: (id: string) => client.post(`/integrations/menu-copy/executions/${id}/retry`),
   stop: (id: string) => client.post(`/integrations/menu-copy/executions/${id}/stop`),
 };
 
