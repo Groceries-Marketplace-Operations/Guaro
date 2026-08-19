@@ -27,10 +27,6 @@ interface BrandLog {
 
 const LIVE_EMERGENCY_STATUSES = ['pending', 'running', 'offline', 'partial_success', 'restoring'];
 
-export function isOpenable(bizStatus: number, subBizStatus: number): boolean {
-  return bizStatus === 2 && [3, 5, 7].includes(subBizStatus);
-}
-
 export function buildEmergencyProtection(emergencies: Array<{
   brandId: string;
   mode: string;
@@ -46,17 +42,6 @@ export function buildEmergencyProtection(emergencies: Array<{
     blockedShopsByBrand.set(emergency.brandId, blocked);
   }
   return { blockedBrands, blockedShopsByBrand };
-}
-
-async function getShopStatus(authToken: string): Promise<{ bizStatus: number; subBizStatus: number } | null> {
-  try {
-    const response = await fetch(`${DIDI_BASE}/v1/shop/shop/detail?auth_token=${authToken}`);
-    const body = parseJsonKeepingIds(await response.text());
-    if (body.errno !== 0 || !body.data) return null;
-    return { bizStatus: body.data.biz_status, subBizStatus: body.data.sub_biz_status };
-  } catch {
-    return null;
-  }
 }
 
 async function openShop(authToken: string): Promise<boolean> {
@@ -182,34 +167,36 @@ export class AutoOpenProcessor extends WorkerHost {
         const appSecret = encKey ? decrypt(brand.application.appSecret, encKey) : brand.application.appSecret;
         for (let index = 0; index < shops.length; index += BATCH_SIZE) {
           const batch = shops.slice(index, index + BATCH_SIZE);
-          const tokens: Array<{ shopUuid: string; appShopId: string; token: string }> = [];
           for (const shop of batch) {
-            try {
-              tokens.push({
-                shopUuid: shop.id,
-                appShopId: shop.appShopId,
-                token: await getAuthToken(appId, appSecret, shop.appShopId),
-              });
-            } catch {
-              this.logger.warn(`Could not obtain token for Auto Open shop ${shop.appShopId}`);
-            }
-          }
-
-          for (const item of tokens) {
-            const status = await getShopStatus(item.token);
-            if (!status) continue;
-            shopsProcessed++;
-            if (!isOpenable(status.bizStatus, status.subBizStatus)) continue;
-            if (await this.hasLiveEmergency(item.shopUuid)) {
-              shopsSkippedEmergency++;
-              totalSkippedEmergency++;
-              this.logger.warn(`Skipped Auto Open shop ${item.appShopId}: protected by a live emergency`);
+            if (execution.dryRun) {
+              if (await this.hasLiveEmergency(brand.id, shop.id)) {
+                shopsSkippedEmergency++;
+                totalSkippedEmergency++;
+                continue;
+              }
+              shopsProcessed++;
+              shopsWouldOpen++;
               continue;
             }
-            shopsWouldOpen++;
-            if (!execution.dryRun && await openShop(item.token)) {
-              shopsOpened++;
-              this.logger.log(`Opened shop ${item.appShopId} (brand: ${brand.brandName})`);
+
+            try {
+              const token = await getAuthToken(appId, appSecret, shop.appShopId);
+              // Re-check immediately before the remote write. A new emergency may
+              // have started after the initial pool snapshot or while obtaining the token.
+              if (await this.hasLiveEmergency(brand.id, shop.id)) {
+                shopsSkippedEmergency++;
+                totalSkippedEmergency++;
+                this.logger.warn(`Skipped Auto Open shop ${shop.appShopId}: protected by a live emergency`);
+                continue;
+              }
+              shopsProcessed++;
+              shopsWouldOpen++;
+              if (await openShop(token)) {
+                shopsOpened++;
+                this.logger.log(`Opened shop ${shop.appShopId} (brand: ${brand.brandName})`);
+              }
+            } catch {
+              this.logger.warn(`Could not obtain token for Auto Open shop ${shop.appShopId}`);
             }
           }
           if (index + BATCH_SIZE < shops.length) await sleep(COOLDOWN_BATCH_MS);
@@ -263,18 +250,23 @@ export class AutoOpenProcessor extends WorkerHost {
     }
     this.logger.log(
       `Auto Open ${executionId} ${execution.dryRun ? 'dry-run' : 'live'} done: ` +
-      `${totalOpened} opened, ${totalWouldOpen} openable, ${totalSkippedEmergency} protected`,
+      `${totalOpened} opened, ${totalWouldOpen} attempted, ${totalSkippedEmergency} protected`,
     );
   }
 
-  private async hasLiveEmergency(shopUuid: string) {
-    const target = await this.prisma.storeEmergencyTarget.findFirst({
+  private async hasLiveEmergency(brandId: string, shopUuid: string) {
+    const emergency = await this.prisma.storeEmergency.findFirst({
       where: {
-        shopId: shopUuid,
-        emergency: { status: { in: LIVE_EMERGENCY_STATUSES }, finishedAt: null },
+        brandId,
+        status: { in: LIVE_EMERGENCY_STATUSES },
+        finishedAt: null,
+        OR: [
+          { mode: 'all_brand' },
+          { mode: 'shop_list', targets: { some: { shopId: shopUuid } } },
+        ],
       },
       select: { id: true },
     });
-    return target !== null;
+    return emergency !== null;
   }
 }
