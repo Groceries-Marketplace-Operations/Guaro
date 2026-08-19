@@ -538,15 +538,30 @@ Requiere: rol `admin` + módulo `integrations` habilitado, o `super_admin`.
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/integrations/store-emergencies` | Historial paginado de emergencias |
+| GET | `/integrations/store-emergencies` | Historial paginado; `summaryOnly=true` devuelve conteos sin cargar miles de tiendas |
 | GET | `/integrations/store-emergencies/summary` | Emergencias activas, tiendas apagadas, errores y próxima reapertura |
-| GET | `/integrations/store-emergencies/:id` | Detalle y resultado por tienda |
+| GET | `/integrations/store-emergencies/:id` | Detalle de la emergencia; `includeTargets=false` omite el arreglo completo de tiendas |
+| GET | `/integrations/store-emergencies/:id/timeline` | Bitácora paginada y filtrable por `phase`, `source` y `outcome` |
+| GET | `/integrations/store-emergencies/:id/targets` | Tiendas paginadas; admite búsqueda, fase, estado y `errorsOnly=true` |
 | POST | `/integrations/store-emergencies` | Crear apagado para toda una marca o una lista de tiendas |
 | PATCH | `/integrations/store-emergencies/:id/reopening` | Cambiar la fecha futura de reapertura |
 | POST | `/integrations/store-emergencies/:id/restore` | Reabrir ahora una emergencia offline |
 | POST | `/integrations/store-emergencies/:id/retry-failures` | Reintentar únicamente apagados o restauraciones fallidas |
 
 Lectura requiere `integrations.emergencies`; mutaciones requieren `integrations.emergencies.execute`.
+
+Cada emergencia conserva hitos explícitos para creación, cola, inicio y fin del
+apagado, solicitud/cola/inicio/fin de reapertura y finalización. Además guarda
+una bitácora **append-only** por emergencia y, cuando corresponde, por tienda:
+actor, origen (`user`, `scheduler`, `worker`, `system` o `migration`), intento,
+resultado, fecha y contexto técnico sanitizado. Los reintentos agregan eventos;
+no reemplazan el historial anterior.
+
+La migración reconstruye únicamente hechos históricos verificables. Los eventos
+anteriores a esta funcionalidad se marcan como `source=migration` y
+`metadata.backfilled=true`; si una hora sólo puede aproximarse a partir de
+`updatedAt`, también se marca `inferredTimestamp=true`. No se inventan actores ni
+horas de inicio de reapertura que no existían en el modelo anterior.
 
 #### Custom Integrations — `/integrations/menu-copy`
 
@@ -1207,6 +1222,14 @@ pending, running, offline, partial_success, restoring
 La protección comienza desde `pending`, antes de que termine el apagado remoto. Una emergencia que nazca mientras Auto Open está recorriendo el pool también se detecta en la revalidación por tienda.
 
 La emergencia se crea con una fecha futura `endsAt`. El worker de emergencias apaga con `biz_status=2` y `auto_switch=1`. Un scheduler revisa cada minuto las emergencias vencidas, las cambia a `restoring` y reabre únicamente las tiendas que sí fueron apagadas. Al terminar quedan `restored`, `partial_restored` o `restore_failed`.
+
+Desde el detalle de Emergencias se muestran, sin depender de los logs efímeros
+del proceso, los hitos del apagado y la reapertura, los conteos agregados y la
+cronología persistente de cada intento. La pestaña **Cronología y logs** permite
+filtrar por fase, origen y resultado; la pestaña **Tiendas** pagina y busca por
+`shop_id`, `app_shop_id`, nombre o ciudad y expone los timestamps y errores de
+cada tienda. Esto evita descargar todos los targets en la lista principal y
+mantiene utilizable el módulo con emergencias de miles de tiendas.
 
 `partial_restored` **no se considera una emergencia viva para Auto Open**. Es una decisión funcional explícita: una vez terminada la fase `restoring`, Auto Open no bloquea la marca ni las tiendas por ese estado histórico. `restored` y `restore_failed` tampoco forman parte de la lista viva. Los únicos estados que bloquean son los cinco documentados arriba y además deben conservar `finishedAt = null`.
 

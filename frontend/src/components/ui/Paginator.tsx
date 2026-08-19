@@ -35,19 +35,19 @@ export default function Paginator({ page, total, limit, onChange }: PaginatorPro
   });
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderTop: '1px solid var(--border)', gap: 12 }}>
-      <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+    <div className="app-paginator" role="navigation" aria-label="Paginación" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderTop: '1px solid var(--border)', gap: 12 }}>
+      <span aria-live="polite" style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
         {total === 0 ? t('common.noResults') : `${(page - 1) * limit + 1}–${Math.min(page * limit, total)} ${t('common.of')} ${total}`}
       </span>
       {totalPages > 1 && (
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <button style={btnStyle(false, page <= 1)} disabled={page <= 1} onClick={() => onChange(page - 1)}>‹</button>
+          <button type="button" aria-label="Página anterior" style={btnStyle(false, page <= 1)} disabled={page <= 1} onClick={() => onChange(page - 1)}>‹</button>
           {pages.map((p, i) =>
             p === '…'
               ? <span key={`e${i}`} style={{ color: 'var(--text-muted)', padding: '0 4px', fontSize: '0.8rem' }}>…</span>
-              : <button key={p} style={btnStyle(p === page)} onClick={() => p !== page && onChange(p as number)}>{p}</button>
+              : <button type="button" key={p} aria-label={`Página ${p}`} aria-current={p === page ? 'page' : undefined} style={btnStyle(p === page)} onClick={() => p !== page && onChange(p as number)}>{p}</button>
           )}
-          <button style={btnStyle(false, page >= totalPages)} disabled={page >= totalPages} onClick={() => onChange(page + 1)}>›</button>
+          <button type="button" aria-label="Página siguiente" style={btnStyle(false, page >= totalPages)} disabled={page >= totalPages} onClick={() => onChange(page + 1)}>›</button>
         </div>
       )}
     </div>

@@ -225,6 +225,7 @@ model Account {
   createdApps                    Application[]                @relation("AppCreador")
   createdSftpApps                SftpApplication[]            @relation("SftpAppCreator")
   createdStoreEmergencies        StoreEmergency[]             @relation("StoreEmergencyCreator")
+  storeEmergencyEvents           StoreEmergencyEvent[]        @relation("StoreEmergencyEventActor")
   createdForcedOpenOperations    ForcedOpenOperation[]        @relation("ForcedOpenOperationCreator")
   assignedSteps                  StepInstance[]
   stepCandidate                  StepDefinitionAccount[]
@@ -1504,25 +1505,32 @@ model AutoTurnOffShopExecution {
 
 // -------------------- Integrations: emergency store shutdowns --------------
 model StoreEmergency {
-  id           String    @id @default(uuid()) @db.Uuid
-  brandId      String    @map("brand_id") @db.Uuid
-  mode         String // all_brand | shop_list
-  requestedIds String[]  @default([]) @map("requested_shop_ids")
-  reason       String    @db.VarChar(500)
-  endsAt       DateTime  @map("ends_at") @db.Timestamptz
-  status       String    @default("pending")
-  createdById  String    @map("created_by_id") @db.Uuid
-  startedAt    DateTime? @map("started_at") @db.Timestamptz
-  offlineAt    DateTime? @map("offline_at") @db.Timestamptz
-  restoredAt   DateTime? @map("restored_at") @db.Timestamptz
-  finishedAt   DateTime? @map("finished_at") @db.Timestamptz
-  errorMessage String?   @map("error_message") @db.Text
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  id                 String    @id @default(uuid()) @db.Uuid
+  brandId            String    @map("brand_id") @db.Uuid
+  mode               String // all_brand | shop_list
+  requestedIds       String[]  @default([]) @map("requested_shop_ids")
+  reason             String    @db.VarChar(500)
+  endsAt             DateTime  @map("ends_at") @db.Timestamptz
+  status             String    @default("pending")
+  createdById        String    @map("created_by_id") @db.Uuid
+  shutdownQueuedAt   DateTime? @map("shutdown_queued_at") @db.Timestamptz
+  startedAt          DateTime? @map("started_at") @db.Timestamptz
+  shutdownFinishedAt DateTime? @map("shutdown_finished_at") @db.Timestamptz
+  offlineAt          DateTime? @map("offline_at") @db.Timestamptz
+  restoreRequestedAt DateTime? @map("restore_requested_at") @db.Timestamptz
+  restoreQueuedAt    DateTime? @map("restore_queued_at") @db.Timestamptz
+  restoreStartedAt   DateTime? @map("restore_started_at") @db.Timestamptz
+  restoreFinishedAt  DateTime? @map("restore_finished_at") @db.Timestamptz
+  restoredAt         DateTime? @map("restored_at") @db.Timestamptz
+  finishedAt         DateTime? @map("finished_at") @db.Timestamptz
+  errorMessage       String?   @map("error_message") @db.Text
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   brand     Brand                  @relation(fields: [brandId], references: [id], onDelete: Restrict)
   createdBy Account                @relation("StoreEmergencyCreator", fields: [createdById], references: [id], onDelete: Restrict)
   targets   StoreEmergencyTarget[]
+  events    StoreEmergencyEvent[]
 
   @@index([brandId, createdAt])
   @@index([status, endsAt])
@@ -1537,6 +1545,8 @@ model StoreEmergencyTarget {
   restoreStatus String    @default("pending") @map("restore_status")
   offlineError  String?   @map("offline_error") @db.Text
   restoreError  String?   @map("restore_error") @db.Text
+  offlineAttempts Int     @default(0) @map("offline_attempts")
+  restoreAttempts Int     @default(0) @map("restore_attempts")
   offlineAt     DateTime? @map("offline_at") @db.Timestamptz
   restoredAt    DateTime? @map("restored_at") @db.Timestamptz
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -1544,11 +1554,37 @@ model StoreEmergencyTarget {
 
   emergency StoreEmergency @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
   shop      Shop           @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  events    StoreEmergencyEvent[]
 
   @@unique([emergencyId, shopId])
   @@index([emergencyId, offlineStatus])
   @@index([emergencyId, restoreStatus])
   @@map("store_emergency_target")
+}
+
+model StoreEmergencyEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  emergencyId String    @map("emergency_id") @db.Uuid
+  targetId    String?   @map("target_id") @db.Uuid
+  type        String    @db.VarChar(64)
+  phase       String    @db.VarChar(24)
+  outcome     String?   @db.VarChar(24)
+  source      String    @db.VarChar(24)
+  actorId     String?   @map("actor_id") @db.Uuid
+  attempt     Int?
+  message     String?   @db.Text
+  metadata    Json?
+  occurredAt  DateTime  @default(now()) @map("occurred_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  emergency StoreEmergency        @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+  target    StoreEmergencyTarget? @relation(fields: [targetId], references: [id], onDelete: SetNull)
+  actor     Account?              @relation("StoreEmergencyEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([emergencyId, occurredAt, id])
+  @@index([targetId, occurredAt])
+  @@index([emergencyId, phase, occurredAt])
+  @@map("store_emergency_event")
 }
 
 // -------------------- Integrations: forced store opening -------------------

@@ -759,15 +759,50 @@ export interface MenuCopyExecution {
   createdBy?: Pick<Account, 'id' | 'name' | 'email'>;
 }
 
+export type StoreEmergencyStatus =
+  | 'pending'
+  | 'running'
+  | 'offline'
+  | 'partial_success'
+  | 'failed'
+  | 'restoring'
+  | 'restored'
+  | 'partial_restored'
+  | 'restore_failed';
+
+export type StoreEmergencyTargetStatus = 'pending' | 'running' | 'done' | 'failed';
+
 export interface StoreEmergencyTarget {
   id: string;
-  offlineStatus: string;
-  restoreStatus: string;
+  offlineStatus: StoreEmergencyTargetStatus;
+  restoreStatus: StoreEmergencyTargetStatus;
   offlineError?: string;
   restoreError?: string;
   offlineAt?: string;
   restoredAt?: string;
+  offlineAttempts?: number;
+  restoreAttempts?: number;
+  createdAt?: string;
+  updatedAt?: string;
   shop: Pick<Shop, 'id' | 'shopId' | 'appShopId' | 'name' | 'city'>;
+}
+
+export interface StoreEmergencyTargetCounts {
+  total: number;
+  shutdownSucceeded: number;
+  shutdownFailed: number;
+  shutdownPending: number;
+  restoreSucceeded: number;
+  restoreFailed: number;
+  restorePending: number;
+  // Compatibility aliases keep the frontend safe during a rolling deployment.
+  offlinePending?: number;
+  offlineDone?: number;
+  offlineFailed?: number;
+  restoreDone?: number;
+  offline?: number;
+  restored?: number;
+  errors?: number;
 }
 
 export interface StoreEmergency {
@@ -776,9 +811,10 @@ export interface StoreEmergency {
   requestedIds: string[];
   reason: string;
   endsAt: string;
-  status: string;
+  status: StoreEmergencyStatus;
   startedAt?: string;
   offlineAt?: string;
+  restoreStartedAt?: string;
   restoredAt?: string;
   finishedAt?: string;
   errorMessage?: string;
@@ -786,7 +822,60 @@ export interface StoreEmergency {
   updatedAt: string;
   brand: Pick<Brand, 'id' | 'brandId' | 'brandName' | 'country'>;
   createdBy: Pick<Account, 'id' | 'name' | 'email'>;
-  targets: StoreEmergencyTarget[];
+  targets?: StoreEmergencyTarget[];
+  targetCounts?: StoreEmergencyTargetCounts;
+  milestones?: StoreEmergencyMilestones;
+}
+
+export interface StoreEmergencyMilestone {
+  key: string;
+  label: string;
+  status?: 'pending' | 'current' | 'done' | 'failed' | string;
+  at?: string;
+  occurredAt?: string;
+  description?: string;
+}
+
+export interface StoreEmergencyMilestones {
+  createdAt?: string | null;
+  shutdownQueuedAt?: string | null;
+  shutdownStartedAt?: string | null;
+  shutdownFinishedAt?: string | null;
+  scheduledReopeningAt?: string | null;
+  restoreRequestedAt?: string | null;
+  restoreQueuedAt?: string | null;
+  restoreStartedAt?: string | null;
+  restoreFinishedAt?: string | null;
+  finishedAt?: string | null;
+}
+
+export interface StoreEmergencyTimelineEvent {
+  id: string;
+  type?: string;
+  eventType?: string;
+  phase?: 'lifecycle' | 'shutdown' | 'schedule' | 'restore' | 'system' | string;
+  outcome?: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'rescheduled' | 'requested' | 'skipped' | string | null;
+  status?: string;
+  severity?: 'info' | 'warning' | 'error' | 'success' | string;
+  source?: 'user' | 'scheduler' | 'worker' | 'system' | 'migration' | string;
+  attempt?: number | null;
+  message?: string | null;
+  occurredAt: string;
+  createdAt?: string;
+  actor?: Pick<Account, 'id' | 'name' | 'email'> | null;
+  target?: { id: string; shop: Pick<Shop, 'id' | 'shopId' | 'appShopId' | 'name' | 'city'> } | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface StoreEmergencyTimelineResponse {
+  emergency: StoreEmergency;
+  milestones: StoreEmergencyMilestones | StoreEmergencyMilestone[];
+  counts: StoreEmergencyTargetCounts;
+  data: StoreEmergencyTimelineEvent[];
+  events?: StoreEmergencyTimelineEvent[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export interface StoreEmergencySummary {

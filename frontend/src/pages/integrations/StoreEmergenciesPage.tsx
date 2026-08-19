@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate } from 'react-router-dom';
 import Topbar from '../../components/layout/Topbar';
@@ -7,7 +7,9 @@ import Paginator from '../../components/ui/Paginator';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { brandsApi, storeEmergenciesApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
+import { hasPermission } from '../../auth/permissions';
 import type { Brand, Paginated, StoreEmergency, StoreEmergencySummary } from '../../types';
+import EmergencyDetailModal from './EmergencyDetailModal';
 
 const INITIAL_NOW = Date.now();
 
@@ -29,7 +31,8 @@ function countdown(endsAt: string, now: number) {
 export default function StoreEmergenciesPage() {
   const { account } = useAuth();
   const qc = useQueryClient();
-  const isAdmin = account?.roles.some(role => role === 'admin' || role === 'super_admin');
+  const canView = hasPermission(account, 'integrations.emergencies');
+  const canExecute = hasPermission(account, 'integrations.emergencies.execute');
   const [page, setPage] = useState(1);
   const [now, setNow] = useState(INITIAL_NOW);
   const [open, setOpen] = useState(false);
@@ -44,6 +47,7 @@ export default function StoreEmergenciesPage() {
     reason: '',
     endsAt: '',
   });
+  const closeDetail = useCallback(() => setDetail(null), []);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(timer);
@@ -51,12 +55,12 @@ export default function StoreEmergenciesPage() {
   const { data: brandsResult } = useQuery<{ data: Brand[] }>({
     queryKey: ['brands-emergencies'],
     queryFn: () => brandsApi.list({ page: 1, limit: 2000 }).then(response => response.data),
-    enabled: !!isAdmin,
+    enabled: canExecute,
   });
   const { data, isLoading } = useQuery<Paginated<StoreEmergency>>({
     queryKey: ['store-emergencies', page],
     queryFn: () => storeEmergenciesApi.list(page).then(response => response.data),
-    enabled: !!isAdmin,
+    enabled: canView,
     refetchInterval: query => {
       const result = query.state.data as Paginated<StoreEmergency> | undefined;
       return result?.data.some(item => ['pending', 'running', 'restoring'].includes(item.status)) ? 4000 : 30_000;
@@ -65,7 +69,7 @@ export default function StoreEmergenciesPage() {
   const { data: summary } = useQuery<StoreEmergencySummary>({
     queryKey: ['store-emergencies', 'summary'],
     queryFn: () => storeEmergenciesApi.summary().then(response => response.data),
-    enabled: !!isAdmin,
+    enabled: canView,
     refetchInterval: 15_000,
   });
   const shopIds = useMemo(() => [...new Set(form.shopIds.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean))], [form.shopIds]);
@@ -90,7 +94,10 @@ export default function StoreEmergenciesPage() {
   });
   const restore = useMutation({
     mutationFn: (id: string) => storeEmergenciesApi.restoreNow(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['store-emergencies'] }),
+    onSuccess: (_response, id) => {
+      qc.invalidateQueries({ queryKey: ['store-emergencies'] });
+      qc.invalidateQueries({ queryKey: ['store-emergency', id] });
+    },
     onError: (err: unknown) => {
       const response = err as { response?: { data?: { message?: string | string[] } } };
       const message = response.response?.data?.message;
@@ -105,6 +112,7 @@ export default function StoreEmergenciesPage() {
     onSuccess: response => {
       const updated = response.data as StoreEmergency;
       qc.invalidateQueries({ queryKey: ['store-emergencies'] });
+      qc.invalidateQueries({ queryKey: ['store-emergency', updated.id] });
       if (detail?.id === updated.id) setDetail(updated);
       setEditingReopening(null);
       setReopeningAt('');
@@ -121,6 +129,7 @@ export default function StoreEmergenciesPage() {
     onSuccess: response => {
       const updated = response.data as StoreEmergency;
       qc.invalidateQueries({ queryKey: ['store-emergencies'] });
+      qc.invalidateQueries({ queryKey: ['store-emergency', updated.id] });
       if (detail?.id === updated.id) setDetail(updated);
       setError('');
     },
@@ -131,7 +140,7 @@ export default function StoreEmergenciesPage() {
     },
   });
 
-  if (!isAdmin) return <Navigate to="/" replace />;
+  if (!canView) return <Navigate to="/" replace />;
   const brands = (brandsResult?.data ?? []).filter(brand => !!brand.applicationId);
   const selectedBrand = brands.find(brand => brand.id === form.brandId);
   const startEmergency = () => {
@@ -150,11 +159,11 @@ export default function StoreEmergenciesPage() {
           <h1>Emergencias de tiendas</h1>
           <p>Apagado masivo o por shop_id, con reapertura automática en la fecha indicada.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => {
+        {canExecute && <button className="btn btn-primary" onClick={() => {
           setForm(value => ({ ...value, reason: '', endsAt: localDateTime(new Date(Date.now() + 60 * 60_000)) }));
           setOpen(true);
           setError('');
-        }}>+ Nueva emergencia</button>
+        }}>+ Nueva emergencia</button>}
       </div>
       <div className="alert" style={{ marginBottom: 18, borderColor: '#ffc7b2', background: '#fff4ee', color: '#8b2d00' }}>
         Esta acción cambia tiendas reales a Offline usando únicamente las tiendas almacenadas localmente. Al vencer el periodo, el sistema intentará reabrir solo las tiendas que logró apagar.
@@ -172,22 +181,25 @@ export default function StoreEmergenciesPage() {
         </div>)}
       </div>
       {error && !open && !editingReopening && <div className="error-banner" style={{ marginBottom: 14 }}>{error}</div>}
-      <div className="table-wrap">
-        <table>
+      <div className="table-wrap emergency-list-table-wrap">
+        <table className="emergency-list-table">
+          <caption className="sr-only">Historial de apagados y reaperturas de tiendas</caption>
           <thead><tr><th>Marca / motivo</th><th>Alcance</th><th>Progreso</th><th>Estado</th><th>Inicio de apagado</th><th>Reapertura</th><th>Creada por</th><th></th></tr></thead>
           <tbody>
             {isLoading && <tr><td colSpan={8} className="text-muted">Cargando…</td></tr>}
             {!isLoading && !data?.data.length && <tr><td colSpan={8}><div className="empty-state"><p>No hay emergencias registradas.</p></div></td></tr>}
             {data?.data.map(item => {
-              const offline = item.targets.filter(target => target.offlineStatus === 'done').length;
-              const restored = item.targets.filter(target => target.restoreStatus === 'done').length;
+              const legacyTargets = item.targets ?? [];
+              const total = item.targetCounts?.total ?? legacyTargets.length;
+              const offline = item.targetCounts?.shutdownSucceeded ?? item.targetCounts?.offlineDone ?? legacyTargets.filter(target => target.offlineStatus === 'done').length;
+              const restored = item.targetCounts?.restoreSucceeded ?? item.targetCounts?.restoreDone ?? legacyTargets.filter(target => target.restoreStatus === 'done').length;
               return <tr key={item.id}>
                 <td><strong>{item.brand.brandName}</strong><div className="text-muted text-sm">{item.brand.country} · {item.reason}</div></td>
                 <td>{item.mode === 'all_brand' ? 'Toda la marca' : 'Lista de shop_ids'}</td>
                 <td style={{ minWidth: 170 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '.72rem', marginBottom: 5 }}><span>{offline}/{item.targets.length} apagadas</span><span>{restored} reabiertas</span></div>
-                  <div style={{ height: 7, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden' }}>
-                    <div style={{ width: `${item.targets.length ? Math.round((offline / item.targets.length) * 100) : 0}%`, height: '100%', background: restored > 0 ? '#22c55e' : '#f97316', transition: 'width .25s ease' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '.72rem', marginBottom: 5 }}><span>{offline}/{total} apagadas</span><span>{restored} reabiertas</span></div>
+                  <div role="progressbar" aria-label={`Tiendas apagadas de ${item.brand.brandName}`} aria-valuemin={0} aria-valuemax={total} aria-valuenow={offline} style={{ height: 7, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden' }}>
+                    <div style={{ width: `${total ? Math.round((offline / total) * 100) : 0}%`, height: '100%', background: restored > 0 ? '#22c55e' : '#f97316', transition: 'width .25s ease' }} />
                   </div>
                 </td>
                 <td><StatusBadge status={item.status} />{item.errorMessage && <div style={{ color: 'var(--red)', fontSize: '.68rem', marginTop: 4 }}>{item.errorMessage}</div>}</td>
@@ -195,7 +207,7 @@ export default function StoreEmergenciesPage() {
                 <td><div>{new Date(item.endsAt).toLocaleString()}</div>{['offline', 'partial_success'].includes(item.status) && <div className="text-muted" style={{ fontSize: '.68rem', marginTop: 3 }}>{countdown(item.endsAt, now)}</div>}</td>
                 <td>{item.createdBy.name}</td>
                 <td><div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                  {['pending', 'running', 'offline', 'partial_success'].includes(item.status) && <button
+                  {canExecute && ['pending', 'running', 'offline', 'partial_success'].includes(item.status) && <button
                     className="btn btn-ghost btn-sm"
                     disabled={updateReopening.isPending}
                     onClick={() => {
@@ -204,21 +216,21 @@ export default function StoreEmergenciesPage() {
                       setError('');
                     }}
                   >Editar reapertura</button>}
-                  {['offline', 'partial_success'].includes(item.status) && <button
+                  {canExecute && ['offline', 'partial_success'].includes(item.status) && <button
                     className="btn btn-primary btn-sm"
                     disabled={restore.isPending}
                     onClick={() => {
                       if (window.confirm(`¿Encender ahora las tiendas apagadas de ${item.brand.brandName}?`)) restore.mutate(item.id);
                     }}
                   >Encender ahora</button>}
-                  {['failed', 'partial_success', 'restore_failed', 'partial_restored'].includes(item.status) && <button
+                  {canExecute && ['failed', 'partial_success', 'restore_failed', 'partial_restored'].includes(item.status) && <button
                     className="btn btn-ghost btn-sm"
                     disabled={retryFailures.isPending}
                     onClick={() => {
                       if (window.confirm(`¿Reintentar únicamente las tiendas fallidas de ${item.brand.brandName}?`)) retryFailures.mutate(item.id);
                     }}
                   >Reintentar fallidas</button>}
-                  <button className="btn btn-ghost btn-sm" onClick={() => setDetail(item)}>Ver tiendas</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setDetail(item)}>Ver detalle</button>
                 </div></td>
               </tr>;
             })}
@@ -293,27 +305,6 @@ export default function StoreEmergenciesPage() {
       <p className="form-hint">Hora actual: {new Date(editingReopening.endsAt).toLocaleString()}</p>
     </Modal>}
 
-    {detail && <Modal title={`Tiendas · ${detail.brand.brandName}`} onClose={() => setDetail(null)}>
-      <div className="alert alert-info" style={{ marginBottom: 12 }}><strong>Motivo:</strong> {detail.reason}</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginBottom: 14 }}>
-        <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--surface-2)' }}>
-          <div className="text-muted text-sm">Inicio de apagado</div>
-          <strong>{detail.startedAt ? new Date(detail.startedAt).toLocaleString() : 'Pendiente'}</strong>
-        </div>
-        <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--surface-2)' }}>
-          <div className="text-muted text-sm">Reapertura programada</div>
-          <strong>{new Date(detail.endsAt).toLocaleString()}</strong>
-        </div>
-      </div>
-      <div className="table-wrap" style={{ maxHeight: 520, overflow: 'auto' }}><table>
-        <thead><tr><th>shop_id</th><th>Ciudad</th><th>Apagado</th><th>Reapertura</th></tr></thead>
-        <tbody>{detail.targets.map(target => <tr key={target.id}>
-          <td className="td-mono">{target.shop.shopId}<div className="text-muted text-sm">{target.shop.appShopId}</div></td>
-          <td>{target.shop.city || '—'}</td>
-          <td><StatusBadge status={target.offlineStatus} />{target.offlineError && <div style={{ color: 'var(--red)', fontSize: '.66rem' }}>{target.offlineError}</div>}</td>
-          <td><StatusBadge status={target.restoreStatus} />{target.restoreError && <div style={{ color: 'var(--red)', fontSize: '.66rem' }}>{target.restoreError}</div>}</td>
-        </tr>)}</tbody>
-      </table></div>
-    </Modal>}
+    {detail && <EmergencyDetailModal emergencyId={detail.id} fallback={detail} onClose={closeDetail} />}
   </>;
 }

@@ -1,5 +1,11 @@
 import client from './client';
-import type { Account } from '../types';
+import type {
+  Account,
+  Paginated,
+  StoreEmergency,
+  StoreEmergencyTarget,
+  StoreEmergencyTimelineResponse,
+} from '../types';
 
 /* ── Auth ───────────────────────────────────────────────────── */
 export const authApi = {
@@ -326,9 +332,24 @@ export const autoFetchApi = {
 };
 
 export const storeEmergenciesApi = {
-  list: (page = 1, limit = 20) => client.get('/integrations/store-emergencies', { params: { page, limit } }),
+  list: (page = 1, limit = 20) => client.get<Paginated<StoreEmergency>>('/integrations/store-emergencies', { params: { page, limit, summaryOnly: true } }),
   summary: () => client.get('/integrations/store-emergencies/summary'),
-  get: (id: string) => client.get(`/integrations/store-emergencies/${id}`),
+  get: (id: string) => client.get<StoreEmergency>(`/integrations/store-emergencies/${id}`, { params: { includeTargets: false } }),
+  timeline: (id: string, params?: {
+    page?: number;
+    limit?: number;
+    phase?: string;
+    source?: string;
+    outcome?: string;
+  }) => client.get<StoreEmergencyTimelineResponse>(`/integrations/store-emergencies/${id}/timeline`, { params }),
+  targets: (id: string, params?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    phase?: 'shutdown' | 'restore' | '';
+    status?: string;
+    errorsOnly?: boolean;
+  }) => client.get<Paginated<StoreEmergencyTarget>>(`/integrations/store-emergencies/${id}/targets`, { params }),
   create: (data: object) => client.post('/integrations/store-emergencies', data),
   updateReopening: (id: string, endsAt: string) => client.patch(`/integrations/store-emergencies/${id}/reopening`, { endsAt }),
   restoreNow: (id: string) => client.post(`/integrations/store-emergencies/${id}/restore`),

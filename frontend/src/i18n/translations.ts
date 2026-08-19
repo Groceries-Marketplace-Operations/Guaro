@@ -122,6 +122,13 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'status.application': 'Application',
     'status.integrated': 'Integrated',
     'status.online': 'Online',
+    'status.running': 'Running',
+    'status.offline': 'Offline',
+    'status.partial_success': 'Partially offline',
+    'status.restoring': 'Restoring',
+    'status.restored': 'Restored',
+    'status.partial_restored': 'Partially restored',
+    'status.restore_failed': 'Restore failed',
 
     // ── Dashboard ────────────────────────────────────────────────────────────
     'pages.dashboard.title': 'Dashboard',
@@ -933,6 +940,13 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'status.application': 'Aplicación',
     'status.integrated': 'Integrada',
     'status.online': 'En línea',
+    'status.running': 'En proceso',
+    'status.offline': 'Apagada',
+    'status.partial_success': 'Apagado parcial',
+    'status.restoring': 'Reabriendo',
+    'status.restored': 'Reabierta',
+    'status.partial_restored': 'Reapertura parcial',
+    'status.restore_failed': 'Error de reapertura',
 
     // ── Dashboard ────────────────────────────────────────────────────────────
     'pages.dashboard.title': 'Dashboard',

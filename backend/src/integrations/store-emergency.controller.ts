@@ -1,4 +1,4 @@
-import { Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Get, Param, ParseBoolPipe, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AccountRole } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -21,8 +21,9 @@ export class StoreEmergencyController {
   list(
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('summaryOnly', new DefaultValuePipe(false), ParseBoolPipe) summaryOnly: boolean,
   ) {
-    return this.service.list(page, limit);
+    return this.service.list(page, limit, summaryOnly);
   }
 
   @Get('summary')
@@ -30,9 +31,37 @@ export class StoreEmergencyController {
     return this.service.summary();
   }
 
+  @Get(':id/timeline')
+  timeline(
+    @Param('id') id: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(100), ParseIntPipe) limit: number,
+    @Query('phase') phase?: string,
+    @Query('source') source?: string,
+    @Query('outcome') outcome?: string,
+  ) {
+    return this.service.timeline(id, page, limit, phase, source, outcome);
+  }
+
+  @Get(':id/targets')
+  targets(
+    @Param('id') id: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(100), ParseIntPipe) limit: number,
+    @Query('search') search?: string,
+    @Query('phase') phase?: string,
+    @Query('status') status?: string,
+    @Query('errorsOnly') errorsOnly?: string,
+  ) {
+    return this.service.targets(id, page, limit, search, phase, status, errorsOnly);
+  }
+
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.service.findOne(id);
+  findOne(
+    @Param('id') id: string,
+    @Query('includeTargets', new DefaultValuePipe(true), ParseBoolPipe) includeTargets: boolean,
+  ) {
+    return this.service.findOne(id, includeTargets);
   }
 
   @Post()
@@ -43,19 +72,23 @@ export class StoreEmergencyController {
 
   @Patch(':id/reopening')
   @Permissions('integrations.emergencies.execute')
-  updateReopening(@Param('id') id: string, @Body() dto: UpdateStoreEmergencyReopeningDto) {
-    return this.service.updateReopening(id, dto);
+  updateReopening(
+    @Param('id') id: string,
+    @Body() dto: UpdateStoreEmergencyReopeningDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.updateReopening(id, dto, user.id);
   }
 
   @Post(':id/restore')
   @Permissions('integrations.emergencies.execute')
-  restoreNow(@Param('id') id: string) {
-    return this.service.restoreNow(id);
+  restoreNow(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    return this.service.restoreNow(id, user.id);
   }
 
   @Post(':id/retry-failures')
   @Permissions('integrations.emergencies.execute')
-  retryFailures(@Param('id') id: string) {
-    return this.service.retryFailures(id);
+  retryFailures(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    return this.service.retryFailures(id, user.id);
   }
 }
