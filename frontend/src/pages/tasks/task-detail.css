@@ -1,0 +1,89 @@
+.task-steps-card {
+  overflow: hidden;
+  padding: 0;
+}
+
+.task-steps-card > .card-header {
+  margin: 0;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(90deg, #fffaf5, var(--surface) 38%);
+}
+
+.task-steps-table-wrap {
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+}
+
+.task-steps-table {
+  min-width: 960px;
+}
+
+.task-steps-table thead th {
+  padding: 8px 12px;
+}
+
+.task-steps-table tbody td {
+  padding: 11px 12px;
+  vertical-align: top;
+}
+
+.task-steps-table tbody tr {
+  background: var(--surface);
+}
+
+.task-steps-table tbody tr:hover {
+  background: #fffaf7;
+}
+
+.task-steps-table tbody tr.task-step-row--active {
+  background: #fffaf5;
+  box-shadow: inset 3px 0 0 var(--orange);
+}
+
+.task-step-index {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: .68rem;
+  font-weight: 750;
+}
+
+.task-step-row--active .task-step-index {
+  border-color: var(--orange);
+  background: var(--orange);
+  color: #fff;
+}
+
+.task-step-name {
+  min-width: 130px;
+  max-width: 220px;
+  color: var(--text-primary);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.task-step-note-cell {
+  width: 38%;
+  min-width: 250px;
+}
+
+.task-step-actions {
+  min-width: 128px;
+}
+
+@media (max-width: 1100px) {
+  .task-steps-table {
+    min-width: 880px;
+  }
+
+  .task-step-note-cell {
+    width: 34%;
+  }
+}

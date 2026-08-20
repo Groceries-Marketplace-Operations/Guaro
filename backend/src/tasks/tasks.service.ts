@@ -28,6 +28,33 @@ const TASK_INCLUDE = {
   taskShops: { include: { shop: { select: { id: true, shopId: true, appShopId: true } } } },
 } as const;
 
+// Task lists only render the step status, active step and assignee. Notes,
+// results and form payloads stay in the detail query so large execution logs
+// are not transferred on every Tasks, Dashboard and Brand request.
+const TASK_LIST_INCLUDE = {
+  taskType: { select: { id: true, name: true, sectionId: true } },
+  brand: { select: { id: true, brandId: true, brandName: true, country: true } },
+  createdBy: { select: { id: true, name: true, email: true } },
+  stepInstances: {
+    orderBy: { stepDefinition: { order: 'asc' as const } },
+    select: {
+      id: true,
+      status: true,
+      assignedToId: true,
+      stepDefinition: {
+        select: {
+          id: true,
+          name: true,
+          order: true,
+          executionType: true,
+          assignmentStrategy: true,
+        },
+      },
+      assignedTo: { select: { id: true, name: true, email: true } },
+    },
+  },
+} as const;
+
 @Injectable()
 export class TasksService {
   constructor(
@@ -161,7 +188,7 @@ export class TasksService {
     const where = await this.taskWhere(roles, accountId, sectionId, { q, status, brandId, sectionId: filterSectionId });
 
     const [data, total] = await Promise.all([
-      this.prisma.task.findMany({ where, include: TASK_INCLUDE, orderBy: { createdAt: 'desc' }, skip, take: limit }),
+      this.prisma.task.findMany({ where, include: TASK_LIST_INCLUDE, orderBy: { createdAt: 'desc' }, skip, take: limit }),
       this.prisma.task.count({ where }),
     ]);
     return { data, total, page, limit };
