@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -77,11 +82,38 @@ export class AutoOpenPoolsService {
           update: { webhook: { connect: { id: AUTO_OPEN_NOTIFICATION_WEBHOOK_ID } } },
           select: { id: true },
         });
+        await this.lockPoolForUpdate(tx, pool.id);
+        const lockedPool = await tx.autoOpenPool.findUnique({
+          where: { id: pool.id },
+          select: {
+            brands: { select: { brandId: true } },
+            brandExclusions: { select: { brandId: true } },
+          },
+        });
+        if (!lockedPool) throw new NotFoundException('Auto Open pool not found');
         const brands = await tx.brand.findMany({
           where: { country: definition.country, kaType: KaType.KA, deletedAt: null },
           select: { id: true },
         });
-        const brandIds = brands.map(brand => brand.id);
+        const excludedBrandIds = new Set(
+          lockedPool.brandExclusions.map(exclusion => exclusion.brandId),
+        );
+        const brandIds = brands
+          .map(brand => brand.id)
+          .filter(brandId => !excludedBrandIds.has(brandId));
+        const desiredBrandIds = new Set(brandIds);
+        const currentBrandIds = new Set(
+          lockedPool.brands.map(association => association.brandId),
+        );
+        const membershipChanged = desiredBrandIds.size !== currentBrandIds.size
+          || brandIds.some(brandId => !currentBrandIds.has(brandId));
+        if (membershipChanged) {
+          const activeExecution = await tx.autoOpenExecution.findFirst({
+            where: { poolId: pool.id, status: { in: ['pending', 'running'] } },
+            select: { id: true },
+          });
+          if (activeExecution) return;
+        }
         await tx.autoOpenPoolBrand.deleteMany({
           where: {
             poolId: pool.id,
@@ -140,27 +172,138 @@ export class AutoOpenPoolsService {
   }
 
   async update(id: string, dto: UpdatePoolDto) {
-    const existing = await this.findOne(id);
-    const nextDryRun = dto.dryRun ?? existing.dryRun;
-    const nextActive = dto.active ?? existing.active;
-    if (nextActive && !nextDryRun && !this.remoteWritesEnabled()) {
-      throw new BadRequestException(
-        'Live Auto Open is disabled on this server. Enable AUTO_OPEN_REMOTE_WRITE_ENABLED only after a dry-run review.',
-      );
-    }
     if (dto.timezone !== undefined) this.assertTimezone(dto.timezone);
 
-    const { brandIds, webhookId, country, ...rest } = dto;
+    const {
+      brandIds,
+      includeBrandIds,
+      excludeBrandIds,
+      webhookId,
+      country,
+      ...rest
+    } = dto;
+    const hasManagedBrandDelta = includeBrandIds !== undefined || excludeBrandIds !== undefined;
     return this.prisma.$transaction(async tx => {
-      if (!existing.managedKey && brandIds !== undefined) {
-        await tx.autoOpenPoolBrand.deleteMany({ where: { poolId: id } });
-        if (brandIds.length > 0) {
-          await tx.autoOpenPoolBrand.createMany({
-            data: brandIds.map(brandId => ({ poolId: id, brandId })),
-            skipDuplicates: true,
+      await this.lockPoolForUpdate(tx, id);
+      const existing = await tx.autoOpenPool.findUnique({
+        where: { id },
+        include: POOL_INCLUDE,
+      });
+      if (!existing) throw new NotFoundException('Auto Open pool not found');
+
+      const nextDryRun = dto.dryRun ?? existing.dryRun;
+      const nextActive = dto.active ?? existing.active;
+      if (nextActive && !nextDryRun && !this.remoteWritesEnabled()) {
+        throw new BadRequestException(
+          'Live Auto Open is disabled on this server. Enable AUTO_OPEN_REMOTE_WRITE_ENABLED only after a dry-run review.',
+        );
+      }
+
+      if (existing.managedKey) {
+        if (brandIds !== undefined) {
+          throw new ConflictException(
+            'Managed KA pool membership requires includeBrandIds/excludeBrandIds deltas; reload the pool before saving',
+          );
+        }
+        if (hasManagedBrandDelta) {
+          const included = [...new Set(includeBrandIds ?? [])];
+          const excluded = [...new Set(excludeBrandIds ?? [])];
+          const includedSet = new Set(included);
+          const overlap = excluded.filter(brandId => includedSet.has(brandId));
+          if (overlap.length) {
+            throw new BadRequestException(
+              `A brand cannot be both included and excluded: ${overlap.join(', ')}`,
+            );
+          }
+          const touchedBrandIds = [...included, ...excluded];
+          if (touchedBrandIds.length) {
+            const eligibleBrands = await tx.brand.findMany({
+              where: {
+                id: { in: touchedBrandIds },
+                country: existing.country,
+                kaType: KaType.KA,
+                deletedAt: null,
+              },
+              select: { id: true },
+            });
+            const eligibleBrandIds = new Set(eligibleBrands.map(brand => brand.id));
+            const invalidBrandIds = touchedBrandIds.filter(brandId => !eligibleBrandIds.has(brandId));
+            if (invalidBrandIds.length) {
+              throw new BadRequestException(
+                `Managed KA pools can only change active KA brands from ${existing.country}: ${invalidBrandIds.join(', ')}`,
+              );
+            }
+          }
+          const [currentMemberships, currentExclusions] = touchedBrandIds.length
+            ? await Promise.all([
+              tx.autoOpenPoolBrand.findMany({
+                where: { poolId: id, brandId: { in: touchedBrandIds } },
+                select: { brandId: true },
+              }),
+              tx.autoOpenPoolBrandExclusion.findMany({
+                where: { poolId: id, brandId: { in: touchedBrandIds } },
+                select: { brandId: true },
+              }),
+            ])
+            : [[], []];
+          const currentMembershipIds = new Set(currentMemberships.map(value => value.brandId));
+          const currentExclusionIds = new Set(currentExclusions.map(value => value.brandId));
+          const actualIncluded = included.filter(brandId => (
+            !currentMembershipIds.has(brandId) || currentExclusionIds.has(brandId)
+          ));
+          const actualExcluded = excluded.filter(brandId => (
+            currentMembershipIds.has(brandId) || !currentExclusionIds.has(brandId)
+          ));
+          if (actualIncluded.length || actualExcluded.length) {
+            await this.assertNoActiveMembershipChange(tx, id);
+          }
+          if (actualIncluded.length) {
+            await tx.autoOpenPoolBrandExclusion.deleteMany({
+              where: { poolId: id, brandId: { in: actualIncluded } },
+            });
+            await tx.autoOpenPoolBrand.createMany({
+              data: actualIncluded.map(brandId => ({ poolId: id, brandId })),
+              skipDuplicates: true,
+            });
+          }
+          if (actualExcluded.length) {
+            await tx.autoOpenPoolBrandExclusion.createMany({
+              data: actualExcluded.map(brandId => ({ poolId: id, brandId })),
+              skipDuplicates: true,
+            });
+            await tx.autoOpenPoolBrand.deleteMany({
+              where: { poolId: id, brandId: { in: actualExcluded } },
+            });
+          }
+        }
+      } else {
+        if (hasManagedBrandDelta) {
+          throw new BadRequestException(
+            'Custom pools require brandIds replacement and do not accept managed membership deltas',
+          );
+        }
+        if (brandIds !== undefined) {
+          const desiredBrandIds = [...new Set(brandIds)];
+          const currentMemberships = await tx.autoOpenPoolBrand.findMany({
+            where: { poolId: id },
+            select: { brandId: true },
           });
+          const currentBrandIds = new Set(currentMemberships.map(value => value.brandId));
+          const membershipChanged = desiredBrandIds.length !== currentBrandIds.size
+            || desiredBrandIds.some(brandId => !currentBrandIds.has(brandId));
+          if (membershipChanged) {
+            await this.assertNoActiveMembershipChange(tx, id);
+            await tx.autoOpenPoolBrand.deleteMany({ where: { poolId: id } });
+            if (desiredBrandIds.length > 0) {
+              await tx.autoOpenPoolBrand.createMany({
+                data: desiredBrandIds.map(brandId => ({ poolId: id, brandId })),
+                skipDuplicates: true,
+              });
+            }
+          }
         }
       }
+
       return tx.autoOpenPool.update({
         where: { id },
         data: {
@@ -175,6 +318,31 @@ export class AutoOpenPoolsService {
     });
   }
 
+  private async lockPoolForUpdate(tx: Prisma.TransactionClient, poolId: string) {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id"
+      FROM "auto_open_pool"
+      WHERE "id" = ${poolId}::uuid
+      FOR UPDATE
+    `);
+    if (!rows.length) throw new NotFoundException('Auto Open pool not found');
+  }
+
+  private async assertNoActiveMembershipChange(
+    tx: Prisma.TransactionClient,
+    poolId: string,
+  ) {
+    const activeExecution = await tx.autoOpenExecution.findFirst({
+      where: { poolId, status: { in: ['pending', 'running'] } },
+      select: { id: true, status: true },
+    });
+    if (activeExecution) {
+      throw new ConflictException(
+        `Pool brands cannot change while Auto Open execution ${activeExecution.id} is ${activeExecution.status}; wait for it to finish and try again`,
+      );
+    }
+  }
+
   async remove(id: string) {
     const pool = await this.findOne(id);
     if (pool.managedKey) throw new BadRequestException('Managed KA pools cannot be deleted; deactivate them instead');
@@ -183,25 +351,15 @@ export class AutoOpenPoolsService {
 
   async runNow(id: string) {
     await this.ensureManagedKaPools();
-    const pool = await this.findOne(id);
-    const active = await this.prisma.autoOpenExecution.findFirst({
-      where: { poolId: id, status: { in: ['pending', 'running'] } },
-      select: { id: true, status: true },
-    });
-    if (active) {
-      throw new BadRequestException(`Auto Open pool already has an active ${active.status} execution: ${active.id}`);
-    }
-    return this.enqueue(pool, null);
+    const execution = await this.createPendingExecution(id, null, false);
+    if (!execution) throw new Error('Manual Auto Open execution was unexpectedly skipped');
+    return this.enqueueExecution(execution);
   }
 
   async runScheduled(id: string, scheduledSlot: Date) {
     try {
-      const active = await this.prisma.autoOpenExecution.findFirst({
-        where: { poolId: id, status: { in: ['pending', 'running'] } },
-        select: { id: true },
-      });
-      if (active) return null;
-      return await this.enqueue(await this.findOne(id), scheduledSlot);
+      const execution = await this.createPendingExecution(id, scheduledSlot, true);
+      return execution ? await this.enqueueExecution(execution) : null;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return null;
       throw error;
@@ -243,12 +401,47 @@ export class AutoOpenPoolsService {
     return this.selection.listPoolStores(poolId, query);
   }
 
-  private async enqueue(pool: Awaited<ReturnType<AutoOpenPoolsService['findOne']>>, scheduledSlot: Date | null) {
-    const remoteWritesEnabled = !pool.dryRun && this.remoteWritesEnabled();
-    if (!pool.dryRun && !remoteWritesEnabled) throw new BadRequestException('Live Auto Open is disabled on this server');
-    const execution = await this.prisma.autoOpenExecution.create({
-      data: { poolId: pool.id, status: 'pending', dryRun: pool.dryRun, remoteWritesEnabled, scheduledSlot },
+  private async createPendingExecution(
+    poolId: string,
+    scheduledSlot: Date | null,
+    skipIfActive: boolean,
+  ) {
+    return this.prisma.$transaction(async tx => {
+      await this.lockPoolForUpdate(tx, poolId);
+      const pool = await tx.autoOpenPool.findUnique({
+        where: { id: poolId },
+        select: { id: true, active: true, dryRun: true },
+      });
+      if (!pool) throw new NotFoundException('Auto Open pool not found');
+      if (scheduledSlot && !pool.active) return null;
+
+      const remoteWritesEnabled = !pool.dryRun && this.remoteWritesEnabled();
+      if (!pool.dryRun && !remoteWritesEnabled) {
+        throw new BadRequestException('Live Auto Open is disabled on this server');
+      }
+      const active = await tx.autoOpenExecution.findFirst({
+        where: { poolId, status: { in: ['pending', 'running'] } },
+        select: { id: true, status: true },
+      });
+      if (active) {
+        if (skipIfActive) return null;
+        throw new BadRequestException(
+          `Auto Open pool already has an active ${active.status} execution: ${active.id}`,
+        );
+      }
+      return tx.autoOpenExecution.create({
+        data: {
+          poolId,
+          status: 'pending',
+          dryRun: pool.dryRun,
+          remoteWritesEnabled,
+          scheduledSlot,
+        },
+      });
     });
+  }
+
+  private async enqueueExecution<T extends { id: string }>(execution: T): Promise<T> {
     try {
       await this.queue.add('prepare-pool', { executionId: execution.id }, {
         jobId: `auto-open-prepare-${execution.id}`,

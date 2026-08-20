@@ -183,6 +183,13 @@ interface PoolForm {
   brandIds: string[];
 }
 
+type PoolSavePayload = Omit<PoolForm, 'brandIds' | 'webhookId'> & {
+  webhookId?: string;
+  brandIds?: string[];
+  includeBrandIds?: string[];
+  excludeBrandIds?: string[];
+};
+
 const EMPTY_FORM: PoolForm = {
   name: '', country: 'CO', executionHours: [],
   timezone: 'America/Mexico_City', dryRun: true, webhookId: '', brandIds: [],
@@ -209,6 +216,7 @@ export default function IntegrationsPage() {
   const [form, setForm]                 = useState<PoolForm>(EMPTY_FORM);
   const [saving, setSaving]             = useState(false);
   const [err, setErr]                   = useState('');
+  const [saveNotice, setSaveNotice]     = useState('');
   const [runningId, setRunningId]       = useState<string | null>(null);
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
   const [deletingId, setDeletingId]     = useState<string | null>(null);
@@ -307,7 +315,9 @@ export default function IntegrationsPage() {
   });
   const executions = executionsResult?.data ?? [];
 
-  const filteredBrands = allBrands;
+  const filteredBrands = editingPool?.managedKey
+    ? allBrands.filter(brand => brand.kaType === 'KA')
+    : allBrands;
 
   const number = useMemo(() => new Intl.NumberFormat(lang === 'es' ? 'es-MX' : 'en-US'), [lang]);
   const poolOverview = useMemo(() => pools.reduce((summary, pool) => {
@@ -331,6 +341,7 @@ export default function IntegrationsPage() {
     setEditingPool(null);
     setForm(EMPTY_FORM);
     setErr('');
+    setSaveNotice('');
     setModalOpen(true);
   };
 
@@ -346,21 +357,42 @@ export default function IntegrationsPage() {
       brandIds: pool.brands.map(b => b.brandId),
     });
     setErr('');
+    setSaveNotice('');
     setModalOpen(true);
   };
 
   const save = async () => {
     setErr(''); setSaving(true);
     try {
-      const payload = {
+      const payload: PoolSavePayload = {
         name: form.name,
         country: form.country,
         executionHours: form.executionHours,
         timezone: form.timezone,
         dryRun: form.dryRun,
         webhookId: form.webhookId || undefined,
-        brandIds: form.brandIds,
       };
+      let includedBrands = 0;
+      let excludedBrands = 0;
+
+      if (editingPool?.managedKey) {
+        const initialBrandIds = new Set(editingPool.brands.map(brand => brand.brandId));
+        const desiredBrandIds = new Set(form.brandIds);
+        const includeBrandIds = form.brandIds.filter(brandId => !initialBrandIds.has(brandId));
+        const excludeBrandIds = [...initialBrandIds].filter(brandId => !desiredBrandIds.has(brandId));
+        includedBrands = includeBrandIds.length;
+        excludedBrands = excludeBrandIds.length;
+        if (includeBrandIds.length > 0) payload.includeBrandIds = includeBrandIds;
+        if (excludeBrandIds.length > 0) payload.excludeBrandIds = excludeBrandIds;
+      } else if (!editingPool) {
+        payload.brandIds = form.brandIds;
+      } else {
+        const initialBrandIds = new Set(editingPool.brands.map(brand => brand.brandId));
+        const membershipChanged = form.brandIds.length !== initialBrandIds.size
+          || form.brandIds.some(brandId => !initialBrandIds.has(brandId));
+        if (membershipChanged) payload.brandIds = form.brandIds;
+      }
+
       if (editingPool) {
         await integrationsApi.updatePool(editingPool.id, payload);
         await qc.invalidateQueries({ queryKey: ['auto-open-pool-stores', editingPool.id] });
@@ -368,6 +400,12 @@ export default function IntegrationsPage() {
         await integrationsApi.createPool(payload);
       }
       await qc.invalidateQueries({ queryKey: ['auto-open-pools'] });
+      setSaveNotice(editingPool?.managedKey && (includedBrands > 0 || excludedBrands > 0)
+        ? t('pages.integrations.poolStores.managedBrandsSaved', {
+          included: String(includedBrands),
+          excluded: String(excludedBrands),
+        })
+        : t('pages.integrations.poolStores.poolSaved'));
       setModalOpen(false);
     } catch (e) {
       setErr(errMsg(e));
@@ -519,6 +557,12 @@ export default function IntegrationsPage() {
         {tab === 'auto-open' && (<section id="auto-open-panel" role="tabpanel" aria-labelledby="auto-open-tab">
         {isLoading && <p className="text-muted" role="status">{t('pages.integrations.poolStores.loadingPools')}</p>}
         {err && !modalOpen && <div className="error-banner" style={{ marginBottom: 12 }}>{err}</div>}
+        {saveNotice && !modalOpen && (
+          <div className="auto-open-save-notice" role="status">
+            {saveNotice}
+            <button type="button" onClick={() => setSaveNotice('')} aria-label={t('common.close')}>×</button>
+          </div>
+        )}
         <div className={`auto-open-live-banner ${liveModeAvailable ? 'available' : 'blocked'}`}>
           <strong>{liveModeAvailable
             ? t('pages.integrations.poolStores.liveReady')

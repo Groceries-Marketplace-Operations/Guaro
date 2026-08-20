@@ -609,6 +609,7 @@ model Brand {
   tasks                  Task[]
   formValues             FormValue[]
   autoOpenPoolBrands     AutoOpenPoolBrand[]
+  autoOpenPoolBrandExclusions AutoOpenPoolBrandExclusion[]
   autoFetchPoolBrands    AutoFetchPoolBrand[]
   autoTurnOffRules       AutoTurnOffRule[]
   storeEmergencies       StoreEmergency[]
@@ -914,6 +915,7 @@ model AutoOpenPool {
 
   webhook    Webhook?            @relation(fields: [webhookId], references: [id])
   brands     AutoOpenPoolBrand[]
+  brandExclusions AutoOpenPoolBrandExclusion[]
   executions AutoOpenExecution[]
 
   @@map("auto_open_pool")
@@ -928,6 +930,21 @@ model AutoOpenPoolBrand {
 
   @@id([poolId, brandId])
   @@map("auto_open_pool_brand")
+}
+
+// Managed KA pools automatically include new KA brands. This table preserves
+// explicit operator removals so reconciliation does not silently add them back.
+model AutoOpenPoolBrandExclusion {
+  poolId    String   @map("pool_id") @db.Uuid
+  brandId   String   @map("brand_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  pool  AutoOpenPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  brand Brand        @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@id([poolId, brandId])
+  @@index([brandId])
+  @@map("auto_open_pool_brand_exclusion")
 }
 
 model AutoOpenExecution {

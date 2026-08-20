@@ -20,6 +20,12 @@ export class UpdatePoolDto {
   @IsOptional() @IsArray() @IsUUID('4', { each: true })
   brandIds?: string[];
 
+  @IsOptional() @IsArray() @IsUUID('4', { each: true })
+  includeBrandIds?: string[];
+
+  @IsOptional() @IsArray() @IsUUID('4', { each: true })
+  excludeBrandIds?: string[];
+
   @IsOptional() @IsBoolean()
   active?: boolean;
 

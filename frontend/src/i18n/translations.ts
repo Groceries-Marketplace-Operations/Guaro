@@ -184,7 +184,9 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.integrations.poolStores.dryRunHelp': 'Uses local stores and live emergencies to show how many stores it would attempt to open, but never sends the opening POST.',
     'pages.integrations.poolStores.dryRunLocked': 'Simulation mode cannot be disabled until the server LIVE gate is enabled.',
     'pages.integrations.poolStores.liveWarning': 'LIVE mode: this configuration can open real stores. The server remote-write gate must also be enabled.',
-    'pages.integrations.poolStores.managedBrandsHelp': 'Active KA brands for this country are synchronized automatically.',
+    'pages.integrations.poolStores.managedBrandsHelp': 'New active KA brands are added automatically. Brands removed here stay excluded until you add them again.',
+    'pages.integrations.poolStores.managedBrandsSaved': 'Pool updated: {excluded} brands excluded and {included} restored.',
+    'pages.integrations.poolStores.poolSaved': 'Pool configuration saved.',
     'pages.integrations.poolStores.executionDetailsLabel': 'Show or hide execution detail by brand',
 
     // ── Status labels ────────────────────────────────────────────────────────
@@ -1080,7 +1082,9 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'pages.integrations.poolStores.dryRunHelp': 'Usa las tiendas locales y emergencias vigentes para mostrar cuántas intentaría abrir, pero nunca envía el POST de apertura.',
     'pages.integrations.poolStores.dryRunLocked': 'No se puede desactivar el modo simulación hasta habilitar la barrera LIVE en el servidor.',
     'pages.integrations.poolStores.liveWarning': 'Modo LIVE: esta configuración puede abrir tiendas reales. El servidor también debe tener habilitada la barrera de escrituras remotas.',
-    'pages.integrations.poolStores.managedBrandsHelp': 'Las marcas KA activas de este país se sincronizan automáticamente.',
+    'pages.integrations.poolStores.managedBrandsHelp': 'Las nuevas marcas KA activas se agregan automáticamente. Las marcas que quites aquí permanecen excluidas hasta que vuelvas a agregarlas.',
+    'pages.integrations.poolStores.managedBrandsSaved': 'Pool actualizado: {excluded} marcas excluidas y {included} reincorporadas.',
+    'pages.integrations.poolStores.poolSaved': 'Configuración del pool guardada.',
     'pages.integrations.poolStores.executionDetailsLabel': 'Mostrar u ocultar detalle de la ejecución por marca',
 
     // ── Status labels ────────────────────────────────────────────────────────

@@ -33,6 +33,37 @@
   line-height: 1.45;
 }
 
+.auto-open-save-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #75e0a7;
+  border-radius: 10px;
+  background: #ecfdf3;
+  color: #027a48;
+  font-size: .82rem;
+  font-weight: 600;
+}
+
+.auto-open-save-notice button {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.auto-open-save-notice button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
 .auto-open-live-banner.available {
   border-color: #abefc6;
   background: #ecfdf3;
