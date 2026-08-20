@@ -230,6 +230,64 @@ export interface AutoOpenCapabilities {
   reason: string;
 }
 
+export interface AutoOpenStoreSummary {
+  totalStores: number;
+  includedStores: number;
+  emergencyProtectedStores: number;
+  configurationBlockedStores: number;
+  calculatedAt?: string;
+}
+
+export type AutoOpenStoreInclusion =
+  | 'included'
+  | 'emergency'
+  | 'configuration';
+
+export interface AutoOpenPoolStore {
+  id: string;
+  shopId: string;
+  appShopId: string;
+  name?: string | null;
+  city?: string | null;
+  status: 'lead' | 'application' | 'integrated' | 'online';
+  brand: {
+    id: string;
+    brandId: string;
+    brandName: string;
+    country: Country;
+  };
+  inclusion: AutoOpenStoreInclusion;
+  reason: 'missing_active_application' | 'live_brand_emergency' | 'live_store_emergency' | null;
+  emergency?: {
+    id: string;
+    mode: string;
+    status: string;
+    scope: 'brand' | 'store';
+  } | null;
+}
+
+export interface AutoOpenPoolStoresResponse {
+  data: AutoOpenPoolStore[];
+  total: number;
+  page: number;
+  limit: number;
+  summary: AutoOpenStoreSummary;
+  summaryScope: 'pool';
+  calculatedAt: string;
+}
+
+export interface AutoOpenPoolBrandMembership {
+  poolId: string;
+  brandId: string;
+  brand: {
+    id: string;
+    brandName: string;
+    brandId: string;
+    country: Country;
+  };
+  storeSummary: AutoOpenStoreSummary;
+}
+
 export interface AutoOpenPool {
   id: string;
   managedKey?: string;
@@ -241,7 +299,8 @@ export interface AutoOpenPool {
   timezone: string;
   webhookId?: string;
   webhook?: { id: string; name: string };
-  brands: Array<{ poolId: string; brandId: string; brand: { id: string; brandName: string; brandId: string; country: Country } }>;
+  storeSummary: AutoOpenStoreSummary;
+  brands: AutoOpenPoolBrandMembership[];
   createdAt: string;
   updatedAt: string;
 }

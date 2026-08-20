@@ -8,6 +8,7 @@ import {
   LIVE_AUTO_OPEN_EMERGENCY_STATUSES,
 } from '../src/integrations/auto-open.processor';
 import { AutoOpenPoolsService } from '../src/integrations/auto-open-pools.service';
+import { AutoOpenSelectionService } from '../src/integrations/auto-open-selection.service';
 import { hourInTimezone } from '../src/integrations/auto-open.scheduler';
 
 interface FakeBrandRun {
@@ -117,7 +118,13 @@ function fixture(dryRun: boolean, serverWritesEnabled: boolean, dynamicEmergency
   };
   const queue = { addBulk: async (jobs: typeof queued) => { queued.push(...jobs); } };
   return {
-    processor: new AutoOpenProcessor(prisma as never, config as never, webhooks as never, queue as never),
+    processor: new AutoOpenProcessor(
+      prisma as never,
+      config as never,
+      webhooks as never,
+      queue as never,
+      new AutoOpenSelectionService(prisma as never),
+    ),
     execution, brandRuns, queued, notifications,
   };
 }
@@ -301,6 +308,7 @@ test('Auto Open capabilities expose the server LIVE gate without mutating config
     {} as never,
     { get: () => undefined } as never,
     {} as never,
+    {} as never,
   );
   assert.deepEqual(disabled.capabilities(), {
     dryRunAvailable: true,
@@ -313,6 +321,7 @@ test('Auto Open capabilities expose the server LIVE gate without mutating config
     {} as never,
     {} as never,
     { get: (key: string) => key === 'AUTO_OPEN_REMOTE_WRITE_ENABLED' ? ' TRUE ' : undefined } as never,
+    {} as never,
     {} as never,
   );
   assert.equal(enabled.capabilities().liveModeAvailable, true);

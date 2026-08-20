@@ -5,6 +5,8 @@ import type {
   StoreEmergency,
   StoreEmergencyTarget,
   StoreEmergencyTimelineResponse,
+  AutoOpenPoolStoresResponse,
+  AutoOpenStoreInclusion,
 } from '../types';
 
 /* ── Auth ───────────────────────────────────────────────────── */
@@ -295,6 +297,16 @@ export const integrationsApi = {
   updatePool: (id: string, data: object) => client.patch(`/integrations/auto-open/pools/${id}`, data),
   deletePool: (id: string) => client.delete(`/integrations/auto-open/pools/${id}`),
   runPool: (id: string) => client.post(`/integrations/auto-open/pools/${id}/run`),
+  listPoolStores: (
+    id: string,
+    params: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      brandId?: string;
+      inclusion?: AutoOpenStoreInclusion;
+    },
+  ) => client.get<AutoOpenPoolStoresResponse>(`/integrations/auto-open/pools/${id}/stores`, { params }),
   listExecutions: (poolId: string, page = 1) =>
     client.get(`/integrations/auto-open/pools/${poolId}/executions`, { params: { page } }),
   sendNotification: (data: { title?: string; message: string; webhookIds: string[]; color?: string }) =>

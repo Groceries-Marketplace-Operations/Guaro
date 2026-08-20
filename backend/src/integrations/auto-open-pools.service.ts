@@ -8,10 +8,17 @@ import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { CreatePoolDto } from './dto/create-pool.dto';
 import { UpdatePoolDto } from './dto/update-pool.dto';
 import { SendNotificationDto } from './dto/send-notification.dto';
+import { ListAutoOpenStoresDto } from './dto/list-auto-open-stores.dto';
+import {
+  AutoOpenSelectionService,
+  autoOpenPoolBrandSummaryKey,
+  emptyAutoOpenStoreSummary,
+} from './auto-open-selection.service';
 
 const POOL_INCLUDE = {
   webhook: { select: { id: true, name: true } },
   brands: {
+    where: { brand: { deletedAt: null } },
     include: {
       brand: { select: { id: true, brandName: true, brandId: true, country: true } },
     },
@@ -33,6 +40,7 @@ export class AutoOpenPoolsService {
     private readonly webhookSender: WebhookSenderService,
     private readonly config: ConfigService,
     @InjectQueue('auto-open') private readonly queue: Queue,
+    private readonly selection: AutoOpenSelectionService,
   ) {}
 
   remoteWritesEnabled() {
@@ -92,7 +100,22 @@ export class AutoOpenPoolsService {
 
   async list() {
     await this.ensureManagedKaPools();
-    return this.prisma.autoOpenPool.findMany({ include: POOL_INCLUDE, orderBy: { createdAt: 'desc' } });
+    const pools = await this.prisma.autoOpenPool.findMany({
+      include: POOL_INCLUDE,
+      orderBy: { createdAt: 'desc' },
+    });
+    const summaries = await this.selection.summarizePools(pools.map(pool => pool.id));
+    return pools.map(pool => ({
+      ...pool,
+      storeSummary: summaries.byPool.get(pool.id)
+        ?? emptyAutoOpenStoreSummary(summaries.calculatedAt),
+      brands: pool.brands.map(association => ({
+        ...association,
+        storeSummary: summaries.byPoolBrand.get(
+          autoOpenPoolBrandSummaryKey(pool.id, association.brandId),
+        ) ?? emptyAutoOpenStoreSummary(summaries.calculatedAt),
+      })),
+    }));
   }
 
   async findOne(id: string) {
@@ -213,6 +236,11 @@ export class AutoOpenPoolsService {
       this.prisma.autoOpenExecution.count({ where: { poolId } }),
     ]);
     return { data, total, page: safePage, limit: safeLimit };
+  }
+
+  async listStores(poolId: string, query: ListAutoOpenStoresDto) {
+    await this.findOne(poolId);
+    return this.selection.listPoolStores(poolId, query);
   }
 
   private async enqueue(pool: Awaited<ReturnType<AutoOpenPoolsService['findOne']>>, scheduledSlot: Date | null) {

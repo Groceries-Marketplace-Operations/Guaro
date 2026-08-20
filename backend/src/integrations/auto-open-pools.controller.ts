@@ -11,6 +11,7 @@ import { AutoOpenPoolsService } from './auto-open-pools.service';
 import { CreatePoolDto } from './dto/create-pool.dto';
 import { UpdatePoolDto } from './dto/update-pool.dto';
 import { SendNotificationDto } from './dto/send-notification.dto';
+import { ListAutoOpenStoresDto } from './dto/list-auto-open-stores.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('integrations/auto-open')
@@ -66,6 +67,12 @@ export class AutoOpenPoolsController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ) {
     return this.svc.listExecutions(id, page, limit);
+  }
+
+  @Get('pools/:id/stores')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  stores(@Param('id') id: string, @Query() query: ListAutoOpenStoresDto) {
+    return this.svc.listStores(id, query);
   }
 
   @Post('notify')

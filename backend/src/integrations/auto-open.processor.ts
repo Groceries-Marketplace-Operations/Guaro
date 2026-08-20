@@ -14,6 +14,9 @@ import {
   sleep,
 } from '../queue/handlers/didi-food.util';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
+import { AutoOpenSelectionService } from './auto-open-selection.service';
+
+export { LIVE_AUTO_OPEN_EMERGENCY_STATUSES } from './auto-open-selection.service';
 
 interface AutoOpenJobData {
   executionId: string;
@@ -191,16 +194,6 @@ function serializedShopErrors(value: Prisma.JsonValue): ShopError[] | undefined 
   return errors.length ? errors : undefined;
 }
 
-// Product decision: partial_restored and restore_failed are intentionally not
-// live emergencies for Auto Open.
-export const LIVE_AUTO_OPEN_EMERGENCY_STATUSES = [
-  'pending',
-  'running',
-  'offline',
-  'partial_success',
-  'restoring',
-] as const;
-
 const TERMINAL_BRAND_STATUSES: AutoOpenStatus[] = [
   AutoOpenStatus.done,
   AutoOpenStatus.partial_success,
@@ -249,6 +242,7 @@ export class AutoOpenProcessor extends WorkerHost {
     private readonly config: ConfigService,
     private readonly webhooks: WebhookSenderService,
     @InjectQueue('auto-open') private readonly queue: Queue,
+    private readonly selection: AutoOpenSelectionService,
   ) {
     super();
   }
@@ -546,7 +540,10 @@ export class AutoOpenProcessor extends WorkerHost {
       });
       for (let index = 0; index < brand.shops.length; index += BATCH_SIZE) {
         const batch = brand.shops.slice(index, index + BATCH_SIZE);
-        const protection = await this.emergencyProtectionForBatch(brand.id, batch.map(shop => shop.id));
+        const protection = await this.selection.emergencyProtectionForBatch(
+          brand.id,
+          batch.map(shop => shop.id),
+        );
 
         for (const shop of batch) {
           if (protection.blockAll || protection.blockedShopIds.has(shop.id)) {
@@ -559,7 +556,7 @@ export class AutoOpenProcessor extends WorkerHost {
 
           try {
             const token = await getAuthToken(brand.application.appId, appSecret, shop.appShopId);
-            if (await this.hasLiveEmergency(brand.id, shop.id)) {
+            if (await this.selection.hasLiveEmergency(brand.id, shop.id)) {
               shopsProcessed--;
               shopsWouldOpen--;
               shopsSkippedEmergency++;
@@ -649,44 +646,6 @@ export class AutoOpenProcessor extends WorkerHost {
       },
     });
     await this.reconcileExecution(executionId);
-  }
-
-  private async emergencyProtectionForBatch(brandId: string, shopIds: string[]) {
-    const emergencies = await this.prisma.storeEmergency.findMany({
-      where: {
-        brandId,
-        status: { in: [...LIVE_AUTO_OPEN_EMERGENCY_STATUSES] },
-        finishedAt: null,
-        OR: [
-          { mode: 'all_brand' },
-          { mode: 'shop_list', targets: { some: { shopId: { in: shopIds } } } },
-        ],
-      },
-      select: {
-        mode: true,
-        targets: { where: { shopId: { in: shopIds } }, select: { shopId: true } },
-      },
-    });
-    return {
-      blockAll: emergencies.some(emergency => emergency.mode === 'all_brand'),
-      blockedShopIds: new Set(emergencies.flatMap(emergency => emergency.targets.map(target => target.shopId))),
-    };
-  }
-
-  private async hasLiveEmergency(brandId: string, shopUuid: string) {
-    const emergency = await this.prisma.storeEmergency.findFirst({
-      where: {
-        brandId,
-        status: { in: [...LIVE_AUTO_OPEN_EMERGENCY_STATUSES] },
-        finishedAt: null,
-        OR: [
-          { mode: 'all_brand' },
-          { mode: 'shop_list', targets: { some: { shopId: shopUuid } } },
-        ],
-      },
-      select: { id: true },
-    });
-    return emergency !== null;
   }
 
   private assertRemoteWriteGates(dryRun: boolean, executionWritesEnabled: boolean) {

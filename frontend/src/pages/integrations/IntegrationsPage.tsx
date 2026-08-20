@@ -1,10 +1,12 @@
-import { useState, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { integrationsApi, webhooksApi, brandsApi } from '../../api';
-import { useT } from '../../i18n';
+import { useLang, useT } from '../../i18n';
 import type { AutoOpenCapabilities, AutoOpenPool, AutoOpenExecution, Webhook, Brand, Country } from '../../types';
+import AutoOpenPoolStoresExplorer from './AutoOpenPoolStoresExplorer';
+import './auto-open.css';
 
 type ApiErr = { response?: { data?: { message?: string | string[] } } };
 function errMsg(e: unknown) {
@@ -50,6 +52,7 @@ interface BrandSearchProps {
 }
 
 function BrandSearch({ brands, selected, onChange }: BrandSearchProps) {
+  const t = useT();
   const [q, setQ] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -72,7 +75,7 @@ function BrandSearch({ brands, selected, onChange }: BrandSearchProps) {
       <input
         ref={inputRef}
         className="form-input"
-        placeholder="Search brands…"
+        placeholder={t('pages.integrations.poolStores.searchBrands')}
         value={q}
         onChange={e => setQ(e.target.value)}
         style={{ marginBottom: 8 }}
@@ -91,6 +94,7 @@ function BrandSearch({ brands, selected, onChange }: BrandSearchProps) {
               <button
                 type="button"
                 onClick={() => removeChip(b.id)}
+                aria-label={t('pages.integrations.poolStores.removeBrand', { brand: b.brandName })}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--orange)', padding: 0, display: 'flex', lineHeight: 1 }}
               >×</button>
             </span>
@@ -100,9 +104,9 @@ function BrandSearch({ brands, selected, onChange }: BrandSearchProps) {
 
       <div style={{ border: '1px solid var(--border)', borderRadius: 8, maxHeight: 200, overflowY: 'auto' }}>
         {brands.length === 0 ? (
-          <div style={{ padding: '10px 12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>No brands for this country.</div>
+          <div style={{ padding: '10px 12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t('pages.integrations.noBrandsForCountry')}</div>
         ) : filtered.length === 0 ? (
-          <div style={{ padding: '10px 12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>No results for "{q}"</div>
+          <div style={{ padding: '10px 12px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t('pages.integrations.poolStores.noBrandResults', { search: q })}</div>
         ) : (
           filtered.map(b => {
             const sel = selected.includes(b.id);
@@ -124,7 +128,7 @@ function BrandSearch({ brands, selected, onChange }: BrandSearchProps) {
 
       {selected.length > 0 && (
         <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 5 }}>
-          {selected.length} brand{selected.length > 1 ? 's' : ''} selected
+          {t('pages.integrations.poolStores.selectedBrands', { count: String(selected.length) })}
         </p>
       )}
     </div>
@@ -151,6 +155,7 @@ function HourPicker({ hours, onChange }: HourPickerProps) {
         const sel = hours.includes(localH);
         return (
           <button key={localH} type="button" onClick={() => toggle(localH)}
+            aria-pressed={sel}
             style={{
               padding: '3px 8px', borderRadius: 6, fontSize: '0.78rem', fontWeight: 600,
               border: '1px solid', cursor: 'pointer',
@@ -194,6 +199,7 @@ const NOTIFY_COLORS = [
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function IntegrationsPage() {
   const t = useT();
+  const { lang } = useLang();
   const qc = useQueryClient();
 
   const [tab, setTab] = useState<'auto-open' | 'notify'>('auto-open');
@@ -206,6 +212,62 @@ export default function IntegrationsPage() {
   const [runningId, setRunningId]       = useState<string | null>(null);
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
   const [deletingId, setDeletingId]     = useState<string | null>(null);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const autoOpenTabRef = useRef<HTMLButtonElement>(null);
+  const notifyTabRef = useRef<HTMLButtonElement>(null);
+  const mobileNavigationToggleRef = useRef<HTMLButtonElement>(null);
+  const pageRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!mobileNavigationOpen) return;
+
+    const sidebar = document.getElementById('app-sidebar');
+    const topbar = document.querySelector<HTMLElement>('.topbar');
+    const mascot = document.querySelector<HTMLElement>('.naranja-mascot');
+    const toggle = mobileNavigationToggleRef.current;
+    const mobileViewport = window.matchMedia('(max-width: 760px)');
+    const background = [topbar, pageRef.current, mascot].filter((element): element is HTMLElement => Boolean(element));
+    background.forEach(element => element.setAttribute('inert', ''));
+
+    const focusableElements = () => [
+      toggle,
+      ...Array.from(sidebar?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? []),
+    ].filter((element): element is HTMLElement => Boolean(element));
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMobileNavigationOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const focusable = focusableElements();
+      if (focusable.length === 0) return;
+      const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+      const nextIndex = event.shiftKey
+        ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
+        : (currentIndex === focusable.length - 1 ? 0 : currentIndex + 1);
+      event.preventDefault();
+      focusable[nextIndex].focus();
+    };
+    const closeOnDesktop = (event: MediaQueryListEvent) => {
+      if (!event.matches) setMobileNavigationOpen(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    mobileViewport.addEventListener('change', closeOnDesktop);
+    focusableElements().find(element => element !== toggle)?.focus();
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      mobileViewport.removeEventListener('change', closeOnDesktop);
+      background.forEach(element => element.removeAttribute('inert'));
+      window.requestAnimationFrame(() => toggle?.focus());
+    };
+  }, [mobileNavigationOpen]);
 
   // Notify tab state
   const [notifyForm, setNotifyForm] = useState({ title: '', message: '', color: '' });
@@ -247,6 +309,22 @@ export default function IntegrationsPage() {
 
   const filteredBrands = allBrands;
 
+  const number = useMemo(() => new Intl.NumberFormat(lang === 'es' ? 'es-MX' : 'en-US'), [lang]);
+  const poolOverview = useMemo(() => pools.reduce((summary, pool) => {
+    summary.brands += pool.brands.length;
+    summary.totalStores += pool.storeSummary?.totalStores ?? 0;
+    summary.includedStores += pool.storeSummary?.includedStores ?? 0;
+    summary.emergencyProtectedStores += pool.storeSummary?.emergencyProtectedStores ?? 0;
+    summary.configurationBlockedStores += pool.storeSummary?.configurationBlockedStores ?? 0;
+    return summary;
+  }, {
+    brands: 0,
+    totalStores: 0,
+    includedStores: 0,
+    emergencyProtectedStores: 0,
+    configurationBlockedStores: 0,
+  }), [pools]);
+
   const tzLabel = useCallback((tz: string) => TIMEZONES.find(t => t.value === tz)?.label ?? tz, []);
 
   const openCreate = () => {
@@ -285,10 +363,11 @@ export default function IntegrationsPage() {
       };
       if (editingPool) {
         await integrationsApi.updatePool(editingPool.id, payload);
+        await qc.invalidateQueries({ queryKey: ['auto-open-pool-stores', editingPool.id] });
       } else {
         await integrationsApi.createPool(payload);
       }
-      qc.invalidateQueries({ queryKey: ['auto-open-pools'] });
+      await qc.invalidateQueries({ queryKey: ['auto-open-pools'] });
       setModalOpen(false);
     } catch (e) {
       setErr(errMsg(e));
@@ -321,6 +400,8 @@ export default function IntegrationsPage() {
   };
 
   const deletePool = async (id: string) => {
+    const pool = pools.find(item => item.id === id);
+    if (!pool || pool.managedKey || !window.confirm(t('pages.integrations.poolStores.deleteConfirm', { pool: pool.name }))) return;
     setDeletingId(id);
     await integrationsApi.deletePool(id).catch(() => null);
     qc.invalidateQueries({ queryKey: ['auto-open-pools'] });
@@ -360,10 +441,30 @@ export default function IntegrationsPage() {
   return (
     <>
       <Topbar breadcrumb={[{ label: t('nav.integrations') }]} />
-      <main className="main-content">
-        <div className="page-header">
+      <button
+        ref={mobileNavigationToggleRef}
+        type="button"
+        className="mobile-navigation-toggle"
+        aria-controls="app-sidebar"
+        aria-expanded={mobileNavigationOpen}
+        aria-label={t('nav.mainNavigation')}
+        disabled={modalOpen}
+        onClick={() => setMobileNavigationOpen(open => !open)}
+      >
+        {mobileNavigationOpen ? '×' : '☰'}
+      </button>
+      {mobileNavigationOpen && (
+        <div
+          className="mobile-navigation-backdrop"
+          aria-hidden="true"
+          onClick={() => setMobileNavigationOpen(false)}
+        />
+      )}
+      <main ref={pageRef} className={`main-content auto-open-page${mobileNavigationOpen ? ' mobile-navigation-open' : ''}`}>
+        <div className="page-header auto-open-page-header">
           <div className="page-header-info">
             <h1>{t('nav.integrations')}</h1>
+            <p>{t('pages.integrations.subtitle')}</p>
           </div>
           {tab === 'auto-open' && (
             <button className="btn btn-primary" onClick={openCreate}>
@@ -373,93 +474,166 @@ export default function IntegrationsPage() {
         </div>
 
         {/* Tabs */}
-        <div className="tabs" style={{ marginBottom: 20 }}>
-          <div className={`tab ${tab === 'auto-open' ? 'active' : ''}`} onClick={() => setTab('auto-open')}>
+        <div className="tabs auto-open-tabs" role="tablist" aria-label={t('pages.integrations.tabsLabel')}>
+          <button
+            type="button"
+            ref={autoOpenTabRef}
+            id="auto-open-tab"
+            className={`tab ${tab === 'auto-open' ? 'active' : ''}`}
+            role="tab"
+            aria-selected={tab === 'auto-open'}
+            aria-controls="auto-open-panel"
+            tabIndex={tab === 'auto-open' ? 0 : -1}
+            onClick={() => setTab('auto-open')}
+            onKeyDown={event => {
+              if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+              event.preventDefault();
+              setTab('notify');
+              notifyTabRef.current?.focus();
+            }}
+          >
             {t('nav.autoOpenStores')}
-          </div>
-          <div className={`tab ${tab === 'notify' ? 'active' : ''}`} onClick={() => setTab('notify')}>
+          </button>
+          <button
+            type="button"
+            ref={notifyTabRef}
+            id="auto-open-notify-tab"
+            className={`tab ${tab === 'notify' ? 'active' : ''}`}
+            role="tab"
+            aria-selected={tab === 'notify'}
+            aria-controls="auto-open-notify-panel"
+            tabIndex={tab === 'notify' ? 0 : -1}
+            onClick={() => setTab('notify')}
+            onKeyDown={event => {
+              if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+              event.preventDefault();
+              setTab('auto-open');
+              autoOpenTabRef.current?.focus();
+            }}
+          >
             {t('pages.integrations.tabNotify')}
-          </div>
+          </button>
         </div>
 
         {/* ── Auto Open tab ─────────────────────────────────────────────── */}
-        {tab === 'auto-open' && (<>
-        {isLoading && <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem' }}>Loading…</p>}
+        {tab === 'auto-open' && (<section id="auto-open-panel" role="tabpanel" aria-labelledby="auto-open-tab">
+        {isLoading && <p className="text-muted" role="status">{t('pages.integrations.poolStores.loadingPools')}</p>}
         {err && !modalOpen && <div className="error-banner" style={{ marginBottom: 12 }}>{err}</div>}
-        <div style={{
-          marginBottom: 12, borderRadius: 8, padding: '10px 14px', fontSize: '0.8rem',
-          border: `1px solid ${liveModeAvailable ? '#ABEFC6' : '#FECDCA'}`,
-          background: liveModeAvailable ? '#ECFDF3' : '#FEF3F2',
-          color: liveModeAvailable ? '#067647' : '#B42318',
-        }}>
-          <strong>{liveModeAvailable ? 'Servidor listo para LIVE.' : 'LIVE bloqueado por el servidor.'}</strong>{' '}
+        <div className={`auto-open-live-banner ${liveModeAvailable ? 'available' : 'blocked'}`}>
+          <strong>{liveModeAvailable
+            ? t('pages.integrations.poolStores.liveReady')
+            : t('pages.integrations.poolStores.liveBlocked')}</strong>{' '}
           {capabilitiesError
-            ? 'No fue posible verificar la barrera de escrituras remotas; por seguridad sólo se permite dry run.'
+            ? t('pages.integrations.poolStores.capabilitiesError')
             : autoOpenCapabilities
               ? (liveModeAvailable
-                ? 'La barrera de escrituras remotas está habilitada; cada pool todavía debe cambiarse explícitamente de DRY RUN a LIVE.'
-                : 'La barrera AUTO_OPEN_REMOTE_WRITE_ENABLED está deshabilitada; sólo se permiten simulaciones.')
-              : 'Verificando la barrera de escrituras remotas…'}
+                ? t('pages.integrations.poolStores.liveReadyDetail')
+                : t('pages.integrations.poolStores.liveBlockedDetail'))
+              : t('pages.integrations.poolStores.checkingCapabilities')}
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {pools.map(pool => (
-            <div key={pool.id} className="card" style={{ padding: '16px 20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                  <button onClick={() => toggleActive(pool)} style={{
-                    fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                    border: 'none', cursor: 'pointer', flexShrink: 0,
-                    background: pool.active ? 'var(--green-bg)' : 'var(--surface-2)',
-                    color: pool.active ? '#027A48' : 'var(--text-muted)',
-                  }}>
+        {!isLoading && pools.length > 0 && (
+          <div className="auto-open-overview" aria-label={t('pages.integrations.poolStores.overviewLabel')}>
+            <div><span>{t('pages.integrations.poolStores.pools')}</span><strong>{number.format(pools.length)}</strong></div>
+            <div><span>{t('pages.integrations.poolStores.brands')}</span><strong>{number.format(poolOverview.brands)}</strong></div>
+            <div><span>{t('pages.integrations.poolStores.totalStores')}</span><strong>{number.format(poolOverview.totalStores)}</strong></div>
+            <div><span>{t('pages.integrations.poolStores.includedPlural')}</span><strong>{number.format(poolOverview.includedStores)}</strong></div>
+            <div className="protected"><span>{t('pages.integrations.poolStores.protectedPlural')}</span><strong>{number.format(poolOverview.emergencyProtectedStores)}</strong></div>
+            <div className="configuration"><span>{t('pages.integrations.poolStores.configurationIssues')}</span><strong>{number.format(poolOverview.configurationBlockedStores)}</strong></div>
+          </div>
+        )}
+
+        <div className="auto-open-pools">
+          {pools.map(pool => {
+            const storeSummary = pool.storeSummary ?? {
+              totalStores: 0,
+              includedStores: 0,
+              emergencyProtectedStores: 0,
+              configurationBlockedStores: 0,
+            };
+            const historyRegionId = `auto-open-history-${pool.id}`;
+            return (
+            <article key={pool.id} className="card auto-open-pool-card">
+              <div className="auto-open-pool-card-main">
+                <div>
+                  <div className="auto-open-pool-heading">
+                    <h2>{pool.name}</h2>
+                    <button
+                      type="button"
+                      className={`auto-open-pool-pill ${pool.active ? 'active' : 'inactive'}`}
+                      aria-pressed={pool.active}
+                      aria-label={t('pages.integrations.poolStores.togglePoolLabel', { pool: pool.name })}
+                      onClick={() => toggleActive(pool)}
+                    >
                     {pool.active ? t('common.active') : t('common.inactive')}
                   </button>
-                  <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{pool.name}</span>
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: 'var(--surface-2)', color: 'var(--text-secondary)', flexShrink: 0 }}>
-                    {pool.country}
-                  </span>
-                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', flexShrink: 0 }}>
-                    {pool.brands.length} brands
-                  </span>
-                  <span style={{
-                    fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                    background: pool.dryRun ? '#EAF4FF' : '#FFF0EC',
-                    color: pool.dryRun ? '#175CD3' : '#B42318',
-                  }}>
+                    <span className="auto-open-pool-pill country">{pool.country}</span>
+                    <span className={`auto-open-pool-pill ${pool.dryRun ? 'dry-run' : 'live'}`}>
                     {pool.dryRun ? 'DRY RUN' : 'LIVE'}
                   </span>
-                  {pool.managedKey && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>KA · system pool</span>}
-                  {pool.executionHours.length > 0 && (
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0 }}>
-                      🕐 {formatPoolHours(pool)}
-                    </span>
-                  )}
+                    {pool.managedKey && <span className="auto-open-pool-system">{t('pages.integrations.poolStores.managedPool')}</span>}
+                  </div>
+                  <p className="auto-open-pool-schedule">
+                    {t('pages.integrations.poolStores.schedule')}: {pool.executionHours.length ? formatPoolHours(pool) : '—'}
+                  </p>
                 </div>
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                  <button className="btn btn-ghost btn-sm" style={{ padding: '4px 10px' }}
-                    onClick={() => setSelectedPoolId(selectedPoolId === pool.id ? null : pool.id)}>
+                <div className="auto-open-pool-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm auto-open-history-action"
+                    aria-expanded={selectedPoolId === pool.id}
+                    aria-controls={historyRegionId}
+                    aria-label={t('pages.integrations.poolStores.historyLabel', { pool: pool.name })}
+                    onClick={() => setSelectedPoolId(selectedPoolId === pool.id ? null : pool.id)}
+                  >
                     {selectedPoolId === pool.id ? t('pages.integrations.hideHistory') : t('pages.integrations.viewHistory')}
                   </button>
                   <button
-                    className="btn btn-primary btn-sm"
-                    style={{ padding: '4px 12px', opacity: runningId === pool.id ? 0.6 : 1 }}
+                    type="button"
+                    className="btn btn-primary btn-sm auto-open-run-action"
                     disabled={runningId === pool.id || (!pool.dryRun && !liveModeAvailable)}
-                    title={!pool.dryRun && !liveModeAvailable ? 'El servidor no permite ejecuciones LIVE' : undefined}
+                    title={!pool.dryRun && !liveModeAvailable ? t('pages.integrations.poolStores.liveRunDisabled') : undefined}
+                    aria-label={t('pages.integrations.poolStores.runLabel', { pool: pool.name })}
                     onClick={() => runNow(pool)}
                   >
                     {runningId === pool.id ? t('pages.integrations.running') : t('pages.integrations.runNow')}
                   </button>
-                  <button className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }} onClick={() => openEdit(pool)}>✎</button>
-                  <button className="btn btn-ghost btn-sm"
-                    style={{ padding: '4px 8px', color: 'var(--red)', opacity: deletingId === pool.id ? 0.5 : 1 }}
-                    disabled={deletingId === pool.id}
-                    onClick={() => deletePool(pool.id)}>×</button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm auto-open-icon-action"
+                    aria-label={t('pages.integrations.poolStores.editLabel', { pool: pool.name })}
+                    title={t('common.edit')}
+                    onClick={() => openEdit(pool)}
+                  >✎</button>
+                  {!pool.managedKey && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm auto-open-icon-action"
+                      style={{ color: 'var(--red)' }}
+                      aria-label={t('pages.integrations.poolStores.deleteLabel', { pool: pool.name })}
+                      title={t('common.delete')}
+                      disabled={deletingId === pool.id}
+                      onClick={() => deletePool(pool.id)}
+                    >×</button>
+                  )}
                 </div>
               </div>
 
+              <div className="auto-open-pool-metrics" aria-label={t('pages.integrations.poolStores.poolSummaryLabel', { pool: pool.name })}>
+                <div className="auto-open-pool-metric"><span>{t('pages.integrations.poolStores.brands')}</span><strong>{number.format(pool.brands.length)}</strong></div>
+                <div className="auto-open-pool-metric"><span>{t('pages.integrations.poolStores.totalStores')}</span><strong>{number.format(storeSummary.totalStores)}</strong></div>
+                <div className="auto-open-pool-metric"><span>{t('pages.integrations.poolStores.includedPlural')}</span><strong>{number.format(storeSummary.includedStores)}</strong></div>
+                <div className="auto-open-pool-metric protected"><span>{t('pages.integrations.poolStores.protectedPlural')}</span><strong>{number.format(storeSummary.emergencyProtectedStores)}</strong></div>
+                <div className="auto-open-pool-metric configuration"><span>{t('pages.integrations.poolStores.configurationIssues')}</span><strong>{number.format(storeSummary.configurationBlockedStores)}</strong></div>
+              </div>
+
+              <AutoOpenPoolStoresExplorer
+                key={`${pool.id}:${pool.brands.map(membership => membership.brandId).sort().join('|')}`}
+                pool={pool}
+              />
+
               {selectedPoolId === pool.id && (
-                <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                <div id={historyRegionId} className="auto-open-history">
                   <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
                     {t('pages.integrations.executionHistory')}
                   </div>
@@ -472,8 +646,8 @@ export default function IntegrationsPage() {
                   )}
                 </div>
               )}
-            </div>
-          ))}
+            </article>
+          );})}
         </div>
 
         {!isLoading && pools.length === 0 && (
@@ -481,11 +655,11 @@ export default function IntegrationsPage() {
             <p style={{ fontSize: '0.9rem' }}>{t('pages.integrations.noPools')}</p>
           </div>
         )}
-        </>)}
+        </section>)}
 
         {/* ── Notify tab ────────────────────────────────────────────────── */}
         {tab === 'notify' && (
-          <div style={{ maxWidth: 640 }}>
+          <section id="auto-open-notify-panel" role="tabpanel" aria-labelledby="auto-open-notify-tab" style={{ maxWidth: 640 }}>
             <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', marginBottom: 20 }}>
               {t('pages.integrations.notifySubtitle')}
             </p>
@@ -594,7 +768,7 @@ export default function IntegrationsPage() {
             >
               {sending ? t('pages.integrations.notifySending') : t('pages.integrations.notifySendBtn')}
             </button>
-          </div>
+          </section>
         )}
       </main>
 
@@ -621,7 +795,7 @@ export default function IntegrationsPage() {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div className="form-group">
-              <label className="form-label">Country</label>
+              <label className="form-label">{t('pages.integrations.poolStores.country')}</label>
               <select className="form-select" value={form.country}
                 disabled={!!editingPool?.managedKey}
                 onChange={e => setForm(f => ({ ...f, country: e.target.value as Country, brandIds: [] }))}>
@@ -649,7 +823,7 @@ export default function IntegrationsPage() {
             <HourPicker hours={form.executionHours} onChange={h => setForm(f => ({ ...f, executionHours: h }))} />
             {form.executionHours.length > 0 && (
               <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 5 }}>
-                Horario local: {form.executionHours.map(fmtHour).join(', ')}
+                {t('pages.integrations.poolStores.localSchedule')}: {form.executionHours.map(fmtHour).join(', ')}
               </p>
             )}
           </div>
@@ -664,20 +838,20 @@ export default function IntegrationsPage() {
                 style={{ marginTop: 3, accentColor: 'var(--orange)' }}
               />
               <span>
-                <strong>Modo simulación (recomendado)</strong>
+                <strong>{t('pages.integrations.poolStores.dryRunMode')}</strong>
                 <span style={{ display: 'block', fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                  Usa las tiendas locales y emergencias vigentes para mostrar cuántas intentaría abrir, pero nunca envía el POST de apertura.
+                  {t('pages.integrations.poolStores.dryRunHelp')}
                 </span>
               </span>
             </label>
             {form.dryRun && !liveModeAvailable && (
               <p className="form-hint" style={{ color: '#B42318' }}>
-                No se puede desactivar el modo simulación hasta habilitar la barrera LIVE en el servidor.
+                {t('pages.integrations.poolStores.dryRunLocked')}
               </p>
             )}
             {!form.dryRun && (
               <div className="error-banner" style={{ marginTop: 10 }}>
-                Modo LIVE: esta configuración puede abrir tiendas reales. El servidor también debe tener habilitada la barrera de escrituras remotas.
+                {t('pages.integrations.poolStores.liveWarning')}
               </div>
             )}
           </div>
@@ -696,7 +870,7 @@ export default function IntegrationsPage() {
 
           <div className="form-group">
             <label className="form-label">
-              Brands
+              {t('pages.integrations.poolStores.brands')}
               <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.78rem', marginLeft: 4 }}>
                 ({filteredBrands.length} {t('pages.integrations.availableInCountry')})
               </span>
@@ -707,7 +881,7 @@ export default function IntegrationsPage() {
               onChange={ids => setForm(f => ({ ...f, brandIds: ids }))}
             />
             {editingPool?.managedKey && (
-              <p className="form-hint">Las marcas KA activas de este país se sincronizan automáticamente.</p>
+              <p className="form-hint">{t('pages.integrations.poolStores.managedBrandsHelp')}</p>
             )}
           </div>
         </Modal>
@@ -718,6 +892,7 @@ export default function IntegrationsPage() {
 
 function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: string) => string }) {
   const [expanded, setExpanded] = useState(false);
+  const detailId = `auto-open-execution-detail-${execution.id}`;
   const detailBrands = execution.brandRuns?.length
     ? execution.brandRuns.map(run => ({
       brandName: run.brandName,
@@ -738,9 +913,14 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-      <div
+      <button
+        type="button"
+        className="auto-open-execution-summary"
         onClick={() => hasDetails && setExpanded(e => !e)}
-        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: hasDetails ? 'pointer' : 'default', background: 'var(--surface-2)', flexWrap: 'wrap' }}
+        disabled={!hasDetails}
+        aria-expanded={hasDetails ? expanded : undefined}
+        aria-controls={hasDetails ? detailId : undefined}
+        aria-label={hasDetails ? t('pages.integrations.poolStores.executionDetailsLabel') : undefined}
       >
         <span style={{
           fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, flexShrink: 0,
@@ -778,9 +958,9 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
         {hasDetails && (
           <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
         )}
-      </div>
+      </button>
       {expanded && hasDetails && (
-        <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div id={detailId} style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
           {detailBrands.map((b, i) => (
             <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem', flexWrap: 'wrap' }}>

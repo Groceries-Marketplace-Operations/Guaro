@@ -91,7 +91,7 @@ export default function Sidebar() {
   ]);
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" id="app-sidebar">
       <div className="sidebar-logo">
         <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 6 }} />
         <div className="logo-text">
