@@ -26,11 +26,7 @@ interface ShopError {
   error: string;
 }
 
-interface BrandNotificationInput {
-  executionId: string;
-  poolName: string;
-  country: string;
-  dryRun: boolean;
+interface CountryNotificationBrand {
   brandName: string;
   status: AutoOpenStatus;
   totalShops: number;
@@ -41,9 +37,28 @@ interface BrandNotificationInput {
   shopsFailed: number;
   errorMessage: string | null;
   shopErrors: ShopError[];
+}
+
+interface CountryNotificationInput {
+  executionId: string;
+  poolName: string;
+  country: string;
+  dryRun: boolean;
+  status: AutoOpenStatus;
+  totalBrands: number;
+  brandsCompleted: number;
+  brandsFailed: number;
+  totalShops: number;
+  shopsProcessed: number;
+  shopsOpened: number;
+  shopsWouldOpen: number;
+  shopsSkippedEmergency: number;
+  shopsFailed: number;
+  errorMessage: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
   frontendUrl: string;
+  brandRuns: CountryNotificationBrand[];
 }
 
 function elapsedLabel(startedAt: Date | null, finishedAt: Date | null) {
@@ -60,15 +75,18 @@ function oneLine(value: string, maxLength = 280) {
   return compact.length > maxLength ? `${compact.slice(0, maxLength - 1)}…` : compact;
 }
 
-export function buildAutoOpenBrandNotification(input: BrandNotificationInput) {
+const MAX_COUNTRY_NOTIFICATION_SHOP_ERRORS = 50;
+
+function statusPresentation(status: AutoOpenStatus) {
+  if (status === AutoOpenStatus.done) return { emoji: '✅', label: 'Completada' };
+  if (status === AutoOpenStatus.partial_success) return { emoji: '⚠️', label: 'Completada con errores' };
+  if (status === AutoOpenStatus.cancelled) return { emoji: '⏹️', label: 'Cancelada' };
+  return { emoji: '❌', label: 'Fallida' };
+}
+
+export function buildAutoOpenCountryNotification(input: CountryNotificationInput) {
   const mode = input.dryRun ? 'DRY RUN' : 'LIVE';
-  const statusLabel = input.status === AutoOpenStatus.done
-    ? 'Completada'
-    : input.status === AutoOpenStatus.partial_success
-      ? 'Completada con errores'
-      : input.status === AutoOpenStatus.cancelled
-        ? 'Cancelada'
-        : 'Fallida';
+  const status = statusPresentation(input.status);
   const color = input.status === AutoOpenStatus.done
     ? '#00C853'
     : input.status === AutoOpenStatus.cancelled
@@ -77,14 +95,18 @@ export function buildAutoOpenBrandNotification(input: BrandNotificationInput) {
         ? '#F79009'
         : '#D92D20';
   const detailUrl = `${input.frontendUrl.replace(/\/$/, '')}/integrations/auto-open`;
-  const shopErrorLines = input.shopErrors.map((error, index) => (
-    `${index + 1}. shop_id ${error.shopId} · app_shop_id ${error.appShopId} · ${oneLine(error.error)}`
-  ));
-  const lines = [
+  const statusCounts = input.brandRuns.reduce((counts, run) => {
+    counts[run.status] = (counts[run.status] ?? 0) + 1;
+    return counts;
+  }, {} as Partial<Record<AutoOpenStatus, number>>);
+  const summaryLines = [
     `**Pool:** ${input.poolName}`,
     `**País:** ${input.country}`,
     `**Modo:** ${mode}`,
-    `**Estado:** ${statusLabel}`,
+    `**Estado:** ${status.label}`,
+    `**Marcas completadas:** ${input.brandsCompleted}/${input.totalBrands}`,
+    `**Marcas con errores:** ${input.brandsFailed}`,
+    `**Marcas exitosas / parciales / fallidas:** ${statusCounts.done ?? 0} / ${statusCounts.partial_success ?? 0} / ${(statusCounts.failed ?? 0) + (statusCounts.cancelled ?? 0)}`,
     `**Tiendas totales:** ${input.totalShops}`,
     `**Procesadas:** ${input.shopsProcessed}`,
     `**Candidatas para apertura:** ${input.shopsWouldOpen}`,
@@ -96,19 +118,50 @@ export function buildAutoOpenBrandNotification(input: BrandNotificationInput) {
     `**Duración:** ${elapsedLabel(input.startedAt, input.finishedAt)}`,
     `**ID de ejecución:** ${input.executionId}`,
     ...(input.errorMessage ? [`**Error general:** ${oneLine(input.errorMessage, 500)}`] : []),
-    ...(shopErrorLines.length ? [
-      `**Errores de tiendas (${shopErrorLines.length}/${input.shopsFailed} registrados):**`,
-      ...shopErrorLines,
-    ] : []),
     `**Detalle:** ${detailUrl}`,
   ];
+
+  const brandLines = input.brandRuns.map((run, index) => {
+    const presentation = statusPresentation(run.status);
+    return `${index + 1}. ${presentation.emoji} **${run.brandName}** — ${presentation.label} · `
+      + `procesadas ${run.shopsProcessed}/${run.totalShops} · `
+      + `${input.dryRun ? 'abriría' : 'abiertas'} ${input.dryRun ? run.shopsWouldOpen : run.shopsOpened} · `
+      + `emergencias ${run.shopsSkippedEmergency} · fallidas ${run.shopsFailed}`
+      + (run.errorMessage ? ` · error: ${oneLine(run.errorMessage, 220)}` : '');
+  });
+  const recordedErrors = input.brandRuns.flatMap(run => run.shopErrors.map(error => ({
+    brandName: run.brandName,
+    ...error,
+  })));
+  const shopErrorLines = recordedErrors.slice(0, MAX_COUNTRY_NOTIFICATION_SHOP_ERRORS).map((error, index) => (
+    `${index + 1}. **${error.brandName}** · shop_id ${error.shopId} · `
+    + `app_shop_id ${error.appShopId} · ${oneLine(error.error)}`
+  ));
+  if (recordedErrors.length > shopErrorLines.length) {
+    shopErrorLines.push(
+      `… ${recordedErrors.length - shopErrorLines.length} errores registrados adicionales disponibles en el detalle de Auto Open.`,
+    );
+  }
+
   return {
-    text: `${input.status === AutoOpenStatus.done ? '✅' : input.status === AutoOpenStatus.cancelled ? '⏹️' : '⚠️'} **Auto Open · ${input.brandName}**`,
-    attachments: [{
-      title: `${input.brandName} · ${input.country} · ${mode}`,
-      text: lines.join('\n'),
-      color,
-    }],
+    text: `${status.emoji} **Auto Open Stores · ${input.country} · ${mode}**`,
+    attachments: [
+      {
+        title: `${input.poolName} · Resumen general`,
+        text: summaryLines.join('\n'),
+        color,
+      },
+      {
+        title: `Detalle por marca (${input.brandRuns.length})`,
+        text: brandLines.length ? brandLines.join('\n') : 'No hubo marcas para procesar.',
+        color,
+      },
+      ...(shopErrorLines.length ? [{
+        title: `Errores de tienda registrados (${Math.min(recordedErrors.length, MAX_COUNTRY_NOTIFICATION_SHOP_ERRORS)}/${input.shopsFailed})`,
+        text: shopErrorLines.join('\n'),
+        color: '#D92D20',
+      }] : []),
+    ],
   };
 }
 
@@ -221,6 +274,7 @@ export class AutoOpenProcessor extends WorkerHost {
     const completed = execution.brandRuns.filter(run => TERMINAL_BRAND_STATUSES.includes(run.status)).length;
     const brandsFailed = execution.brandRuns.filter(run => run.status !== AutoOpenStatus.done && TERMINAL_BRAND_STATUSES.includes(run.status)).length;
     const totalShops = execution.brandRuns.reduce((total, run) => total + run.totalShops, 0);
+    const shopsProcessed = execution.brandRuns.reduce((total, run) => total + run.shopsProcessed, 0);
     const shopsOpened = execution.brandRuns.reduce((total, run) => total + run.shopsOpened, 0);
     const shopsWouldOpen = execution.brandRuns.reduce((total, run) => total + run.shopsWouldOpen, 0);
     const shopsSkippedEmergency = execution.brandRuns.reduce((total, run) => total + run.shopsSkippedEmergency, 0);
@@ -246,6 +300,10 @@ export class AutoOpenProcessor extends WorkerHost {
     const finalStatus = brandsFailed > 0 || shopsFailed > 0
       ? AutoOpenStatus.partial_success
       : AutoOpenStatus.done;
+    const finishedAt = allComplete ? new Date() : null;
+    const errorMessage = brandsFailed || shopsFailed
+      ? `${brandsFailed} brand(s) with errors; ${shopsFailed} store opening(s) failed`
+      : null;
     const updated = await this.prisma.autoOpenExecution.updateMany({
       where: { id: executionId, status: AutoOpenStatus.running },
       data: {
@@ -261,31 +319,51 @@ export class AutoOpenProcessor extends WorkerHost {
         logs: logs as unknown as Prisma.InputJsonValue,
         ...(allComplete ? {
           status: finalStatus,
-          finishedAt: new Date(),
+          finishedAt,
           currentBrand: null,
-          errorMessage: brandsFailed || shopsFailed
-            ? `${brandsFailed} brand(s) with errors; ${shopsFailed} store opening(s) failed`
-            : null,
+          errorMessage,
         } : {}),
       },
     });
     if (!allComplete || !updated.count) return;
 
     if (execution.pool.webhookId) {
-      await this.webhooks.sendToWebhook(execution.pool.webhookId, {
-        text: `${execution.dryRun ? '🧪' : '🟢'} **Auto Open Stores — ${execution.pool.name}** (${execution.pool.country})`,
-        attachments: [{
-          title: execution.dryRun ? 'Dry-run complete — no stores were changed' : 'Live execution complete',
-          text: [
-            `**Brands completed:** ${completed}/${execution.totalBrands}`,
-            `**Shops processed:** ${totalShops}`,
-            `**Would open:** ${shopsWouldOpen}`,
-            `**Actually opened:** ${shopsOpened}`,
-            `**Failed:** ${shopsFailed}`,
-            `**Protected by emergencies:** ${shopsSkippedEmergency}`,
-          ].join('\n'),
-          color: brandsFailed || shopsFailed ? '#F79009' : execution.dryRun ? '#2D9CDB' : '#00C853',
-        }],
+      await this.webhooks.sendToWebhook(
+        execution.pool.webhookId,
+        buildAutoOpenCountryNotification({
+          executionId: execution.id,
+          poolName: execution.pool.name,
+          country: execution.pool.country,
+          dryRun: execution.dryRun,
+          status: finalStatus,
+          totalBrands: execution.totalBrands,
+          brandsCompleted: completed,
+          brandsFailed,
+          totalShops,
+          shopsProcessed,
+          shopsOpened,
+          shopsWouldOpen,
+          shopsSkippedEmergency,
+          shopsFailed,
+          errorMessage,
+          startedAt: execution.startedAt,
+          finishedAt,
+          frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:5173',
+          brandRuns: execution.brandRuns.map(run => ({
+            brandName: run.brandName,
+            status: run.status,
+            totalShops: run.totalShops,
+            shopsProcessed: run.shopsProcessed,
+            shopsOpened: run.shopsOpened,
+            shopsWouldOpen: run.shopsWouldOpen,
+            shopsSkippedEmergency: run.shopsSkippedEmergency,
+            shopsFailed: run.shopsFailed,
+            errorMessage: run.errorMessage,
+            shopErrors: serializedShopErrors(run.shopErrors) ?? [],
+          })),
+        }),
+      ).catch(error => {
+        this.logger.error(`Auto Open country notification failed for ${executionId}: ${(error as Error).message}`);
       });
     }
     this.logger.log(
@@ -560,7 +638,7 @@ export class AutoOpenProcessor extends WorkerHost {
       shopErrors: ShopError[];
     }>,
   ) {
-    const brandRun = await this.prisma.autoOpenBrandExecution.update({
+    await this.prisma.autoOpenBrandExecution.update({
       where: { id: brandRunId },
       data: {
         ...data,
@@ -570,60 +648,7 @@ export class AutoOpenProcessor extends WorkerHost {
         ...(data.shopErrors ? { shopErrors: data.shopErrors as unknown as Prisma.InputJsonValue } : {}),
       },
     });
-    await this.notifyBrandCompletion(executionId, brandRun).catch(error => {
-      this.logger.error(`Auto Open brand notification failed for ${brandRunId}: ${(error as Error).message}`);
-    });
     await this.reconcileExecution(executionId);
-  }
-
-  private async notifyBrandCompletion(
-    executionId: string,
-    brandRun: {
-      brandName: string;
-      status: AutoOpenStatus;
-      totalShops: number;
-      shopsProcessed: number;
-      shopsOpened: number;
-      shopsWouldOpen: number;
-      shopsSkippedEmergency: number;
-      shopsFailed: number;
-      errorMessage: string | null;
-      shopErrors: Prisma.JsonValue;
-      startedAt: Date | null;
-      finishedAt: Date | null;
-    },
-  ) {
-    const execution = await this.prisma.autoOpenExecution.findUnique({
-      where: { id: executionId },
-      select: {
-        id: true,
-        dryRun: true,
-        pool: { select: { name: true, country: true, webhookId: true } },
-      },
-    });
-    if (!execution?.pool.webhookId) return;
-    await this.webhooks.sendToWebhook(
-      execution.pool.webhookId,
-      buildAutoOpenBrandNotification({
-        executionId: execution.id,
-        poolName: execution.pool.name,
-        country: execution.pool.country,
-        dryRun: execution.dryRun,
-        brandName: brandRun.brandName,
-        status: brandRun.status,
-        totalShops: brandRun.totalShops,
-        shopsProcessed: brandRun.shopsProcessed,
-        shopsOpened: brandRun.shopsOpened,
-        shopsWouldOpen: brandRun.shopsWouldOpen,
-        shopsSkippedEmergency: brandRun.shopsSkippedEmergency,
-        shopsFailed: brandRun.shopsFailed,
-        errorMessage: brandRun.errorMessage,
-        shopErrors: serializedShopErrors(brandRun.shopErrors) ?? [],
-        startedAt: brandRun.startedAt,
-        finishedAt: brandRun.finishedAt,
-        frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:5173',
-      }),
-    );
   }
 
   private async emergencyProtectionForBatch(brandId: string, shopIds: string[]) {

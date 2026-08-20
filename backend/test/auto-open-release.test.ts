@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { AutoOpenStatus } from '@prisma/client';
 import {
   AutoOpenProcessor,
-  buildAutoOpenBrandNotification,
+  buildAutoOpenCountryNotification,
   buildEmergencyProtection,
   LIVE_AUTO_OPEN_EMERGENCY_STATUSES,
 } from '../src/integrations/auto-open.processor';
@@ -172,7 +172,7 @@ test('live execution opens once only with both remote-write gates enabled', asyn
   assert.equal(value.execution.status, AutoOpenStatus.done);
 });
 
-test('each completed brand sends a detailed notification before the pool summary', async t => {
+test('a completed country execution sends exactly one detailed summary notification', async t => {
   const originalFetch = global.fetch;
   const calls: Array<{ url: string; method: string }> = [];
   t.after(() => { global.fetch = originalFetch; });
@@ -180,45 +180,77 @@ test('each completed brand sends a detailed notification before the pool summary
   const value = fixture(false, true, false, 'webhook-auto-open');
   await prepareAndRunBrand(value);
 
-  assert.equal(value.notifications.length, 2);
+  assert.equal(value.notifications.length, 1);
   assert.equal(value.notifications[0].webhookId, 'webhook-auto-open');
-  assert.match(value.notifications[0].payload.text, /Auto Open · Test Brand/);
+  assert.match(value.notifications[0].payload.text, /Auto Open Stores · MX · LIVE/);
   assert.match(value.notifications[0].payload.attachments[0].text, /\*\*Modo:\*\* LIVE/);
   assert.match(value.notifications[0].payload.attachments[0].text, /\*\*Tiendas totales:\*\* 1/);
   assert.match(value.notifications[0].payload.attachments[0].text, /\*\*Abiertas:\*\* 1/);
   assert.match(value.notifications[0].payload.attachments[0].text, /\*\*ID de ejecución:\*\* execution-1/);
-  assert.match(value.notifications[1].payload.text, /Auto Open Stores — KA test/);
+  assert.match(value.notifications[0].payload.attachments[1].text, /Test Brand/);
+  assert.match(value.notifications[0].payload.attachments[1].text, /procesadas 1\/1/);
+  assert.match(value.notifications[0].payload.attachments[1].text, /abiertas 1/);
 });
 
-test('brand notification includes general and per-shop errors with safe one-line text', () => {
-  const payload = buildAutoOpenBrandNotification({
+test('country notification includes the result and recorded errors for each brand', () => {
+  const payload = buildAutoOpenCountryNotification({
     executionId: 'execution-errors',
     poolName: 'KA Auto Open — Costa Rica',
     country: 'CR',
     dryRun: false,
-    brandName: 'Marca con errores',
     status: AutoOpenStatus.partial_success,
+    totalBrands: 2,
+    brandsCompleted: 2,
+    brandsFailed: 1,
     totalShops: 20,
     shopsProcessed: 20,
     shopsOpened: 18,
     shopsWouldOpen: 20,
     shopsSkippedEmergency: 0,
     shopsFailed: 2,
-    errorMessage: '2 store opening(s) failed',
-    shopErrors: [
-      { shopId: '5700000000000000001', appShopId: 'app-1', error: 'line one\nline two' },
-      { shopId: '5700000000000000002', appShopId: 'app-2', error: 'timeout' },
-    ],
+    errorMessage: '1 brand(s) with errors; 2 store opening(s) failed',
     startedAt: new Date('2026-08-19T15:00:00.000Z'),
     finishedAt: new Date('2026-08-19T15:02:05.000Z'),
     frontendUrl: 'https://guaro.example.com/',
+    brandRuns: [
+      {
+        brandName: 'Marca exitosa',
+        status: AutoOpenStatus.done,
+        totalShops: 0,
+        shopsProcessed: 0,
+        shopsOpened: 0,
+        shopsWouldOpen: 0,
+        shopsSkippedEmergency: 0,
+        shopsFailed: 0,
+        errorMessage: null,
+        shopErrors: [],
+      },
+      {
+        brandName: 'Marca con errores',
+        status: AutoOpenStatus.partial_success,
+        totalShops: 20,
+        shopsProcessed: 20,
+        shopsOpened: 18,
+        shopsWouldOpen: 20,
+        shopsSkippedEmergency: 0,
+        shopsFailed: 2,
+        errorMessage: '2 store opening(s) failed',
+        shopErrors: [
+          { shopId: '5700000000000000001', appShopId: 'app-1', error: 'line one\nline two' },
+          { shopId: '5700000000000000002', appShopId: 'app-2', error: 'timeout' },
+        ],
+      },
+    ],
   });
-  const detail = payload.attachments[0].text;
-  assert.match(detail, /\*\*Estado:\*\* Completada con errores/);
-  assert.match(detail, /\*\*Duración:\*\* 2 min 5 s/);
-  assert.match(detail, /5700000000000000001 · app_shop_id app-1 · line one line two/);
-  assert.match(detail, /5700000000000000002 · app_shop_id app-2 · timeout/);
-  assert.match(detail, /https:\/\/guaro\.example\.com\/integrations\/auto-open/);
+  assert.equal(payload.attachments.length, 3);
+  assert.match(payload.attachments[0].text, /\*\*Estado:\*\* Completada con errores/);
+  assert.match(payload.attachments[0].text, /\*\*Duración:\*\* 2 min 5 s/);
+  assert.match(payload.attachments[0].text, /https:\/\/guaro\.example\.com\/integrations\/auto-open/);
+  assert.match(payload.attachments[1].text, /Marca exitosa/);
+  assert.match(payload.attachments[1].text, /Marca con errores/);
+  assert.match(payload.attachments[1].text, /procesadas 20\/20/);
+  assert.match(payload.attachments[2].text, /5700000000000000001 · app_shop_id app-1 · line one line two/);
+  assert.match(payload.attachments[2].text, /5700000000000000002 · app_shop_id app-2 · timeout/);
 });
 
 test('live execution skips a shop when an emergency appears immediately before opening', async t => {
