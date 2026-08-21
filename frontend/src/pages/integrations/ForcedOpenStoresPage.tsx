@@ -82,7 +82,7 @@ export default function ForcedOpenStoresPage() {
         </div>
         <button className="btn btn-primary" onClick={() => { setOpen(true); setError(''); }}>+ Nueva apertura</button>
       </div>
-      <div className="alert" style={{ marginBottom: 18, borderColor: '#ffc7b2', background: '#fff4ee', color: '#8b2d00' }}>
+      <div className="alert" style={{ marginBottom: 18, borderColor: 'var(--amber-border)', background: 'var(--amber-bg)', color: 'var(--amber-text)' }}>
         Esta acción cambia tiendas reales a Online mediante POST /v1/shop/shop/setStatus. La ejecución continúa en el servidor aunque cierres el navegador y utiliza únicamente tiendas almacenadas localmente.
       </div>
       {error && !open && <div className="error-banner" style={{ marginBottom: 14 }}>{error}</div>}

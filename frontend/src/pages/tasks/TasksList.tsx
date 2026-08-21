@@ -193,9 +193,9 @@ export default function TasksList() {
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 12,
-          borderColor: '#fdba74',
-          background: '#fff7ed',
-          color: '#9a3412',
+          borderColor: 'var(--amber-border)',
+          background: 'var(--amber-bg)',
+          color: 'var(--amber-text)',
         }}>
           <div><strong>{selectedIds.size}</strong> {t('pages.tasksList.selectedTasks')}</div>
           <div style={{ display: 'flex', gap: 8 }}>

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { authApi } from '../api';
 import { useT } from '../i18n';
+import ThemeSelector from '../components/ui/ThemeSelector';
 
 type DevAccount = {
   id: string;
@@ -194,6 +195,9 @@ export default function Login() {
   return (
     <div className="login-page">
       <div className="login-panel">
+        <div className="login-theme-control">
+          <ThemeSelector />
+        </div>
         <div className="login-logo-row">
           <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 36, height: 36, objectFit: 'contain', borderRadius: 8 }} />
           <div className="texts">

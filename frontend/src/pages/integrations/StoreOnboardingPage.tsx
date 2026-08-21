@@ -685,16 +685,10 @@ export default function StoreOnboardingPage() {
   const { id } = useParams<{ id?: string }>();
   const { account } = useAuth();
   const [openSettings, setOpenSettings] = useState(false);
-  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const feature = useStoreOnboardingFeature();
   const canManageMaster = hasPermission(account, 'system.manage');
-  const mobileNavigation = <>
-    <button type="button" className="store-onboarding-mobile-navigation-toggle" aria-label={mobileNavigationOpen ? 'Cerrar navegación' : 'Abrir navegación'} aria-expanded={mobileNavigationOpen} onClick={() => setMobileNavigationOpen(current => !current)}>{mobileNavigationOpen ? '×' : '☰'}</button>
-    {mobileNavigationOpen && <button type="button" className="store-onboarding-mobile-navigation-backdrop" aria-label="Cerrar navegación" onClick={() => setMobileNavigationOpen(false)} />}
-  </>;
-  if (feature.isLoading) return <>{mobileNavigation}<Topbar breadcrumb={[{ label: 'Integrations' }, { label: 'Store Onboarding' }]} /><main className="main-content onboarding-page"><div className="onboarding-empty">Verificando habilitación segura…</div></main></>;
+  if (feature.isLoading) return <><Topbar breadcrumb={[{ label: 'Integrations' }, { label: 'Store Onboarding' }]} /><main className="main-content onboarding-page"><div className="onboarding-empty">Verificando habilitación segura…</div></main></>;
   if (!feature.globalEnabled) return <>
-    {mobileNavigation}
     <Topbar breadcrumb={[{ label: 'Integrations' }, { label: 'Store Onboarding' }]} />
     <main className="main-content onboarding-page onboarding-disabled-page"><section className="onboarding-disabled-card" role="status">
       <span className="onboarding-off-badge">Global OFF</span><div className="onboarding-disabled-icon" aria-hidden="true">⏸</div><h1>Piloto de Store Onboarding desactivado</h1>
@@ -705,5 +699,5 @@ export default function StoreOnboardingPage() {
     </section></main>
     {openSettings && <StoreOnboardingSettingsModal onClose={() => setOpenSettings(false)} />}
   </>;
-  return <>{mobileNavigation}{id ? <OnboardingDetail id={id} /> : <OnboardingList />}</>;
+  return <>{id ? <OnboardingDetail id={id} /> : <OnboardingList />}</>;
 }

@@ -59,7 +59,7 @@ function newRuleForm(): RuleForm {
 }
 
 const statusColor: Record<string, string> = {
-  pending: 'var(--text-muted)', running: 'var(--orange)', done: '#027A48', partial_success: '#B54708', failed: 'var(--red)', cancelled: '#667085',
+  pending: 'var(--text-muted)', running: 'var(--orange)', done: 'var(--green-text)', partial_success: 'var(--amber-text)', failed: 'var(--red-text)', cancelled: 'var(--text-muted)',
 };
 
 function executionStatusLabel(status: string, es: boolean) {
@@ -468,7 +468,7 @@ export default function AutoTurnOffItemsPage() {
               </div>
 
               {!pool.active && (
-                <div style={{ margin: '12px 16px 0', padding: '10px 12px', borderRadius: 8, background: '#FFF7ED', border: '1px solid #FED7AA', color: '#9A3412', fontSize: '0.76rem', lineHeight: 1.45 }}>
+                <div style={{ margin: '12px 16px 0', padding: '10px 12px', borderRadius: 8, background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)', fontSize: '0.76rem', lineHeight: 1.45 }}>
                   <strong>{copy.pausedByPool}.</strong> {copy.poolPaused}
                 </div>
               )}
@@ -488,8 +488,8 @@ export default function AutoTurnOffItemsPage() {
                         <span style={tag}>{rule.upcs.length} {copy.items}</span>
                         <span style={tag}>{rule.stockEndpoint}</span>
                         <span style={tag}>{copy.stockValue}: {rule.stockValue ?? 0}</span>
-                        <span style={{ ...tag, color: 'var(--orange)' }}>{formatRuleSchedule(rule, es)}</span>
-                        <span style={{ ...tag, color: !pool.active && !['running', 'pending'].includes(rule.executions?.[0]?.status ?? '') ? '#B54708' : rule.executions?.[0] ? statusColor[rule.executions[0].status] : rule.active ? '#027A48' : '#667085' }}>
+                        <span style={{ ...tag, color: 'var(--orange-dark)' }}>{formatRuleSchedule(rule, es)}</span>
+                        <span style={{ ...tag, color: !pool.active && !['running', 'pending'].includes(rule.executions?.[0]?.status ?? '') ? 'var(--amber-text)' : rule.executions?.[0] ? statusColor[rule.executions[0].status] : rule.active ? 'var(--green-text)' : 'var(--text-muted)' }}>
                           {copy.status}: {!pool.active && !['running', 'pending'].includes(rule.executions?.[0]?.status ?? '') ? copy.pausedByPool : rule.executions?.[0] ? executionStatusLabel(rule.executions[0].status, es) : rule.active ? copy.scheduledStatus : copy.inactive}
                         </span>
                       </div>
@@ -506,7 +506,7 @@ export default function AutoTurnOffItemsPage() {
                         </div>
                       )}
                       {rule.executions?.[0]?.errorMessage && (rule.executions[0].status === 'partial_success' || rule.executions[0].status === 'failed' || rule.executions[0].status === 'cancelled') && (
-                        <div style={{ color: rule.executions[0].status === 'partial_success' ? '#B54708' : 'var(--red)', fontSize: '0.72rem', marginTop: 6 }}>
+                        <div style={{ color: rule.executions[0].status === 'partial_success' ? 'var(--amber-text)' : 'var(--red-text)', fontSize: '0.72rem', marginTop: 6 }}>
                           {copy.failureReason}: {rule.executions[0].errorMessage}
                         </div>
                       )}
@@ -548,7 +548,7 @@ export default function AutoTurnOffItemsPage() {
                       </div>
                       {(execution.status === 'running' || execution.status === 'pending') && <Progress execution={execution} es={es} />}
                       {execution.errorMessage && (
-                        <div style={{ color: execution.status === 'failed' ? 'var(--red)' : '#B54708', fontSize: '0.72rem', marginTop: 6 }}>
+                        <div style={{ color: execution.status === 'failed' ? 'var(--red-text)' : 'var(--amber-text)', fontSize: '0.72rem', marginTop: 6 }}>
                           {copy.failureReason}: {execution.errorMessage}
                         </div>
                       )}
@@ -691,7 +691,7 @@ export default function AutoTurnOffItemsPage() {
 const tag = { fontSize: '0.7rem', background: 'var(--surface-2)', color: 'var(--text-muted)', padding: '2px 7px', borderRadius: 999 } as const;
 const pill = (active: boolean) => ({
   fontSize: '0.67rem', fontWeight: 700, padding: '3px 8px', borderRadius: 999, border: 'none', cursor: 'pointer',
-  background: active ? 'var(--green-bg)' : 'var(--surface-2)', color: active ? '#027A48' : 'var(--text-muted)',
+  background: active ? 'var(--green-bg)' : 'var(--surface-2)', color: active ? 'var(--green-text)' : 'var(--text-muted)',
 } as const);
 
 function Progress({ execution, es }: {
@@ -768,25 +768,25 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
                     <td style={{ ...shopCell, color: statusColor[shop.status], fontWeight: 700, whiteSpace: 'nowrap' }}>
                       {executionStatusLabel(shop.status, es)}
                     </td>
-                    <td style={{ ...shopCell, color: '#027A48', textAlign: 'center' }}>{shop.itemsSucceeded}</td>
+                    <td style={{ ...shopCell, color: 'var(--green-text)', textAlign: 'center' }}>{shop.itemsSucceeded}</td>
                     <td style={{ ...shopCell, color: shop.itemsFailed > 0 ? 'var(--red)' : 'var(--text-muted)', textAlign: 'center' }}>{shop.itemsFailed}</td>
                     <td style={{ ...shopCell, maxWidth: 460 }}>
                       <div title={detail}>{detail}</div>
                       {successfulItems.length > 0 && (
                         <details style={{ marginTop: 6 }}>
-                          <summary style={{ color: '#027A48', cursor: 'pointer', fontWeight: 700 }}>
+                          <summary style={{ color: 'var(--green-text)', cursor: 'pointer', fontWeight: 700 }}>
                             {shop.result?.endpoint === 'setStock'
                               ? (es ? 'Ver items enviados' : 'View submitted items')
                               : (es ? 'Ver items apagados' : 'View turned-off items')} ({successfulItems.length})
                           </summary>
                           <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
                             {successfulItems.map((item, index) => (
-                              <div key={`${shop.id}-${item.appItemId}-${index}`} style={{ background: '#ECFDF3', borderRadius: 5, padding: '6px 8px' }}>
+                              <div key={`${shop.id}-${item.appItemId}-${index}`} style={{ background: 'var(--green-bg)', borderRadius: 5, padding: '6px 8px' }}>
                                 <strong>{item.name || (es ? 'Sin nombre' : 'Unnamed item')}</strong>
                                 <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
                                   UPC: {item.upc || '—'} · app_item_id: {item.appItemId}
                                 </div>
-                                {item.confirmation === 'accepted' && <div style={{ color: '#A15C00', marginTop: 2 }}>
+                                {item.confirmation === 'accepted' && <div style={{ color: 'var(--amber-text)', marginTop: 2 }}>
                                   {es ? 'Solicitud aceptada por setStock; pendiente de confirmación asíncrona.' : 'Accepted by setStock; asynchronous confirmation is pending.'}
                                 </div>}
                               </div>
@@ -801,7 +801,7 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
                           </summary>
                           <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
                             {failedItems.map((item, index) => (
-                              <div key={`${shop.id}-${item.id}-${index}`} style={{ background: '#FFF4F2', borderRadius: 5, padding: '5px 7px' }}>
+                              <div key={`${shop.id}-${item.id}-${index}`} style={{ background: 'var(--red-bg)', borderRadius: 5, padding: '5px 7px' }}>
                                 <strong>{item.kind}: {item.id}</strong>
                                 <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>{item.reason}</div>
                               </div>

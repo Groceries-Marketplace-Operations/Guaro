@@ -142,7 +142,7 @@ export default function DailyStatusActivationSection() {
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
               <span>{latest.filesProcessed}/{latest.filesScanned} archivos</span>
               <span>{latest.rowsRead.toLocaleString()} líneas</span>
-              <span style={{ color: 'var(--orange)' }}>{latest.rowsRemoved.toLocaleString()} actualizadas M → A</span>
+              <span style={{ color: 'var(--orange-dark)' }}>{latest.rowsRemoved.toLocaleString()} actualizadas M → A</span>
               <span>Fecha objetivo: {latest.result?.matchedDate ?? '—'}</span>
               {files.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(expanded === latest.id ? null : latest.id)}>{expanded === latest.id ? 'Ocultar detalle' : 'Ver detalle'}</button>}
             </div>

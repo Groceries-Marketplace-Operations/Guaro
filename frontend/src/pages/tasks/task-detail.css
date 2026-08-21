@@ -7,7 +7,7 @@
   margin: 0;
   padding: 15px 18px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(90deg, #fffaf5, var(--surface) 38%);
+  background: linear-gradient(90deg, var(--surface-warm), var(--surface) 38%);
 }
 
 .task-steps-table-wrap {
@@ -34,11 +34,11 @@
 }
 
 .task-steps-table tbody tr:hover {
-  background: #fffaf7;
+  background: var(--surface-warm);
 }
 
 .task-steps-table tbody tr.task-step-row--active {
-  background: #fffaf5;
+  background: var(--surface-warm);
   box-shadow: inset 3px 0 0 var(--orange);
 }
 

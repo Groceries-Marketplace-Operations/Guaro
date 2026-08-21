@@ -2,11 +2,6 @@
   min-width: 0;
 }
 
-.mobile-navigation-toggle,
-.mobile-navigation-backdrop {
-  display: none;
-}
-
 .auto-open-page-header {
   align-items: center;
 }
@@ -40,10 +35,10 @@
   gap: 12px;
   margin-bottom: 12px;
   padding: 10px 12px;
-  border: 1px solid #75e0a7;
+  border: 1px solid var(--green-border);
   border-radius: 10px;
-  background: #ecfdf3;
-  color: #027a48;
+  background: var(--green-bg);
+  color: var(--green-text);
   font-size: .82rem;
   font-weight: 600;
 }
@@ -65,15 +60,15 @@
 }
 
 .auto-open-live-banner.available {
-  border-color: #abefc6;
-  background: #ecfdf3;
-  color: #067647;
+  border-color: var(--green-border);
+  background: var(--green-bg);
+  color: var(--green-text);
 }
 
 .auto-open-live-banner.blocked {
-  border-color: #fecdca;
-  background: #fef3f2;
-  color: #b42318;
+  border-color: var(--red-border);
+  background: var(--red-bg);
+  color: var(--red-text);
 }
 
 .auto-open-overview {
@@ -110,12 +105,12 @@
 
 .auto-open-overview .protected strong,
 .auto-open-pool-metric.protected strong {
-  color: #b54708;
+  color: var(--amber-text);
 }
 
 .auto-open-overview .configuration strong,
 .auto-open-pool-metric.configuration strong {
-  color: #b42318;
+  color: var(--red-text);
 }
 
 .auto-open-pools {
@@ -170,7 +165,7 @@ button.auto-open-pool-pill {
 
 .auto-open-pool-pill.active {
   background: var(--green-bg);
-  color: #027a48;
+  color: var(--green-text);
 }
 
 .auto-open-pool-pill.inactive,
@@ -180,13 +175,13 @@ button.auto-open-pool-pill {
 }
 
 .auto-open-pool-pill.dry-run {
-  background: #eaf4ff;
-  color: #175cd3;
+  background: var(--blue-bg);
+  color: var(--blue-text);
 }
 
 .auto-open-pool-pill.live {
-  background: #fff0ec;
-  color: #b42318;
+  background: var(--red-bg);
+  color: var(--red-text);
 }
 
 .auto-open-pool-system {
@@ -250,7 +245,7 @@ button.auto-open-pool-pill {
   min-height: 34px;
   gap: 7px;
   padding-inline: 0;
-  color: var(--orange);
+  color: var(--orange-dark);
 }
 
 .auto-open-pool-detail {
@@ -265,10 +260,10 @@ button.auto-open-pool-pill {
   align-items: flex-start;
   gap: 8px;
   padding: 9px 11px;
-  border: 1px solid #b2ddff;
+  border: 1px solid var(--blue-border);
   border-radius: 8px;
-  background: #eff8ff;
-  color: #175cd3;
+  background: var(--blue-bg);
+  color: var(--blue-text);
   font-size: .75rem;
   line-height: 1.45;
 }
@@ -360,7 +355,7 @@ button.auto-open-pool-pill {
 
 .auto-open-coverage-table tbody th button:hover span,
 .auto-open-coverage-table tbody th button:focus-visible span {
-  color: var(--orange);
+  color: var(--orange-dark);
   text-decoration: underline;
 }
 
@@ -478,17 +473,17 @@ button.auto-open-pool-pill {
 
 .auto-open-inclusion.included {
   background: var(--green-bg);
-  color: #027a48;
+  color: var(--green-text);
 }
 
 .auto-open-inclusion.emergency {
-  background: #fff4e5;
-  color: #b54708;
+  background: var(--amber-bg);
+  color: var(--amber-text);
 }
 
 .auto-open-inclusion.configuration {
   background: var(--red-bg);
-  color: #b42318;
+  color: var(--red-text);
 }
 
 .auto-open-store-identity {
@@ -543,7 +538,7 @@ button.auto-open-pool-pill {
 }
 
 .auto-open-execution-summary:not(:disabled):hover {
-  background: #fff8f3;
+  background: var(--surface-warm);
 }
 
 @media (max-width: 1180px) {
@@ -583,79 +578,8 @@ button.auto-open-pool-pill {
 }
 
 @media (max-width: 760px) {
-  body:has(.auto-open-page) .app-shell {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  body:has(.auto-open-page) .sidebar {
-    visibility: hidden;
-    transform: translateX(-100%);
-    transition: transform 160ms ease, visibility 160ms ease;
-  }
-
-  body:has(.auto-open-page.mobile-navigation-open) .sidebar {
-    visibility: visible;
-    transform: translateX(0);
-    box-shadow: 18px 0 38px rgba(0, 0, 0, 0.28);
-    z-index: 1010;
-  }
-
-  body:has(.auto-open-page) .topbar,
-  body:has(.auto-open-page) .main-content {
-    grid-column: 1;
-    width: 100%;
-    min-width: 0;
-  }
-
-  body:has(.auto-open-page) .topbar {
-    padding-inline: 58px 14px;
-  }
-
-  body:has(.auto-open-page) .main-content {
+  .auto-open-page {
     padding: 16px 12px;
-  }
-
-  body:has(.auto-open-page) .mobile-navigation-toggle {
-    position: fixed;
-    top: 11px;
-    left: 12px;
-    z-index: 180;
-    display: grid;
-    width: 36px;
-    height: 36px;
-    place-items: center;
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    color: var(--text-primary);
-    background: var(--surface);
-    box-shadow: 0 5px 16px rgba(16, 24, 40, 0.12);
-    cursor: pointer;
-    font-size: 1.15rem;
-    line-height: 1;
-  }
-
-  body:has(.auto-open-page) .mobile-navigation-toggle:focus-visible {
-    outline: 3px solid rgba(255, 105, 0, 0.32);
-    outline-offset: 2px;
-  }
-
-  body:has(.auto-open-page.mobile-navigation-open) .mobile-navigation-toggle {
-    z-index: 1020;
-  }
-
-  body:has(.auto-open-page) .mobile-navigation-toggle:disabled {
-    visibility: hidden;
-    pointer-events: none;
-  }
-
-  body:has(.auto-open-page) .mobile-navigation-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    display: block;
-    border: 0;
-    background: rgba(16, 24, 40, 0.42);
-    cursor: pointer;
   }
 
   .auto-open-page-header {

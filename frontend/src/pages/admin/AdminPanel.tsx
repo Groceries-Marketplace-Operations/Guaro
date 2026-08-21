@@ -28,7 +28,7 @@ function QueueCard({ label, counts, recentFailed }: {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <strong style={{ fontSize: 15 }}>{label}</strong>
         {failedCount > 0 && (
-          <span className="badge" style={{ background: 'var(--danger)', color: '#fff' }}>
+          <span className="badge" style={{ background: 'var(--red-bg)', color: 'var(--red-text)', borderColor: 'var(--red-border)' }}>
             {failedCount} failed
           </span>
         )}

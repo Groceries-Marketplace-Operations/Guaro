@@ -332,7 +332,7 @@ export default function Config() {
                       <td>
                         <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
                           background: w.isAlerts ? 'var(--red-bg)' : 'var(--green-bg)',
-                          color: w.isAlerts ? 'var(--red)' : '#027A48' }}>
+                          color: w.isAlerts ? 'var(--red-text)' : 'var(--green-text)' }}>
                           {w.isAlerts ? t('pages.config.webhookBadgeAlerts') : t('pages.config.webhookBadgeEvents')}
                         </span>
                       </td>
@@ -494,7 +494,7 @@ export default function Config() {
                           <span key={r} style={{
                             fontSize: '0.68rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999,
                             background: r === 'super_admin' ? 'var(--orange)' : r === 'admin' ? 'var(--blue-bg)' : 'var(--surface-2)',
-                            color: r === 'super_admin' ? '#fff' : r === 'admin' ? 'var(--blue)' : 'var(--text-secondary)',
+                            color: r === 'super_admin' ? 'var(--text-on-accent)' : r === 'admin' ? 'var(--blue-text)' : 'var(--text-secondary)',
                             border: '1px solid var(--border)',
                           }}>
                             {r}

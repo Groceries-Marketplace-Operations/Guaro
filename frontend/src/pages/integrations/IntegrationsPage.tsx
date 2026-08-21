@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
@@ -32,16 +32,16 @@ const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const statusColor: Record<string, string> = {
   pending: 'var(--text-muted)',
   running: 'var(--orange)',
-  done:    '#027A48',
+  done:    'var(--green-text)',
   failed:  'var(--red)',
-  partial_success: '#B54708',
+  partial_success: 'var(--amber-text)',
 };
 const statusBg: Record<string, string> = {
   pending: 'var(--surface-2)',
   running: 'var(--orange-muted)',
   done:    'var(--green-bg)',
-  failed:  'rgba(220,53,69,0.1)',
-  partial_success: '#FFFAEB',
+  failed:  'var(--red-bg)',
+  partial_success: 'var(--amber-bg)',
 };
 
 // ── Brand search multi-select ─────────────────────────────────────────────────
@@ -86,7 +86,7 @@ function BrandSearch({ brands, selected, onChange }: BrandSearchProps) {
           {selectedBrands.map(b => (
             <span key={b.id} style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
-              background: 'var(--orange-muted)', color: 'var(--orange)',
+              background: 'var(--orange-muted)', color: 'var(--orange-dark)',
               fontSize: '0.75rem', fontWeight: 600,
               padding: '2px 8px 2px 10px', borderRadius: 999,
             }}>
@@ -95,7 +95,7 @@ function BrandSearch({ brands, selected, onChange }: BrandSearchProps) {
                 type="button"
                 onClick={() => removeChip(b.id)}
                 aria-label={t('pages.integrations.poolStores.removeBrand', { brand: b.brandName })}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--orange)', padding: 0, display: 'flex', lineHeight: 1 }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--orange-dark)', padding: 0, display: 'flex', lineHeight: 1 }}
               >×</button>
             </span>
           ))}
@@ -220,62 +220,8 @@ export default function IntegrationsPage() {
   const [runningId, setRunningId]       = useState<string | null>(null);
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
   const [deletingId, setDeletingId]     = useState<string | null>(null);
-  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const autoOpenTabRef = useRef<HTMLButtonElement>(null);
   const notifyTabRef = useRef<HTMLButtonElement>(null);
-  const mobileNavigationToggleRef = useRef<HTMLButtonElement>(null);
-  const pageRef = useRef<HTMLElement>(null);
-
-  useEffect(() => {
-    if (!mobileNavigationOpen) return;
-
-    const sidebar = document.getElementById('app-sidebar');
-    const topbar = document.querySelector<HTMLElement>('.topbar');
-    const mascot = document.querySelector<HTMLElement>('.naranja-mascot');
-    const toggle = mobileNavigationToggleRef.current;
-    const mobileViewport = window.matchMedia('(max-width: 760px)');
-    const background = [topbar, pageRef.current, mascot].filter((element): element is HTMLElement => Boolean(element));
-    background.forEach(element => element.setAttribute('inert', ''));
-
-    const focusableElements = () => [
-      toggle,
-      ...Array.from(sidebar?.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ) ?? []),
-    ].filter((element): element is HTMLElement => Boolean(element));
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setMobileNavigationOpen(false);
-        return;
-      }
-      if (event.key !== 'Tab') return;
-
-      const focusable = focusableElements();
-      if (focusable.length === 0) return;
-      const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
-      const nextIndex = event.shiftKey
-        ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
-        : (currentIndex === focusable.length - 1 ? 0 : currentIndex + 1);
-      event.preventDefault();
-      focusable[nextIndex].focus();
-    };
-    const closeOnDesktop = (event: MediaQueryListEvent) => {
-      if (!event.matches) setMobileNavigationOpen(false);
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    mobileViewport.addEventListener('change', closeOnDesktop);
-    focusableElements().find(element => element !== toggle)?.focus();
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      mobileViewport.removeEventListener('change', closeOnDesktop);
-      background.forEach(element => element.removeAttribute('inert'));
-      window.requestAnimationFrame(() => toggle?.focus());
-    };
-  }, [mobileNavigationOpen]);
 
   // Notify tab state
   const [notifyForm, setNotifyForm] = useState({ title: '', message: '', color: '' });
@@ -479,26 +425,7 @@ export default function IntegrationsPage() {
   return (
     <>
       <Topbar breadcrumb={[{ label: t('nav.integrations') }]} />
-      <button
-        ref={mobileNavigationToggleRef}
-        type="button"
-        className="mobile-navigation-toggle"
-        aria-controls="app-sidebar"
-        aria-expanded={mobileNavigationOpen}
-        aria-label={t('nav.mainNavigation')}
-        disabled={modalOpen}
-        onClick={() => setMobileNavigationOpen(open => !open)}
-      >
-        {mobileNavigationOpen ? '×' : '☰'}
-      </button>
-      {mobileNavigationOpen && (
-        <div
-          className="mobile-navigation-backdrop"
-          aria-hidden="true"
-          onClick={() => setMobileNavigationOpen(false)}
-        />
-      )}
-      <main ref={pageRef} className={`main-content auto-open-page${mobileNavigationOpen ? ' mobile-navigation-open' : ''}`}>
+      <main className="main-content auto-open-page">
         <div className="page-header auto-open-page-header">
           <div className="page-header-info">
             <h1>{t('nav.integrations')}</h1>
@@ -710,7 +637,7 @@ export default function IntegrationsPage() {
 
             {notifyErr && <div className="error-banner" style={{ marginBottom: 16 }}>{notifyErr}</div>}
             {notifyOk && (
-              <div style={{ background: 'var(--green-bg)', color: '#027A48', borderRadius: 8, padding: '10px 14px', fontSize: '0.84rem', fontWeight: 600, marginBottom: 16 }}>
+              <div style={{ background: 'var(--green-bg)', color: 'var(--green-text)', borderRadius: 8, padding: '10px 14px', fontSize: '0.84rem', fontWeight: 600, marginBottom: 16 }}>
                 ✓ {t('pages.integrations.notifySent')}
               </div>
             )}
@@ -889,7 +816,7 @@ export default function IntegrationsPage() {
               </span>
             </label>
             {form.dryRun && !liveModeAvailable && (
-              <p className="form-hint" style={{ color: '#B42318' }}>
+              <p className="form-hint" style={{ color: 'var(--red-text)' }}>
                 {t('pages.integrations.poolStores.dryRunLocked')}
               </p>
             )}
@@ -975,17 +902,17 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
         <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', flexShrink: 0 }}>
           {new Date(execution.createdAt).toLocaleString()}
         </span>
-        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: execution.dryRun ? '#175CD3' : '#B42318' }}>
+        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: execution.dryRun ? 'var(--blue-text)' : 'var(--red-text)' }}>
           {execution.dryRun ? 'DRY RUN' : 'LIVE'}
         </span>
         {execution.status === 'running' && execution.totalBrands > 0 && (
-          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#175CD3' }}>
+          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--blue-text)' }}>
             {execution.progressPercent}% · {execution.brandsCompleted}/{execution.totalBrands} marcas
             {execution.currentBrand ? ` · ${execution.currentBrand}` : ''}
           </span>
         )}
         {['done', 'partial_success'].includes(execution.status) && (
-          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#027A48' }}>
+          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--green-text)' }}>
             {execution.dryRun
               ? `${execution.shopsWouldOpen}/${execution.totalShops} abriría`
               : `${execution.shopsOpened}/${execution.totalShops} ${t('pages.integrations.shopsOpened')}`}
@@ -1008,7 +935,7 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
           {detailBrands.map((b, i) => (
             <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem', flexWrap: 'wrap' }}>
-                <span style={{ color: b.error ? 'var(--red)' : b.status === 'running' ? '#175CD3' : '#027A48', fontWeight: 700, flexShrink: 0 }}>
+                <span style={{ color: b.error ? 'var(--red-text)' : b.status === 'running' ? 'var(--blue-text)' : 'var(--green-text)', fontWeight: 700, flexShrink: 0 }}>
                   {b.error ? '✗' : b.status === 'running' ? '…' : '✓'}
                 </span>
                 <span style={{ fontWeight: 500 }}>{b.brandName}</span>

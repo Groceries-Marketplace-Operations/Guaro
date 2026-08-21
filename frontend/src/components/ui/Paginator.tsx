@@ -27,7 +27,7 @@ export default function Paginator({ page, total, limit, onChange }: PaginatorPro
     borderRadius: 6,
     border: '1px solid var(--border)',
     background: active ? 'var(--orange)' : 'var(--surface)',
-    color: active ? '#fff' : disabled ? 'var(--border)' : 'var(--text-secondary)',
+    color: active ? 'var(--text-on-accent)' : disabled ? 'var(--border)' : 'var(--text-secondary)',
     cursor: disabled ? 'default' : 'pointer',
     fontSize: '0.8rem',
     fontWeight: active ? 700 : 400,

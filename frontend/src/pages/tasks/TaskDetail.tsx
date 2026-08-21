@@ -381,14 +381,14 @@ export default function TaskDetail() {
                       ) : isMultiBrand ? (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
                           {group.map(g => (
-                            <span key={g.id} style={{ background: 'rgba(255,105,0,0.1)', color: 'var(--orange)', borderRadius: 6, padding: '3px 10px', fontSize: '0.8rem', fontWeight: 500 }}>
+                            <span key={g.id} style={{ background: 'var(--orange-muted)', color: 'var(--orange-dark)', borderRadius: 6, padding: '3px 10px', fontSize: '0.8rem', fontWeight: 500 }}>
                               {g.brand ? `${g.brand.brandName} · ${g.brand.brandId}` : '—'}
                             </span>
                           ))}
                         </div>
                       ) : linkUrl ? (
                         <a href={linkUrl} target="_blank" rel="noopener noreferrer"
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 500, marginTop: 2, color: 'var(--orange)', wordBreak: 'break-all' }}>
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 500, marginTop: 2, color: 'var(--link)', wordBreak: 'break-all' }}>
                           {fv.valor} <span aria-hidden="true">↗</span>
                         </a>
                       ) : (

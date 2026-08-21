@@ -73,29 +73,29 @@ const ROLE_LABELS: Record<AccountRole, string> = {
 const EDITABLE_ROLES: AccountRole[] = ['user', 'bpo', 'admin', 'director'];
 
 const GROUP_THEMES: Record<string, { accent: string; border: string; background: string; itemBackground: string }> = {
-  'General': { accent: '#475569', border: '#cbd5e1', background: '#f8fafc', itemBackground: '#ffffff' },
-  'Catálogo': { accent: '#2563eb', border: '#bfdbfe', background: '#eff6ff', itemBackground: '#f8fbff' },
-  'Tareas': { accent: '#ea580c', border: '#fed7aa', background: '#fff7ed', itemBackground: '#fffaf5' },
-  'Task Types': { accent: '#7c3aed', border: '#ddd6fe', background: '#f5f3ff', itemBackground: '#faf9ff' },
-  'BPO': { accent: '#0891b2', border: '#a5f3fc', background: '#ecfeff', itemBackground: '#f7feff' },
-  'Integraciones': { accent: '#059669', border: '#a7f3d0', background: '#ecfdf5', itemBackground: '#f7fefb' },
-  'Administración': { accent: '#4f46e5', border: '#c7d2fe', background: '#eef2ff', itemBackground: '#f8f9ff' },
-  'Configuración': { accent: '#c026d3', border: '#f5d0fe', background: '#fdf4ff', itemBackground: '#fffaff' },
+  'General': { accent: 'var(--text-secondary)', border: 'var(--border-strong)', background: 'var(--surface-2)', itemBackground: 'var(--surface)' },
+  'Catálogo': { accent: 'var(--blue-text)', border: 'var(--blue-border)', background: 'var(--blue-bg)', itemBackground: 'var(--surface)' },
+  'Tareas': { accent: 'var(--orange-dark)', border: 'var(--amber-border)', background: 'var(--surface-selected)', itemBackground: 'var(--surface)' },
+  'Task Types': { accent: 'var(--purple-text)', border: 'var(--purple-border)', background: 'var(--purple-bg)', itemBackground: 'var(--surface)' },
+  'BPO': { accent: 'var(--blue-text)', border: 'var(--blue-border)', background: 'var(--blue-bg)', itemBackground: 'var(--surface)' },
+  'Integraciones': { accent: 'var(--green-text)', border: 'var(--green-border)', background: 'var(--green-bg)', itemBackground: 'var(--surface)' },
+  'Administración': { accent: 'var(--purple-text)', border: 'var(--purple-border)', background: 'var(--purple-bg)', itemBackground: 'var(--surface)' },
+  'Configuración': { accent: 'var(--purple-text)', border: 'var(--purple-border)', background: 'var(--purple-bg)', itemBackground: 'var(--surface)' },
 };
 
-const DEFAULT_GROUP_THEME = { accent: '#64748b', border: '#cbd5e1', background: '#f8fafc', itemBackground: '#ffffff' };
+const DEFAULT_GROUP_THEME = { accent: 'var(--text-secondary)', border: 'var(--border-strong)', background: 'var(--surface-2)', itemBackground: 'var(--surface)' };
 
 function groupTheme(group: string) {
   return GROUP_THEMES[group] ?? DEFAULT_GROUP_THEME;
 }
 
 function permissionSelectStyle(value: string, inherited = false): React.CSSProperties {
-  if (value === 'allow') return { background: '#ecfdf3', borderColor: '#86efac', color: '#087443', fontWeight: 700 };
-  if (value === 'deny') return { background: '#fff1f0', borderColor: '#fca5a5', color: '#b42318', fontWeight: 700 };
-  if (value === 'mixed') return { background: '#fffbeb', borderColor: '#fde68a', color: '#92400e', fontWeight: 700 };
+  if (value === 'allow') return { background: 'var(--green-bg)', borderColor: 'var(--green-border)', color: 'var(--green-text)', fontWeight: 700 };
+  if (value === 'deny') return { background: 'var(--red-bg)', borderColor: 'var(--red-border)', color: 'var(--red-text)', fontWeight: 700 };
+  if (value === 'mixed') return { background: 'var(--amber-bg)', borderColor: 'var(--amber-border)', color: 'var(--amber-text)', fontWeight: 700 };
   return inherited
-    ? { background: '#eff6ff', borderColor: '#bfdbfe', color: '#1d4ed8', fontWeight: 700 }
-    : { background: '#f8fafc', borderColor: '#cbd5e1', color: '#475569', fontWeight: 700 };
+    ? { background: 'var(--blue-bg)', borderColor: 'var(--blue-border)', color: 'var(--blue-text)', fontWeight: 700 }
+    : { background: 'var(--surface-2)', borderColor: 'var(--border-strong)', color: 'var(--text-secondary)', fontWeight: 700 };
 }
 
 function groupedCatalog(catalog: CatalogItem[]) {
@@ -106,9 +106,9 @@ function groupedCatalog(catalog: CatalogItem[]) {
 
 function SummaryPill({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'neutral' | 'allow' | 'deny' }) {
   const colors = tone === 'allow'
-    ? { background: '#ecfdf3', color: '#087443' }
+    ? { background: 'var(--green-bg)', color: 'var(--green-text)' }
     : tone === 'deny'
-      ? { background: '#fff1f0', color: '#b42318' }
+      ? { background: 'var(--red-bg)', color: 'var(--red-text)' }
       : { background: 'var(--surface-2)', color: 'var(--text-secondary)' };
   return <span style={{ ...colors, borderRadius: 999, padding: '3px 8px', fontSize: 11, fontWeight: 700 }}>{children}</span>;
 }
@@ -151,7 +151,7 @@ function BaseRolePanel({ matrix }: { matrix: MatrixResponse }) {
     {groups.map(([group, items]) => {
       const allSelected = items.length > 0 && items.every(item => permissions.includes(item.key));
       const theme = groupTheme(group);
-      return <section className="card" key={group} style={{ padding: 18, borderColor: theme.border, borderLeft: `5px solid ${theme.accent}`, background: `linear-gradient(135deg, ${theme.background} 0%, #ffffff 72%)` }}>
+      return <section className="card" key={group} style={{ padding: 18, borderColor: theme.border, borderLeft: `5px solid ${theme.accent}`, background: `linear-gradient(135deg, ${theme.background} 0%, var(--surface) 72%)` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
           <div><strong style={{ color: theme.accent }}>{group}</strong><p className="text-muted text-sm" style={{ marginTop: 3 }}>{items.length} permisos</p></div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12 }}>
@@ -255,7 +255,7 @@ function LayeredPolicyEditor({ catalog, sections, inheritedPermissions, inherite
       const groupValue = effects.every(effect => effect === effects[0]) ? effects[0] : 'mixed';
       const theme = groupTheme(group);
       const inheritedGroup = items.some(item => inheritedPermissions.includes(item.key));
-      return <section className="card" key={group} style={{ padding: 18, borderColor: theme.border, borderLeft: `5px solid ${theme.accent}`, background: `linear-gradient(135deg, ${theme.background} 0%, #ffffff 72%)` }}>
+      return <section className="card" key={group} style={{ padding: 18, borderColor: theme.border, borderLeft: `5px solid ${theme.accent}`, background: `linear-gradient(135deg, ${theme.background} 0%, var(--surface) 72%)` }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <strong style={{ color: theme.accent }}>{group}</strong>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>

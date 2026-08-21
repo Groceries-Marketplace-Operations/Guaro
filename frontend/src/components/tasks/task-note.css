@@ -5,9 +5,9 @@
   gap: 7px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-left: 3px solid #fdba74;
+  border-left: 3px solid var(--amber-border);
   border-radius: 8px;
-  background: linear-gradient(135deg, #fffaf5, var(--surface) 70%);
+  background: linear-gradient(135deg, var(--surface-warm), var(--surface) 70%);
   color: var(--text-secondary);
   font-size: .75rem;
   line-height: 1.5;
@@ -88,26 +88,26 @@
 }
 
 .task-note__state--success {
-  border-color: #86efac;
-  background: #ecfdf3;
-  color: #087443;
+  border-color: var(--green-border);
+  background: var(--green-bg);
+  color: var(--green-text);
 }
 
 .task-note__state--failure {
-  border-color: #fca5a5;
-  background: #fff1f0;
-  color: #b42318;
+  border-color: var(--red-border);
+  background: var(--red-bg);
+  color: var(--red-text);
 }
 
 .task-note__state--warning {
-  border-color: #fcd34d;
-  background: #fffbeb;
-  color: #b54708;
+  border-color: var(--amber-border);
+  background: var(--amber-bg);
+  color: var(--amber-text);
 }
 
 .task-note__state--pending {
-  border-color: #fcd34d;
-  background: #fffbeb;
+  border-color: var(--amber-border);
+  background: var(--amber-bg);
 }
 
 .task-note__state--neutral {
@@ -137,15 +137,15 @@
 }
 
 .task-note__count--success {
-  border-color: #bbf7d0;
-  background: #ecfdf3;
-  color: #087443;
+  border-color: var(--green-border);
+  background: var(--green-bg);
+  color: var(--green-text);
 }
 
 .task-note__count--failure {
-  border-color: #fecaca;
-  background: #fff1f0;
-  color: #b42318;
+  border-color: var(--red-border);
+  background: var(--red-bg);
+  color: var(--red-text);
 }
 
 .task-note__toggle {
@@ -167,7 +167,7 @@
 }
 
 .task-note__toggle:hover {
-  color: var(--orange);
+  color: var(--orange-dark);
 }
 
 .task-note__toggle:focus-visible {

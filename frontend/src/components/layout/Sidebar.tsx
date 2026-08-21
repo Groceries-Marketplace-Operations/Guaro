@@ -1,8 +1,10 @@
+import { useLayoutEffect, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
 import { hasAnyPermission, hasPermission } from '../../auth/permissions';
 import { useStoreOnboardingFeature } from '../../pages/integrations/useStoreOnboardingFeature';
+import { useSidebar } from './SidebarContext';
 
 const IconGrid = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -74,6 +76,8 @@ const IconPlus = () => (
 export default function Sidebar() {
   const { account, logout } = useAuth();
   const t = useT();
+  const sidebar = useSidebar();
+  const sidebarRef = useRef<HTMLElement>(null);
   const roles = account?.roles ?? [];
 
   const isSA       = roles.includes('super_admin');
@@ -95,8 +99,32 @@ export default function Sidebar() {
     'settings.manage', 'system.manage', ...configPermissions,
   ]);
 
+  useLayoutEffect(() => {
+    const element = sidebarRef.current;
+    if (!element) return;
+    element.querySelectorAll<HTMLElement>('.nav-item, .sidebar-primary-action').forEach(item => {
+      const label = item.dataset.sidebarBaseLabel
+        ?? item.textContent?.replace(/\s+/g, ' ').trim()
+        ?? '';
+      item.dataset.sidebarLabel = label;
+      item.setAttribute('aria-label', label);
+    });
+    element.querySelectorAll('svg').forEach(icon => icon.setAttribute('aria-hidden', 'true'));
+  }, [sidebar.desktopCollapsed, sidebar.isMobile, t]);
+
+  const closeAfterMobileNavigation = (event: React.MouseEvent<HTMLElement>) => {
+    if (event.target instanceof Element && event.target.closest('a')) sidebar.closeMobileSidebar();
+  };
+
   return (
-    <aside className="sidebar" id="app-sidebar">
+    <aside
+      ref={sidebarRef}
+      className="sidebar sidebar-rail"
+      id="app-sidebar"
+      aria-label={t('nav.mainNavigation')}
+      role={sidebar.isMobile ? 'dialog' : undefined}
+      aria-modal={sidebar.isMobile && sidebar.mobileOpen ? true : undefined}
+    >
       <div className="sidebar-logo">
         <img src={`${import.meta.env.BASE_URL}didi-logo.png`} alt="DiDi" style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 6 }} />
         <div className="logo-text">
@@ -108,15 +136,16 @@ export default function Sidebar() {
         <div style={{ padding: '12px 12px 0' }}>
           <NavLink
             to="/tasks/new"
-            className="btn btn-primary"
+            className="btn btn-primary sidebar-primary-action"
             style={{ width: '100%', justifyContent: 'center', gap: 6, textDecoration: 'none' }}
+            onClick={sidebar.closeMobileSidebar}
           >
             <IconPlus /> {t('nav.newTask')}
           </NavLink>
         </div>
       )}
 
-      <nav className="sidebar-scroll" aria-label={t('nav.mainNavigation')}>
+      <nav className="sidebar-scroll" aria-label={t('nav.mainNavigation')} onClick={closeAfterMobileNavigation}>
         {can('dashboard.view') && <div className="sidebar-section">
         <div className="sidebar-section-label">{t('nav.overview')}</div>
         <NavLink to="/" end className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
@@ -182,9 +211,9 @@ export default function Sidebar() {
           {can('integrations.promotion_api') && <NavLink to="/integrations/promotion-api" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconApp /> Promociones API
           </NavLink>}
-          {showStoreOnboarding && <NavLink to="/integrations/store-onboarding" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          {showStoreOnboarding && <NavLink data-sidebar-base-label={`Store Onboarding${!onboardingFeature.globalEnabled ? ' — OFF' : ''}`} to="/integrations/store-onboarding" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconClipboard /> <span>Store Onboarding</span>
-            {canManageStoreOnboarding && !onboardingFeature.globalEnabled && <span aria-label="Store Onboarding desactivado" style={{ marginLeft: 'auto', padding: '2px 6px', borderRadius: 999, color: '#b42318', background: '#fff1f2', fontSize: '.58rem', fontWeight: 800 }}>OFF</span>}
+            {canManageStoreOnboarding && !onboardingFeature.globalEnabled && <span className="sidebar-status-badge" aria-label="Store Onboarding desactivado">OFF</span>}
           </NavLink>}
         </div>
       )}

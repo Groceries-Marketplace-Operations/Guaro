@@ -567,7 +567,7 @@ export default function BrandDetail() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
               {selectedShopIds.size > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'var(--orange-muted)', borderRadius: 8, border: '1px solid rgba(255,105,0,0.2)' }}>
-                  <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--orange)' }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--orange-dark)' }}>
                     {t('pages.brandDetail.selected').replace('{count}', String(selectedShopIds.size))}
                   </span>
                   <select

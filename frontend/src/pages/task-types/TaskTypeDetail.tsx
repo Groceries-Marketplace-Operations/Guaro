@@ -48,8 +48,8 @@ function execLabel(et: ExecutionType) {
 }
 function execColor(et: ExecutionType) {
   if (et === 'automatic') return { bg: 'var(--blue-bg)', color: 'var(--blue)' };
-  if (et === 'manual_external') return { bg: 'var(--amber-bg)', color: '#B54708' };
-  return { bg: 'var(--green-bg)', color: '#027A48' };
+  if (et === 'manual_external') return { bg: 'var(--amber-bg)', color: 'var(--amber-text)' };
+  return { bg: 'var(--green-bg)', color: 'var(--green-text)' };
 }
 
 type ApiError = { response?: { data?: { message?: string | string[] } } };
@@ -479,7 +479,7 @@ export default function TaskTypeDetail() {
                             <circle cx="3" cy="8" r="1.2"/><circle cx="7" cy="8" r="1.2"/>
                             <circle cx="3" cy="13" r="1.2"/><circle cx="7" cy="13" r="1.2"/>
                           </svg>
-                          <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--orange-muted)', color: 'var(--orange)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>
+                          <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--orange-muted)', color: 'var(--orange-dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>
                             {i + 1}
                           </div>
                         </div>
@@ -487,7 +487,7 @@ export default function TaskTypeDetail() {
                           <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{s.name}</div>
                           <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
                             <span style={{ ...col, fontSize: '0.68rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999 }}>{execLabel(s.executionType)}</span>
-                            <span style={{ fontSize: '0.68rem', fontWeight: 600, padding: '1px 7px', borderRadius: 999, background: '#F0F0F0', color: 'var(--text-secondary)' }}>{s.assignmentStrategy}</span>
+                            <span style={{ fontSize: '0.68rem', fontWeight: 600, padding: '1px 7px', borderRadius: 999, background: 'var(--surface-2)', color: 'var(--text-secondary)' }}>{s.assignmentStrategy}</span>
                             {(s.bpoCount ?? 1) > 1 && <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue)' }}>×{s.bpoCount} BPOs</span>}
                             {s.handler && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{s.handler.name}</span>}
                           </div>
@@ -708,7 +708,7 @@ export default function TaskTypeDetail() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {(tt.templates ?? []).map(t => (
                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: 'var(--orange-muted)', color: 'var(--orange)', textTransform: 'uppercase', flexShrink: 0 }}>{t.tipo}</span>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: 'var(--orange-muted)', color: 'var(--orange-dark)', textTransform: 'uppercase', flexShrink: 0 }}>{t.tipo}</span>
                   <span style={{ fontWeight: 500, fontSize: '0.84rem', flex: 1 }}>{t.name}</span>
                   <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadTaskTemplate(t).catch(ex => setErr(errMsg(ex)))}>
                     Download
@@ -967,7 +967,7 @@ export default function TaskTypeDetail() {
           )}
 
           {(fieldForm.type === 'select_ka_type' || fieldForm.type === 'select_country' || fieldForm.type === 'select_biz_category') && (
-            <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--orange-muted)', border: '1px solid var(--orange)', fontSize: '0.78rem', color: 'var(--orange)' }}>
+            <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--orange-muted)', border: '1px solid var(--orange-dark)', fontSize: '0.78rem', color: 'var(--orange-dark)' }}>
               <strong>
                 {fieldForm.type === 'select_ka_type' ? 'KA Type' : fieldForm.type === 'select_country' ? 'Country' : 'Business Category'} catalog
               </strong> — dropdown populated from the active values in Settings → Catalog.

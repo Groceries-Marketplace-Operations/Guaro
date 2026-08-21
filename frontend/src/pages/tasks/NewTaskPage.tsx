@@ -126,7 +126,7 @@ function BrandCombobox({ value, onChange, placeholder = 'Search brand…' }: Bra
           ) : (
             results.map(b => (
               <div key={b.id} onMouseDown={() => select(b)}
-                style={{ padding: '9px 14px', cursor: 'pointer', fontSize: '0.84rem', background: value === b.id ? 'rgba(255,105,0,0.08)' : 'transparent', color: value === b.id ? 'var(--orange)' : 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                style={{ padding: '9px 14px', cursor: 'pointer', fontSize: '0.84rem', background: value === b.id ? 'var(--orange-muted)' : 'transparent', color: value === b.id ? 'var(--orange-dark)' : 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                 onMouseEnter={e => (e.currentTarget.style.background = value === b.id ? 'rgba(255,105,0,0.12)' : 'var(--surface-2)')}
                 onMouseLeave={e => (e.currentTarget.style.background = value === b.id ? 'rgba(255,105,0,0.08)' : 'transparent')}>
                 <span style={{ fontWeight: value === b.id ? 600 : 400 }}>{b.brandName}</span>
@@ -184,10 +184,10 @@ function MultiBrandCombobox({ value, onChange }: MultiBrandComboboxProps) {
       {value.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
           {value.map(b => (
-            <span key={b.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(255,105,0,0.1)', color: 'var(--orange)', borderRadius: 6, padding: '3px 8px', fontSize: '0.8rem', fontWeight: 500 }}>
+            <span key={b.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--orange-muted)', color: 'var(--orange-dark)', borderRadius: 6, padding: '3px 8px', fontSize: '0.8rem', fontWeight: 500 }}>
               {b.brandName} <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>· {(b as Brand & { country?: string }).country}</span>
               <button type="button" onClick={() => remove(b.id)}
-                style={{ marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--orange)', display: 'flex', padding: 0, lineHeight: 1 }}>
+                style={{ marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--orange-dark)', display: 'flex', padding: 0, lineHeight: 1 }}>
                 <XSmall />
               </button>
             </span>
@@ -210,7 +210,7 @@ function MultiBrandCombobox({ value, onChange }: MultiBrandComboboxProps) {
               const selected = selectedIds.has(b.id);
               return (
                 <div key={b.id} onMouseDown={() => toggle(b)}
-                  style={{ padding: '9px 14px', cursor: 'pointer', fontSize: '0.84rem', background: selected ? 'rgba(255,105,0,0.08)' : 'transparent', color: selected ? 'var(--orange)' : 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  style={{ padding: '9px 14px', cursor: 'pointer', fontSize: '0.84rem', background: selected ? 'var(--orange-muted)' : 'transparent', color: selected ? 'var(--orange-dark)' : 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                   onMouseEnter={e => (e.currentTarget.style.background = selected ? 'rgba(255,105,0,0.12)' : 'var(--surface-2)')}
                   onMouseLeave={e => (e.currentTarget.style.background = selected ? 'rgba(255,105,0,0.08)' : 'transparent')}>
                   <span style={{ fontWeight: selected ? 600 : 400 }}>{b.brandName}</span>
@@ -539,7 +539,7 @@ export default function NewTaskPage() {
         {urlErrors[f.id] && <p style={{ fontSize: '0.75rem', color: 'var(--red)', marginTop: 4 }}>{urlErrors[f.id]}</p>}
         {!urlErrors[f.id] && /^https?:\/\//i.test(strVal) && (
           <a href={strVal} target="_blank" rel="noopener noreferrer"
-            style={{ display: 'inline-flex', marginTop: 6, color: 'var(--orange)', fontSize: '0.78rem', fontWeight: 600 }}>
+            style={{ display: 'inline-flex', marginTop: 6, color: 'var(--link)', fontSize: '0.78rem', fontWeight: 600 }}>
             {strVal} ↗
           </a>
         )}
@@ -694,7 +694,7 @@ export default function NewTaskPage() {
           )}
           {image && fileVal?.previewUrl && !uploading && <div style={{ marginTop: 12, maxWidth: 520 }}>
             <div>
-              <div style={{ overflow: 'hidden', borderRadius: 10, background: '#eee' }}>
+              <div style={{ overflow: 'hidden', borderRadius: 10, background: 'var(--surface-2)' }}>
                 <img src={fileVal.previewUrl} alt="Vista previa del archivo original" style={{ width: '100%', height: 'auto', display: 'block' }} />
               </div>
               <p className="form-hint" style={{ marginTop: 5 }}>Archivo original · sin transformaciones.</p>
@@ -753,7 +753,7 @@ export default function NewTaskPage() {
               <div key={sectionId} style={{ marginBottom: 4 }}>
                 <button
                   onClick={() => toggleSection(sectionId)}
-                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 16px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 16px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}
                 >
                   {sectionName}
                   {collapsed ? <ChevronRight /> : <ChevronDown />}
@@ -763,7 +763,7 @@ export default function NewTaskPage() {
                   const isActive = selectedTTId === tt.id;
                   return (
                     <button key={tt.id} onClick={() => pickTaskType(tt)}
-                      style={{ width: '100%', display: 'block', textAlign: 'left', padding: '9px 16px 9px 24px', background: isActive ? 'rgba(255,105,0,0.08)' : 'none', border: 'none', borderLeft: isActive ? '3px solid var(--orange)' : '3px solid transparent', cursor: 'pointer', color: isActive ? 'var(--orange)' : 'var(--text-primary)', fontWeight: isActive ? 600 : 400, fontSize: '0.84rem', transition: 'background 0.1s' }}
+                      style={{ width: '100%', display: 'block', textAlign: 'left', padding: '9px 16px 9px 24px', background: isActive ? 'var(--orange-muted)' : 'none', border: 'none', borderLeft: isActive ? '3px solid var(--orange)' : '3px solid transparent', cursor: 'pointer', color: isActive ? 'var(--orange-dark)' : 'var(--text-primary)', fontWeight: isActive ? 600 : 400, fontSize: '0.84rem', transition: 'background 0.1s' }}
                     >
                       <div style={{ lineHeight: 1.3 }}>{tt.name}</div>
                       {tt.description && (
@@ -843,7 +843,7 @@ export default function NewTaskPage() {
                     {isCommercialMenuUpload && (
                       <button type="button" onClick={downloadCommercialTemplate} disabled={!anySelectedBrand || downloadingCommercialTemplate}
                         style={{ display:'flex', width:'100%', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:8, background:'var(--surface-2)', border:'1px solid var(--border)', color:'var(--text-primary)', cursor:anySelectedBrand ? 'pointer' : 'not-allowed', textAlign:'left', opacity: anySelectedBrand ? 1 : 0.6 }}>
-                        <span style={{ fontSize:'0.72rem', fontWeight:700, padding:'1px 6px', borderRadius:4, background:'var(--orange-muted)', color:'var(--orange)' }}>XLSX</span>
+                        <span style={{ fontSize:'0.72rem', fontWeight:700, padding:'1px 6px', borderRadius:4, background:'var(--orange-muted)', color:'var(--orange-dark)' }}>XLSX</span>
                         <span style={{ fontWeight:500, fontSize:'0.84rem' }}>
                           {downloadingCommercialTemplate ? 'Generating template…' : 'Download brand menu template'}
                         </span>
@@ -855,7 +855,7 @@ export default function NewTaskPage() {
                     {selectedTT!.templates!.map(tp => (
                       <button key={tp.id} type="button" onClick={() => downloadTaskTemplate(tp).catch(() => setErr('No se pudo descargar la plantilla.'))}
                         style={{ display:'flex', width:'100%', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:8, background:'var(--surface-2)', border:'1px solid var(--border)', color:'var(--text-primary)', cursor:'pointer', textAlign:'left' }}>
-                        <span style={{ fontSize:'0.72rem', fontWeight:700, padding:'1px 6px', borderRadius:4, background:'var(--orange-muted)', color:'var(--orange)', textTransform:'uppercase', flexShrink:0 }}>{tp.tipo}</span>
+                        <span style={{ fontSize:'0.72rem', fontWeight:700, padding:'1px 6px', borderRadius:4, background:'var(--orange-muted)', color:'var(--orange-dark)', textTransform:'uppercase', flexShrink:0 }}>{tp.tipo}</span>
                         <span style={{ fontWeight:500, fontSize:'0.84rem' }}>{tp.name}</span>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13" style={{ marginLeft:'auto', flexShrink:0, opacity:0.4 }}>
                           <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
@@ -921,7 +921,7 @@ export default function NewTaskPage() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {[...(selectedTT.stepDefinitions ?? [])].sort((a, b) => a.order - b.order).map((s, i) => (
                       <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
-                        <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--orange-muted)', color: 'var(--orange)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0 }}>
+                        <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--orange-muted)', color: 'var(--orange-dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0 }}>
                           {i + 1}
                         </div>
                         <div style={{ flex: 1 }}>

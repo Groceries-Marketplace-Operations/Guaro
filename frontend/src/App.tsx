@@ -39,6 +39,7 @@ import { hasPermission } from './auth/permissions';
 import AccessDenied from './pages/AccessDenied';
 import RoleAccessPage from './pages/admin/RoleAccessPage';
 import StoreOnboardingPage from './pages/integrations/StoreOnboardingPage';
+import { ThemeProvider } from './theme/ThemeContext';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
 
@@ -62,6 +63,7 @@ function SuperAdminOnly({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
+      <ThemeProvider>
       <LangProvider>
       <AuthProvider>
         <BrowserRouter basename="/guaro">
@@ -108,6 +110,7 @@ export default function App() {
         </BrowserRouter>
       </AuthProvider>
       </LangProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

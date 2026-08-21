@@ -261,7 +261,7 @@ export default function BpoManagement() {
                       <span style={{
                         fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
                         background: b.stepsInProgress > 5 ? 'var(--red-bg)' : b.stepsInProgress > 2 ? 'var(--amber-bg)' : 'var(--green-bg)',
-                        color: b.stepsInProgress > 5 ? 'var(--red)' : b.stepsInProgress > 2 ? '#B54708' : '#027A48',
+                        color: b.stepsInProgress > 5 ? 'var(--red-text)' : b.stepsInProgress > 2 ? 'var(--amber-text)' : 'var(--green-text)',
                       }}>
                         {b.stepsInProgress}
                       </span>

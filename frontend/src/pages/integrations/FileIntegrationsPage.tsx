@@ -190,16 +190,16 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
                   <span className="badge">{rule.sftpApplication.name}</span>
                   <span className="badge">{rule.filePattern}</span>
                   {isFilter && <span className="badge">&gt; {rule.thresholdAmount}</span>}
-                  {isFilter && rule.excludedUpcs.length > 0 && <span className="badge" style={{ color: '#b42318' }}>{rule.excludedUpcs.length} UPCs excluidos</span>}
+                  {isFilter && rule.excludedUpcs.length > 0 && <span className="badge" style={{ color: 'var(--red-text)' }}>{rule.excludedUpcs.length} UPCs excluidos</span>}
                 </div>
                 <div className="text-muted" style={{ marginTop: 8, fontSize: 12 }}>
                   Cada {rule.intervalMinutes ?? '—'} min · Máx. {rule.maxFilesPerRun} {isFilter ? 'archivos' : 'tiendas'} · Última: {date(rule.lastRunAt)} · Próxima: {date(rule.nextRunAt)}
                 </div>
                 {isFilter && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 9, fontSize: 12 }}>
                   <span className="badge">Inventario: {rule.fileState?.total ?? 0}</span>
-                  <span className="badge" style={{ color: '#B54708' }}>Pendientes: {rule.fileState?.pending ?? 0}</span>
-                  <span className="badge" style={{ color: 'var(--orange)' }}>Procesando: {rule.fileState?.running ?? 0}</span>
-                  <span className="badge" style={{ color: '#027A48' }}>Procesados: {rule.fileState?.done ?? 0}</span>
+                  <span className="badge" style={{ color: 'var(--amber-text)' }}>Pendientes: {rule.fileState?.pending ?? 0}</span>
+                  <span className="badge" style={{ color: 'var(--orange-dark)' }}>Procesando: {rule.fileState?.running ?? 0}</span>
+                  <span className="badge" style={{ color: 'var(--green-text)' }}>Procesados: {rule.fileState?.done ?? 0}</span>
                   <span className="badge" style={{ color: 'var(--red)' }}>Fallidos: {rule.fileState?.failed ?? 0}</span>
                 </div>}
               </div>

@@ -38,7 +38,7 @@ const COUNTRY_EMOJI: Record<Country, string> = { MX: '🇲🇽', CO: '🇨🇴',
 const KA_STYLE: Record<KaType, { background: string; color: string }> = {
   KA:  { background: 'var(--orange-muted)', color: 'var(--orange-dark)' },
   CKA: { background: 'var(--blue-bg)',      color: 'var(--blue)'       },
-  SME: { background: 'var(--green-bg)',     color: '#027A48'           },
+  SME: { background: 'var(--green-bg)',     color: 'var(--green-text)' },
 };
 
 function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
@@ -46,12 +46,12 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 4,
       padding: '2px 8px 2px 10px', borderRadius: 999,
-      background: 'var(--orange)', color: '#fff',
+      background: 'var(--accent)', color: 'var(--text-on-accent)',
       fontSize: '0.72rem', fontWeight: 600,
     }}>
       {label}
       <button onClick={onRemove} style={{
-        background: 'none', border: 'none', cursor: 'pointer', color: '#fff',
+        background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-on-accent)',
         padding: 0, display: 'flex', alignItems: 'center', opacity: 0.8,
       }}>
         <XIcon />
@@ -401,7 +401,7 @@ export default function BrandsList() {
               {appsForCountry.length === 0 && (
                 <p className="form-hint">
                   {t('pages.brandsList.noAppsForCountry').replace('{country}', `${COUNTRY_EMOJI[form.country]} ${form.country}`)}{' '}
-                  <a href="/applications" target="_blank" rel="noreferrer" style={{ color: 'var(--orange)' }}>{t('pages.brandsList.createOneArrow')}</a>
+                  <a href="/applications" target="_blank" rel="noreferrer" style={{ color: 'var(--link)' }}>{t('pages.brandsList.createOneArrow')}</a>
                 </p>
               )}
             </div>
@@ -416,7 +416,7 @@ export default function BrandsList() {
                       <span>{w.name}</span>
                       <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999,
                         background: w.isAlerts ? 'var(--red-bg)' : 'var(--green-bg)',
-                        color: w.isAlerts ? 'var(--red)' : '#027A48' }}>
+                        color: w.isAlerts ? 'var(--red-text)' : 'var(--green-text)' }}>
                         {w.isAlerts ? 'alerts' : 'events'}
                       </span>
                     </label>

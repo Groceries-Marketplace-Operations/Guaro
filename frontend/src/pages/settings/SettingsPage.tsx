@@ -298,7 +298,7 @@ export default function SettingsPage() {
                                   fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: 999,
                                   border: 'none', cursor: 'pointer',
                                   background: opt.active ? 'var(--green-bg)' : 'var(--surface-2)',
-                                  color: opt.active ? '#027A48' : 'var(--text-muted)',
+                                  color: opt.active ? 'var(--green-text)' : 'var(--text-muted)',
                                 }}
                               >
                                 {opt.active ? t('common.active') : t('common.inactive')}

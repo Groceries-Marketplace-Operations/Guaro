@@ -165,7 +165,7 @@ export default function StoreEmergenciesPage() {
           setError('');
         }}>+ Nueva emergencia</button>}
       </div>
-      <div className="alert" style={{ marginBottom: 18, borderColor: '#ffc7b2', background: '#fff4ee', color: '#8b2d00' }}>
+      <div className="alert" style={{ marginBottom: 18, borderColor: 'var(--amber-border)', background: 'var(--amber-bg)', color: 'var(--amber-text)' }}>
         Esta acción cambia tiendas reales a Offline usando únicamente las tiendas almacenadas localmente. Al vencer el periodo, el sistema intentará reabrir solo las tiendas que logró apagar.
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 18 }}>
@@ -289,7 +289,7 @@ export default function StoreEmergenciesPage() {
       }}>{updateReopening.isPending ? 'Guardando…' : 'Guardar nueva hora'}</button>
     </>}>
       {error && <div className="error-banner">{error}</div>}
-      <div className="alert" style={{ marginBottom: 18, borderColor: '#ffd0b8', background: '#fff7f2', color: '#7a320e' }}>
+      <div className="alert" style={{ marginBottom: 18, borderColor: 'var(--amber-border)', background: 'var(--amber-bg)', color: 'var(--amber-text)' }}>
         El scheduler utilizará la nueva hora. Solo puede modificarse antes de que comience la reapertura.
       </div>
       <div className="form-group">

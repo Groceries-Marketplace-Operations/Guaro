@@ -140,7 +140,7 @@ export default function TaskTypesList() {
             {types.map(tp => (
               <div key={tp.id} className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.1s' }}
                 onClick={() => nav(`/task-types/${tp.id}`)}
-                onMouseOver={e => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.07)')}
+                onMouseOver={e => (e.currentTarget.style.boxShadow = 'var(--shadow-sm)')}
                 onMouseOut={e => (e.currentTarget.style.boxShadow = 'none')}
               >
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
