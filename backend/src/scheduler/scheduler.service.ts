@@ -42,8 +42,6 @@ export class SchedulerService {
 
     for (const task of tasks) {
       try {
-        await this.prisma.task.update({ where: { id: task.id }, data: { status: TaskStatus.pending } });
-
         const firstStep = await this.prisma.stepInstance.findFirst({
           where: { taskId: task.id },
           include: { stepDefinition: true },
@@ -51,8 +49,8 @@ export class SchedulerService {
         });
 
         if (firstStep) {
-          await this.engine.activateStep(firstStep.id);
-          if (firstStep.stepDefinition.executionType === ExecutionType.automatic) {
+          const activated = await this.engine.activateStep(firstStep.id, TaskStatus.scheduled);
+          if (activated && firstStep.stepDefinition.executionType === ExecutionType.automatic) {
             this.engine.emitAutoStep(firstStep.id, firstStep.stepDefinition.handlerId!, task.id);
           }
         }
@@ -127,53 +125,74 @@ export class SchedulerService {
 
     if (tasks.length === 0) return;
 
-    for (const task of tasks) {
+    let archived = 0;
+    for (const candidate of tasks) {
       try {
-        const activeStatuses: TaskStatus[] = [TaskStatus.pending, TaskStatus.assigned, TaskStatus.in_progress, TaskStatus.scheduled];
-        const isActive = activeStatuses.includes(task.status);
-
-        if (isActive) {
-          await this.prisma.task.update({
-            where: { id: task.id },
-            data: { status: TaskStatus.failed },
+        const didArchive = await this.prisma.$transaction(async tx => {
+          await tx.$queryRaw`SELECT "id" FROM "task" WHERE "id" = ${candidate.id}::uuid FOR UPDATE`;
+          const task = await tx.task.findUnique({
+            where: { id: candidate.id },
+            include: {
+              taskType: { select: { id: true, name: true, sectionId: true } },
+              brand: { select: { brandName: true, brandId: true, country: true } },
+              createdBy: { select: { name: true } },
+              stepInstances: { select: { status: true } },
+              storeOnboardingEnrollment: { select: { taskId: true } },
+              storeOnboardingRequest: { select: { id: true } },
+            },
           });
-          await this.prisma.stepInstance.updateMany({
-            where: { taskId: task.id, status: { in: [StepStatus.pending, StepStatus.in_progress, StepStatus.blocked] } },
-            data: { status: StepStatus.failed, failureReason: StepFailureReason.system_timed_out },
+          if (!task || task.deletedAt || task.createdAt > cutoff) return false;
+
+          // Store Onboarding owns the complete Task history. Archival must not
+          // mutate, duplicate or delete any Task that has ever been evaluated
+          // by the rollout, regardless of its enrollment decision.
+          if (task.storeOnboardingEnrollment || task.storeOnboardingRequest) return false;
+
+          const activeStatuses: TaskStatus[] = [TaskStatus.pending, TaskStatus.assigned, TaskStatus.in_progress, TaskStatus.scheduled];
+          const isActive = activeStatuses.includes(task.status);
+          if (isActive) {
+            await tx.task.update({
+              where: { id: task.id },
+              data: { status: TaskStatus.failed },
+            });
+            await tx.stepInstance.updateMany({
+              where: { taskId: task.id, status: { in: [StepStatus.pending, StepStatus.in_progress, StepStatus.blocked] } },
+              data: { status: StepStatus.failed, failureReason: StepFailureReason.system_timed_out },
+            });
+          }
+
+          const stepsTotal = task.stepInstances.length;
+          const stepsDone = task.stepInstances.filter(step => step.status === StepStatus.done).length;
+          const stepsFailed = task.stepInstances.filter(step => step.status === StepStatus.failed).length;
+          const finalStatus = isActive ? TaskStatus.failed : task.status;
+          await tx.taskArchive.create({
+            data: {
+              taskId: task.id,
+              taskTypeName: task.taskType.name,
+              taskTypeId: task.taskType.id,
+              sectionId: task.taskType.sectionId,
+              brandName: task.brand?.brandName ?? null,
+              brandRef: task.brand?.brandId ?? null,
+              country: task.brand?.country ?? null,
+              createdByName: task.createdBy?.name ?? null,
+              status: finalStatus,
+              stepsTotal,
+              stepsDone,
+              stepsFailed,
+              taskCreatedAt: task.createdAt,
+              taskUpdatedAt: task.updatedAt,
+            },
           });
-        }
-
-        const stepsTotal  = task.stepInstances.length;
-        const stepsDone   = task.stepInstances.filter(s => s.status === StepStatus.done).length;
-        const stepsFailed = task.stepInstances.filter(s => s.status === StepStatus.failed).length;
-        const finalStatus = isActive ? TaskStatus.failed : task.status;
-
-        await this.prisma.taskArchive.create({
-          data: {
-            taskId:        task.id,
-            taskTypeName:  task.taskType.name,
-            taskTypeId:    task.taskType.id,
-            sectionId:     task.taskType.sectionId,
-            brandName:     task.brand?.brandName ?? null,
-            brandRef:      task.brand?.brandId   ?? null,
-            country:       task.brand?.country   ?? null,
-            createdByName: task.createdBy?.name  ?? null,
-            status:        finalStatus,
-            stepsTotal,
-            stepsDone,
-            stepsFailed,
-            taskCreatedAt: task.createdAt,
-            taskUpdatedAt: task.updatedAt,
-          },
+          await tx.task.delete({ where: { id: task.id } });
+          return true;
         });
-
-        await this.prisma.task.delete({ where: { id: task.id } });
+        if (didArchive) archived++;
       } catch (err) {
-        this.logger.error(`Error archiving task ${task.id}: ${(err as Error).message}`);
+        this.logger.error(`Error archiving task ${candidate.id}: ${(err as Error).message}`);
       }
     }
 
-    this.logger.log(`Archived ${tasks.length} task(s) older than 1 year`);
+    if (archived > 0) this.logger.log(`Archived ${archived} task(s) older than 1 year`);
   }
 
   // Purge error log files older than 15 days — runs daily at 3:30 AM

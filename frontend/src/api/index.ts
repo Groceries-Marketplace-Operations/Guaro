@@ -289,6 +289,122 @@ export const assignmentRulesApi = {
     client.delete(`/brands/assignment-rules/${ruleId}/candidates/${accountId}`),
 };
 
+/* ── Store Onboarding ───────────────────────────────────────── */
+export const storeOnboardingApi = {
+  status: () =>
+    client.get<import('../types').StoreOnboardingOperationalStatus>('/store-onboarding/status'),
+  assigneeOptions: () =>
+    client.get<{ data: import('../types').StoreOnboardingAssignee[] }>('/store-onboarding/assignee-options'),
+  config: () =>
+    client.get<import('../types').StoreOnboardingControlResponse>('/store-onboarding/config'),
+  updateConfig: (data: { globalEnabled: boolean; notificationsEnabled: boolean; activationConfirmed: boolean }) =>
+    client.put<import('../types').StoreOnboardingControlResponse>('/store-onboarding/config', data),
+  list: (params?: { page?: number; limit?: number; status?: string; stage?: string; source?: string; kaType?: string; country?: string }) =>
+    client.get<import('../types').StoreOnboardingListResponse>('/store-onboarding', { params }),
+  get: (id: string) =>
+    client.get<import('../types').StoreOnboardingRequest>(`/store-onboarding/${id}`),
+  forecast: (id: string) =>
+    client.get<import('../types').StoreOnboardingForecast>(`/store-onboarding/${id}/forecast`),
+  recalculateForecast: (id: string) =>
+    client.post<import('../types').StoreOnboardingForecast>(`/store-onboarding/${id}/forecast/recalculate`),
+  updateConfigurationBrief: (id: string, data: {
+    instructions: string;
+    fields?: import('../types').StoreOnboardingBriefField[];
+    units?: Array<{ unitId: string; input: Record<string, boolean | string | number | null> }>;
+  }) => client.patch<import('../types').StoreOnboardingRequest>(`/store-onboarding/${id}/configuration-brief`, data),
+  assignConfigurationBrief: (id: string, accountId: string | null) =>
+    client.patch<import('../types').StoreOnboardingRequest>(
+      `/store-onboarding/${id}/configuration-brief-assignment`,
+      { accountId },
+    ),
+  submitShopIds: (id: string, units: Array<{ externalShopId: string; appShopId: string }>) =>
+    client.post<import('../types').StoreOnboardingRequest>(`/store-onboarding/${id}/shop-ids`, { units }),
+  updateChecklist: (id: string, unitId: string, data: {
+    checklist: Record<string, boolean | string | number | null>;
+    note?: string;
+  }) => client.patch(`/store-onboarding/${id}/units/${unitId}/checklist`, data),
+  assignUnit: (id: string, unitId: string, data: {
+    configurationAssigneeId?: string | null;
+    commercialAssigneeId?: string | null;
+    goLiveAssigneeId?: string | null;
+  }) => client.patch<import('../types').StoreOnboardingRequest>(
+    `/store-onboarding/${id}/units/${unitId}/assignment`,
+    data,
+  ),
+  transitionUnit: (id: string, unitId: string, data: { stage: string; note?: string }) =>
+    client.post(`/store-onboarding/${id}/units/${unitId}/transition`, data),
+  auditUnit: (id: string, unitId: string, data: {
+    decision: 'approved' | 'rejected' | 'needs_information';
+    note?: string;
+    evidence?: string[];
+  }) => client.post(`/store-onboarding/${id}/units/${unitId}/audit`, data),
+  goLive: (id: string, unitIds: string[]) =>
+    client.post<{
+      total: number;
+      succeeded: number;
+      pending: number;
+      failed: number;
+      results: Array<{ unitId: string; externalShopId: string; status: string; error?: string }>;
+    }>(`/store-onboarding/${id}/go-live`, { unitIds }),
+  rollouts: () =>
+    client.get<import('../types').StoreOnboardingRolloutResponse>('/store-onboarding/rollouts'),
+  updateRollout: (data: {
+    country: import('../types').Country;
+    kaType: import('../types').KaType;
+    sources: import('../types').StoreOnboardingSource[];
+    taskTypeIds: Partial<Record<import('../types').StoreOnboardingSource, string>>;
+    brandTaskTypeId?: string | null;
+    notificationProfileId?: string | null;
+    enabled: boolean;
+    activationConfirmed?: boolean;
+    effectiveAt: string;
+    workflowVersion: string;
+    newRequestsOnly: true;
+    timezone?: string;
+  }) => {
+    const sourceTaskTypes = data.sources.map(source => ({
+      source,
+      taskTypeId: data.taskTypeIds[source] ?? '',
+    }));
+    const { sources: _sources, taskTypeIds: _taskTypeIds, ...payload } = data;
+    void _sources;
+    void _taskTypeIds;
+    return client.put<import('../types').StoreOnboardingRolloutPolicy>(
+      '/store-onboarding/rollouts',
+      { ...payload, sourceTaskTypes },
+    );
+  },
+  notificationProfiles: () =>
+    client.get<import('../types').StoreOnboardingNotificationProfilesResponse>(
+      '/store-onboarding/notification-profiles',
+    ),
+  updateNotificationProfile: (data: {
+    id?: string;
+    logicalKey?: string;
+    name: string;
+    country?: import('../types').Country | null;
+    kaType?: import('../types').KaType | null;
+    sources?: import('../types').StoreOnboardingSource[];
+    webhookId: string;
+    enabled: boolean;
+    activationConfirmed?: boolean;
+    frequency: import('../types').StoreOnboardingNotificationFrequency;
+    intervalMinutes?: number | null;
+    scheduledTime?: string | null;
+    timezone: string;
+    criticalEvents: string[];
+    template: string;
+  }) => client.put<import('../types').StoreOnboardingNotificationProfile>(
+    '/store-onboarding/notification-profiles',
+    data,
+  ),
+  timeline: (id: string, params?: { page?: number; limit?: number; unitId?: string }) =>
+    client.get<import('../types').StoreOnboardingTimelineResponse>(
+      `/store-onboarding/${id}/timeline`,
+      { params },
+    ),
+};
+
 /* ── Integrations: Auto Open ─────────────────────────────────── */
 export const integrationsApi = {
   autoOpenCapabilities: () => client.get('/integrations/auto-open/capabilities'),

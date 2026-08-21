@@ -23,6 +23,7 @@ import { AdminModule } from './admin/admin.module';
 import { SftpApplicationsModule } from './sftp-applications/sftp-applications.module';
 import { FileIntegrationsModule } from './file-integrations/file-integrations.module';
 import { AccessControlModule } from './access-control/access-control.module';
+import { StoreOnboardingModule } from './store-onboarding/store-onboarding.module';
 
 const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
 
@@ -51,6 +52,7 @@ const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
     AdminModule,
     SftpApplicationsModule,
     FileIntegrationsModule,
+    StoreOnboardingModule,
     ...devModules,
   ],
 })

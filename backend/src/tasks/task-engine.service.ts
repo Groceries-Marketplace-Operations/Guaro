@@ -1,47 +1,61 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import {
   AssignmentStrategy,
   ExecutionType,
   Prisma,
   StepFailureReason,
   StepStatus,
+  StoreOnboardingEnrollmentDecision,
   TaskStatus,
   WebhookEvent,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
+import { StoreOnboardingLifecycleService } from '../store-onboarding/store-onboarding-lifecycle.service';
 
 type Tx = Prisma.TransactionClient;
+type LockedStep = Prisma.StepInstanceGetPayload<{
+  include: { stepDefinition: { include: { candidates: true } }; task: true };
+}>;
+const HANDLER_FENCE_TIMEOUT_MS = 2 * 60 * 60 * 1000 + 5 * 60 * 1000;
 
 @Injectable()
 export class TaskEngineService {
   private readonly logger = new Logger(TaskEngineService.name);
+  private recoveringStoreOnboardingBrands = false;
 
   constructor(
     private prisma: PrismaService,
     private webhookSender: WebhookSenderService,
+    @Optional() private storeOnboardingLifecycle?: StoreOnboardingLifecycleService,
   ) {}
 
   // ── Activate a step (just-in-time assignment) ─────────────────────────────
   // Manual steps: assign BPO + task→assigned (BPO must click "Start Review")
   // Automatic steps: assign + step→in_progress + task→in_progress immediately
 
-  async activateStep(stepInstanceId: string): Promise<void> {
+  async activateStep(stepInstanceId: string, expectedTaskStatus?: TaskStatus): Promise<boolean> {
     let isAutomatic = false;
+    let activated = false;
 
     await this.prisma.$transaction(async (tx) => {
-      const step = await tx.stepInstance.findUnique({
-        where: { id: stepInstanceId },
-        include: { stepDefinition: { include: { candidates: true } }, task: true },
-      });
-      if (!step) throw new NotFoundException('StepInstance not found');
+      const step = await this.claimStepMutation(tx, stepInstanceId, false);
+      if (!step) return;
       if (step.status !== StepStatus.pending) return;
-
+      if (expectedTaskStatus && step.task.status !== expectedTaskStatus) return;
+      if (
+        step.stepDefinition.executionType !== ExecutionType.automatic
+        && step.task.status === TaskStatus.assigned
+        && step.workedSeconds !== null
+      ) return;
       const assignedToId = await this.assignBpo(tx, step.stepDefinition, step.taskId, step.id);
       isAutomatic = step.stepDefinition.executionType === ExecutionType.automatic;
 
@@ -58,15 +72,19 @@ export class TaskEngineService {
         // Manual: assign BPO but keep step pending; task moves to assigned
         await tx.stepInstance.update({
           where: { id: stepInstanceId },
-          data: { assignedToId },
+          // workedSeconds=0 is the durable claim marker even when a manual
+          // strategy intentionally leaves assignedToId empty.
+          data: { assignedToId, workedSeconds: step.workedSeconds ?? 0 },
         });
         await tx.task.update({
           where: { id: step.taskId },
           data: { status: TaskStatus.assigned },
         });
       }
+      activated = true;
     });
 
+    if (!activated) return false;
     const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
     if (step) {
       if (isAutomatic) {
@@ -76,18 +94,15 @@ export class TaskEngineService {
         await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_assignment, step.taskId);
       }
     }
+    return true;
   }
 
   // ── BPO clicks "Start Review" ─────────────────────────────────────────────
   // Manual step: pending → in_progress, task assigned → in_progress
 
   async startStep(stepInstanceId: string): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      const step = await tx.stepInstance.findUnique({
-        where: { id: stepInstanceId },
-        include: { stepDefinition: true },
-      });
-      if (!step) throw new NotFoundException('StepInstance not found');
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      const step = await this.claimStepMutation(tx, stepInstanceId);
       if (step.status !== StepStatus.pending) {
         throw new BadRequestException('Step must be pending to be started');
       }
@@ -103,32 +118,24 @@ export class TaskEngineService {
         where: { id: step.taskId },
         data: { status: TaskStatus.in_progress },
       });
+      return { taskId: step.taskId, stepDefinitionId: step.stepDefinitionId };
     });
 
-    const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
-    if (step) {
-      await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_start, step.taskId);
-    }
+    await this.sendStepWebhook(claimed.stepDefinitionId, WebhookEvent.on_start, claimed.taskId);
   }
 
   // ── Complete a step ───────────────────────────────────────────────────────
 
   async completeStep(stepInstanceId: string, result?: unknown, note?: string): Promise<void> {
-    const step = await this.prisma.stepInstance.findUnique({
-      where: { id: stepInstanceId },
-      include: { stepDefinition: true },
-    });
-    if (!step) throw new NotFoundException('StepInstance not found');
-    if (step.status !== StepStatus.in_progress) {
-      throw new BadRequestException('Step must be in_progress to be completed');
-    }
-
-    const now = new Date();
-    const currentPeriod = step.startedAt
-      ? Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)
-      : 0;
-
-    await this.prisma.$transaction(async (tx) => {
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      const step = await this.claimStepMutation(tx, stepInstanceId);
+      if (step.status !== StepStatus.in_progress) {
+        throw new BadRequestException('Step must be in_progress to be completed');
+      }
+      const now = new Date();
+      const currentPeriod = step.startedAt
+        ? Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)
+        : 0;
       await tx.stepInstance.update({
         where: { id: stepInstanceId },
         data: {
@@ -149,10 +156,14 @@ export class TaskEngineService {
         },
         data: { status: StepStatus.cancelled },
       });
+      return { taskId: step.taskId, stepDefinitionId: step.stepDefinitionId };
     });
 
-    await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_complete, step.taskId);
-    await this.advanceTask(step.taskId);
+    const suppressLegacyCompletion = await this.shouldSuppressLegacyFinalCompletion(claimed.taskId);
+    if (!suppressLegacyCompletion) {
+      await this.sendStepWebhook(claimed.stepDefinitionId, WebhookEvent.on_complete, claimed.taskId);
+    }
+    await this.advanceTask(claimed.taskId);
   }
 
   // ── Fail a step ───────────────────────────────────────────────────────────
@@ -162,16 +173,16 @@ export class TaskEngineService {
     failureReason: StepFailureReason,
     note?: string,
   ): Promise<void> {
-    const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
-    if (!step) throw new NotFoundException('StepInstance not found');
-
-    const now = new Date();
-    const currentPeriod = step.startedAt
-      ? Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)
-      : 0;
-
-    await this.prisma.$transaction([
-      this.prisma.stepInstance.update({
+    const claimed = await this.prisma.$transaction(async tx => {
+      const step = await this.claimStepMutation(tx, stepInstanceId);
+      if (step.status !== StepStatus.in_progress && step.status !== StepStatus.blocked) {
+        throw new BadRequestException('Step must be active to be failed');
+      }
+      const now = new Date();
+      const currentPeriod = step.startedAt
+        ? Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)
+        : 0;
+      await tx.stepInstance.update({
         where: { id: stepInstanceId },
         data: {
           status: StepStatus.failed,
@@ -180,9 +191,9 @@ export class TaskEngineService {
           completedAt: now,
           workedSeconds: (step.workedSeconds ?? 0) + currentPeriod,
         },
-      }),
+      });
       // Cancel sibling instances for the same stepDefinition
-      this.prisma.stepInstance.updateMany({
+      await tx.stepInstance.updateMany({
         where: {
           taskId: step.taskId,
           stepDefinitionId: step.stepDefinitionId,
@@ -190,37 +201,33 @@ export class TaskEngineService {
           status: { notIn: [StepStatus.done, StepStatus.failed, StepStatus.cancelled] },
         },
         data: { status: StepStatus.cancelled },
-      }),
-      this.prisma.task.update({
+      });
+      await tx.task.update({
         where: { id: step.taskId },
         data: { status: TaskStatus.failed },
-      }),
-    ]);
+      });
+      return { taskId: step.taskId, stepDefinitionId: step.stepDefinitionId };
+    });
 
-    await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_fail, step.taskId);
+    await this.sendStepWebhook(claimed.stepDefinitionId, WebhookEvent.on_fail, claimed.taskId);
+    await this.afterTerminalTask(claimed.taskId);
   }
 
   // ── Block a step (manual only) ────────────────────────────────────────────
 
   async blockStep(stepInstanceId: string, note?: string): Promise<void> {
-    const step = await this.prisma.stepInstance.findUnique({
-      where: { id: stepInstanceId },
-      include: { stepDefinition: true },
-    });
-    if (!step) throw new NotFoundException('StepInstance not found');
-    if (step.stepDefinition.executionType === ExecutionType.automatic) {
-      throw new BadRequestException('Automatic steps cannot be blocked');
-    }
-    if (step.status !== StepStatus.in_progress) {
-      throw new BadRequestException('Step must be in_progress to be blocked');
-    }
-
-    const elapsedSeconds = step.startedAt
-      ? Math.floor((Date.now() - step.startedAt.getTime()) / 1000)
-      : 0;
-
-    await this.prisma.$transaction([
-      this.prisma.stepInstance.update({
+    const claimed = await this.prisma.$transaction(async tx => {
+      const step = await this.claimStepMutation(tx, stepInstanceId);
+      if (step.stepDefinition.executionType === ExecutionType.automatic) {
+        throw new BadRequestException('Automatic steps cannot be blocked');
+      }
+      if (step.status !== StepStatus.in_progress) {
+        throw new BadRequestException('Step must be in_progress to be blocked');
+      }
+      const elapsedSeconds = step.startedAt
+        ? Math.floor((Date.now() - step.startedAt.getTime()) / 1000)
+        : 0;
+      await tx.stepInstance.update({
         where: { id: stepInstanceId },
         data: {
           status: StepStatus.blocked,
@@ -228,9 +235,9 @@ export class TaskEngineService {
           workedSeconds: (step.workedSeconds ?? 0) + elapsedSeconds,
           startedAt: null,
         },
-      }),
+      });
       // Cancel sibling instances (pending or in_progress) for the same stepDefinition
-      this.prisma.stepInstance.updateMany({
+      await tx.stepInstance.updateMany({
         where: {
           taskId: step.taskId,
           stepDefinitionId: step.stepDefinitionId,
@@ -238,46 +245,45 @@ export class TaskEngineService {
           status: { in: [StepStatus.pending, StepStatus.in_progress] },
         },
         data: { status: StepStatus.cancelled },
-      }),
-      this.prisma.task.update({
+      });
+      await tx.task.update({
         where: { id: step.taskId },
         data: { status: TaskStatus.blocked },
-      }),
-    ]);
+      });
+      return { taskId: step.taskId, stepDefinitionId: step.stepDefinitionId };
+    });
 
-    await this.sendStepWebhook(step.stepDefinitionId, WebhookEvent.on_blocked, step.taskId);
+    await this.sendStepWebhook(claimed.stepDefinitionId, WebhookEvent.on_blocked, claimed.taskId);
   }
 
   // ── Retry a blocked step ──────────────────────────────────────────────────
 
   async retryStep(stepInstanceId: string): Promise<void> {
-    const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
-    if (!step) throw new NotFoundException('StepInstance not found');
-    if (step.status !== StepStatus.blocked) {
-      throw new BadRequestException('Only blocked steps can be retried');
-    }
-    await this.prisma.$transaction([
-      this.prisma.stepInstance.update({
+    await this.prisma.$transaction(async tx => {
+      const step = await this.claimStepMutation(tx, stepInstanceId);
+      if (step.status !== StepStatus.blocked) {
+        throw new BadRequestException('Only blocked steps can be retried');
+      }
+      await tx.stepInstance.update({
         where: { id: stepInstanceId },
         data: { status: StepStatus.in_progress, note: null, startedAt: new Date() },
-      }),
-      this.prisma.task.update({
+      });
+      await tx.task.update({
         where: { id: step.taskId },
         data: { status: TaskStatus.in_progress },
-      }),
-    ]);
+      });
+    });
   }
 
   // ── Force-retry a failed or blocked step (admin/super_admin only) ─────────
 
   async forceRetryStep(stepInstanceId: string): Promise<void> {
-    const step = await this.prisma.stepInstance.findUnique({ where: { id: stepInstanceId } });
-    if (!step) throw new NotFoundException('StepInstance not found');
-    if (step.status !== StepStatus.failed && step.status !== StepStatus.blocked) {
-      throw new BadRequestException('Only failed or blocked steps can be force-retried');
-    }
-    await this.prisma.$transaction([
-      this.prisma.stepInstance.update({
+    await this.prisma.$transaction(async tx => {
+      const step = await this.claimStepMutation(tx, stepInstanceId);
+      if (step.status !== StepStatus.failed && step.status !== StepStatus.blocked) {
+        throw new BadRequestException('Only failed or blocked steps can be force-retried');
+      }
+      await tx.stepInstance.update({
         where: { id: stepInstanceId },
         data: {
           status: StepStatus.in_progress,
@@ -286,12 +292,12 @@ export class TaskEngineService {
           startedAt: new Date(),
           completedAt: null,
         },
-      }),
-      this.prisma.task.update({
+      });
+      await tx.task.update({
         where: { id: step.taskId },
         data: { status: TaskStatus.in_progress },
-      }),
-    ]);
+      });
+    });
   }
 
   // ── Advance task to next step ─────────────────────────────────────────────
@@ -299,6 +305,10 @@ export class TaskEngineService {
   // (supports bpoCount > 1 for fixed/manual strategies).
 
   async advanceTask(taskId: string): Promise<void> {
+    // Even if a caller bypasses TasksService, an unsatisfied shared Brand
+    // prerequisite is a hard execution barrier.
+    if (this.storeOnboardingLifecycle && await this.storeOnboardingLifecycle.isTaskBlockedByBrand(taskId)) return;
+
     const pendingInstances = await this.prisma.stepInstance.findMany({
       where: { taskId, status: StepStatus.pending },
       include: { stepDefinition: true },
@@ -306,26 +316,221 @@ export class TaskEngineService {
     });
 
     if (!pendingInstances.length) {
-      await this.prisma.task.update({ where: { id: taskId }, data: { status: TaskStatus.done } });
+      const completed = await this.prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT "id" FROM "task" WHERE "id" = ${taskId}::uuid FOR UPDATE`;
+        const task = await tx.task.findUnique({ where: { id: taskId }, select: { status: true } });
+        if (!task || task.status === TaskStatus.done || task.status === TaskStatus.failed) return false;
+        const activeSteps = await tx.stepInstance.count({
+          where: {
+            taskId,
+            status: { in: [StepStatus.pending, StepStatus.in_progress, StepStatus.blocked] },
+          },
+        });
+        if (activeSteps > 0) return false;
+        if (
+          this.storeOnboardingLifecycle
+          && !await this.storeOnboardingLifecycle.canActivateTaskInTransaction(tx, taskId)
+        ) return false;
+        await tx.task.update({ where: { id: taskId }, data: { status: TaskStatus.done } });
+        return true;
+      });
+      if (!completed) return;
+      await this.afterTerminalTask(taskId);
       return;
     }
 
     const minOrder = pendingInstances[0].stepDefinition.order;
     const nextInstances = pendingInstances.filter(i => i.stepDefinition.order === minOrder);
 
+    const activatedInstanceIds = new Set<string>();
     for (const instance of nextInstances) {
-      await this.activateStep(instance.id);
+      if (await this.activateStep(instance.id)) activatedInstanceIds.add(instance.id);
     }
 
     for (const instance of nextInstances) {
-      if (instance.stepDefinition.executionType === ExecutionType.automatic) {
+      if (
+        activatedInstanceIds.has(instance.id)
+        && instance.stepDefinition.executionType === ExecutionType.automatic
+      ) {
         this.emitAutoStep(instance.id, instance.stepDefinition.handlerId!, taskId);
       }
     }
   }
 
+  /**
+   * Revalidates a Bull handler job after dequeue and holds the Store
+   * Onboarding shared kill-switch fence for the complete external effect. A
+   * per-Step advisory claim prevents two stale workers from running the same
+   * handler concurrently. Legacy Tasks never consult the onboarding control.
+   */
+  async runAutomaticHandlerUnderFence(
+    stepInstanceId: string,
+    taskId: string,
+    effect: () => Promise<
+      | { status: 'completed'; result?: unknown; note?: string }
+      | { status: 'failed'; failureReason: StepFailureReason; note?: string }
+    >,
+  ): Promise<boolean> {
+    const enrolled = !!this.storeOnboardingLifecycle
+      && await this.storeOnboardingLifecycle.isTaskEnrolled(taskId);
+    if (!enrolled) {
+      // Preserve the ffd6858 worker contract for legacy/excluded Tasks: the
+      // potentially long handler runs outside an interactive Prisma
+      // transaction, and the existing complete/fail methods persist only the
+      // short terminal mutation afterwards.
+      const outcome = await effect();
+      if (outcome.status === 'completed') {
+        await this.completeStep(stepInstanceId, outcome.result, outcome.note);
+      } else {
+        await this.failStep(stepInstanceId, outcome.failureReason, outcome.note);
+      }
+      return true;
+    }
+
+    const terminal = await this.prisma.$transaction(async tx => {
+      const step = await this.claimStepMutation(tx, stepInstanceId, false);
+      if (
+        !step
+        || step.taskId !== taskId
+        || step.status !== StepStatus.in_progress
+        || step.stepDefinition.executionType !== ExecutionType.automatic
+      ) return null;
+      const outcome = await effect();
+      const now = new Date();
+      const currentPeriod = step.startedAt
+        ? Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)
+        : 0;
+      if (outcome.status === 'completed') {
+        await tx.stepInstance.update({
+          where: { id: stepInstanceId },
+          data: {
+            status: StepStatus.done,
+            completedAt: now,
+            result: outcome.result as Prisma.InputJsonValue ?? Prisma.JsonNull,
+            note: outcome.note ?? null,
+            workedSeconds: (step.workedSeconds ?? 0) + currentPeriod,
+          },
+        });
+        await tx.stepInstance.updateMany({
+          where: {
+            taskId,
+            stepDefinitionId: step.stepDefinitionId,
+            id: { not: stepInstanceId },
+            status: { notIn: [StepStatus.done, StepStatus.failed, StepStatus.cancelled] },
+          },
+          data: { status: StepStatus.cancelled },
+        });
+      } else {
+        await tx.stepInstance.update({
+          where: { id: stepInstanceId },
+          data: {
+            status: StepStatus.failed,
+            failureReason: outcome.failureReason,
+            note: outcome.note ?? null,
+            completedAt: now,
+            workedSeconds: (step.workedSeconds ?? 0) + currentPeriod,
+          },
+        });
+        await tx.stepInstance.updateMany({
+          where: {
+            taskId,
+            stepDefinitionId: step.stepDefinitionId,
+            id: { not: stepInstanceId },
+            status: { notIn: [StepStatus.done, StepStatus.failed, StepStatus.cancelled] },
+          },
+          data: { status: StepStatus.cancelled },
+        });
+        await tx.task.update({ where: { id: taskId }, data: { status: TaskStatus.failed } });
+      }
+      return { ...outcome, stepDefinitionId: step.stepDefinitionId };
+    }, { maxWait: 5_000, timeout: HANDLER_FENCE_TIMEOUT_MS });
+    if (!terminal) return false;
+    if (terminal.status === 'completed') {
+      const suppressLegacyCompletion = await this.shouldSuppressLegacyFinalCompletion(taskId);
+      if (!suppressLegacyCompletion) {
+        await this.sendStepWebhook(terminal.stepDefinitionId, WebhookEvent.on_complete, taskId);
+      }
+      await this.advanceTask(taskId);
+    } else {
+      await this.sendStepWebhook(terminal.stepDefinitionId, WebhookEvent.on_fail, taskId);
+      await this.afterTerminalTask(taskId);
+    }
+    return true;
+  }
+
   // Overridden by QueueModule to publish the job (avoids circular dep)
   emitAutoStep: (stepInstanceId: string, handlerId: string, taskId: string) => void = () => undefined;
+
+  // QueueModule checks whether the original/recovery Bull job is still live
+  // before publishing. The activation epoch makes a later OFF -> ON cycle
+  // independent from retained completed job ids from the previous cycle.
+  recoverAutoStepJob: (
+    stepInstanceId: string,
+    handlerId: string,
+    taskId: string,
+    activationEpoch: string,
+    executionGeneration: string,
+  ) => Promise<boolean> = async () => false;
+
+  @Cron('15,45 * * * * *')
+  async recoverStoreOnboardingBrandTasks() {
+    if (!this.storeOnboardingLifecycle || this.recoveringStoreOnboardingBrands) return;
+    const control = await this.storeOnboardingLifecycle.control();
+    if (!control.globalEnabled) return;
+    this.recoveringStoreOnboardingBrands = true;
+    try {
+      const unblockedTaskIds = await this.storeOnboardingLifecycle.recoverTerminalBrandProvisionings();
+      const stalledTaskIds = await this.storeOnboardingLifecycle.recoverEnrolledPendingTaskActivations();
+      const handlerRecovery = await this.storeOnboardingLifecycle.recoverEnrolledAutomaticHandlerJobs();
+      if (handlerRecovery.activationEpoch) {
+        for (const step of handlerRecovery.steps) {
+          await this.recoverAutoStepJob(
+            step.stepInstanceId,
+            step.handlerId,
+            step.taskId,
+            handlerRecovery.activationEpoch,
+            step.executionGeneration,
+          );
+        }
+      }
+      for (const taskId of new Set([...unblockedTaskIds, ...stalledTaskIds])) {
+        // Re-read the kill switch between recovered Tasks. A disable does not
+        // cancel work already committed, but it prevents any subsequent Task
+        // activation from this recovery pass.
+        if (!(await this.storeOnboardingLifecycle.control()).globalEnabled) break;
+        await this.advanceTask(taskId);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Store Onboarding Brand recovery failed: ${message.slice(0, 500)}`);
+    } finally {
+      this.recoveringStoreOnboardingBrands = false;
+    }
+  }
+
+  private async afterTerminalTask(taskId: string) {
+    if (!this.storeOnboardingLifecycle) return;
+    const reconciled = await this.storeOnboardingLifecycle.reconcileTaskAfterChange(taskId);
+    for (const unblockedTaskId of reconciled.unblockedTaskIds) {
+      await this.advanceTask(unblockedTaskId);
+    }
+  }
+
+  private async shouldSuppressLegacyFinalCompletion(taskId: string) {
+    if (!this.storeOnboardingLifecycle) return false;
+    const control = await this.storeOnboardingLifecycle.control();
+    if (!control.globalEnabled || !control.notificationsEnabled) return false;
+    const [enrollment, remaining] = await Promise.all([
+      this.prisma.storeOnboardingTaskEnrollment.findUnique({
+        where: { taskId },
+        select: { decision: true },
+      }),
+      this.prisma.stepInstance.count({
+        where: { taskId, status: { in: [StepStatus.pending, StepStatus.in_progress, StepStatus.blocked] } },
+      }),
+    ]);
+    return enrollment?.decision === StoreOnboardingEnrollmentDecision.enrolled && remaining === 0;
+  }
 
   // ── Human step assignment / reassignment ─────────────────────────────────
 
@@ -334,11 +539,7 @@ export class TaskEngineService {
     let stepDefinitionId = '';
 
     await this.prisma.$transaction(async (tx) => {
-      const step = await tx.stepInstance.findUnique({
-        where: { id: stepInstanceId },
-        include: { stepDefinition: true, task: true },
-      });
-      if (!step) throw new NotFoundException('StepInstance not found');
+      const step = await this.claimStepMutation(tx, stepInstanceId);
       if (step.stepDefinition.executionType === ExecutionType.automatic) {
         throw new BadRequestException('Automatic steps cannot be assigned to a BPO');
       }
@@ -382,6 +583,40 @@ export class TaskEngineService {
     });
 
     await this.sendStepWebhook(stepDefinitionId, WebhookEvent.on_assignment, taskId);
+  }
+
+  private async lockStep(tx: Tx, stepInstanceId: string) {
+    await tx.$queryRaw`SELECT "id" FROM "step_instance" WHERE "id" = ${stepInstanceId}::uuid FOR UPDATE`;
+    return tx.stepInstance.findUnique({
+      where: { id: stepInstanceId },
+      include: { stepDefinition: { include: { candidates: true } }, task: true },
+    });
+  }
+
+  private async claimStepMutation(tx: Tx, stepInstanceId: string): Promise<LockedStep>;
+  private async claimStepMutation(tx: Tx, stepInstanceId: string, throwWhenBlocked: false): Promise<LockedStep | null>;
+  private async claimStepMutation(
+    tx: Tx,
+    stepInstanceId: string,
+    throwWhenBlocked = true,
+  ): Promise<LockedStep | null> {
+    const identity = await tx.stepInstance.findUnique({
+      where: { id: stepInstanceId },
+      select: { taskId: true },
+    });
+    if (!identity) throw new NotFoundException('StepInstance not found');
+    if (
+      this.storeOnboardingLifecycle
+      && !await this.storeOnboardingLifecycle.canActivateTaskInTransaction(tx, identity.taskId)
+    ) {
+      if (!throwWhenBlocked) return null;
+      throw new ConflictException('Store Onboarding is disabled or the Brand prerequisite is not ready');
+    }
+    const claimKey = `task-handler:${stepInstanceId}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${claimKey}))`;
+    const step = await this.lockStep(tx, stepInstanceId);
+    if (!step) throw new NotFoundException('StepInstance not found');
+    return step;
   }
 
   // ── Just-in-time assignment ───────────────────────────────────────────────

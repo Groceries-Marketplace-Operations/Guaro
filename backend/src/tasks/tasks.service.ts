@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { AccountRole, ExecutionType, Prisma, StepFailureReason, StepStatus, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from './task-engine.service';
@@ -6,6 +6,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { TaskValidationService } from './task-validation.service';
 import { SectionAccessService } from '../sections/section-access.service';
+import { StoreOnboardingLifecycleService } from '../store-onboarding/store-onboarding-lifecycle.service';
 
 const TASK_INCLUDE = {
   taskType: { select: { id: true, name: true, sectionId: true } },
@@ -62,6 +63,7 @@ export class TasksService {
     private engine: TaskEngineService,
     private validation: TaskValidationService,
     private sectionAccess: SectionAccessService,
+    @Optional() private storeOnboardingLifecycle?: StoreOnboardingLifecycleService,
   ) {}
 
   // ── Create task ───────────────────────────────────────────────────────────
@@ -122,7 +124,7 @@ export class TasksService {
       if (!categoryCount) throw new BadRequestException('Configure the brand menu categories before creating this task');
     }
 
-    const task = await this.prisma.$transaction(async (tx) => {
+    const taskResult = await this.prisma.$transaction(async (tx) => {
       const created = await tx.task.create({
         data: {
           taskTypeId: dto.taskTypeId,
@@ -164,11 +166,26 @@ export class TasksService {
         });
       }
 
-      return created;
+      const brand = resolvedBrandId ? await tx.brand.findUnique({
+        where: { id: resolvedBrandId },
+        select: { id: true, country: true, kaType: true, createdAt: true },
+      }) : null;
+      const onboarding = this.storeOnboardingLifecycle
+        ? await this.storeOnboardingLifecycle.registerTaskAtCreation(tx, {
+          taskId: created.id,
+          taskTypeId: created.taskTypeId,
+          createdAt: created.createdAt,
+          scheduledStart: created.scheduledStart,
+          createdById,
+          brand,
+        })
+        : { blockedByBrand: false };
+      return { created, onboarding };
     });
+    const task = taskResult.created;
 
     // Activate first step(s) if not scheduled — advanceTask handles multiple bpoCount instances
-    if (!isScheduled && taskType.stepDefinitions.length > 0) {
+    if (!isScheduled && taskType.stepDefinitions.length > 0 && !taskResult.onboarding.blockedByBrand) {
       await this.engine.advanceTask(task.id);
     }
 

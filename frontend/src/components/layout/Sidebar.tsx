@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
 import { hasAnyPermission, hasPermission } from '../../auth/permissions';
+import { useStoreOnboardingFeature } from '../../pages/integrations/useStoreOnboardingFeature';
 
 const IconGrid = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -78,6 +79,10 @@ export default function Sidebar() {
   const isSA       = roles.includes('super_admin');
   const isDirector = roles.includes('director');
   const can = (permission: string) => hasPermission(account, permission);
+  const isStoreOnboardingOperator = roles.some(role => ['user', 'bpo', 'director', 'admin', 'super_admin'].includes(role));
+  const canManageStoreOnboarding = can('system.manage');
+  const onboardingFeature = useStoreOnboardingFeature(isStoreOnboardingOperator || canManageStoreOnboarding);
+  const showStoreOnboarding = canManageStoreOnboarding || (isStoreOnboardingOperator && onboardingFeature.globalEnabled);
   const integrationPermissions = [
     'integrations.forced_open', 'integrations.auto_stores_fetch', 'integrations.auto_menu_fetch',
     'integrations.auto_turn_off', 'integrations.emergencies', 'integrations.promotions_sftp',
@@ -147,7 +152,7 @@ export default function Sidebar() {
         </div>
       )}
 
-      {hasAnyPermission(account, integrationPermissions) && (
+      {(hasAnyPermission(account, integrationPermissions) || showStoreOnboarding) && (
         <div className="sidebar-section">
           <div className="sidebar-section-label">{t('nav.integrations')}</div>
           {can('integrations.forced_open') && <NavLink to="/integrations/auto-open" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
@@ -176,6 +181,10 @@ export default function Sidebar() {
           </NavLink>}
           {can('integrations.promotion_api') && <NavLink to="/integrations/promotion-api" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconApp /> Promociones API
+          </NavLink>}
+          {showStoreOnboarding && <NavLink to="/integrations/store-onboarding" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconClipboard /> <span>Store Onboarding</span>
+            {canManageStoreOnboarding && !onboardingFeature.globalEnabled && <span aria-label="Store Onboarding desactivado" style={{ marginLeft: 'auto', padding: '2px 6px', borderRadius: 999, color: '#b42318', background: '#fff1f2', fontSize: '.58rem', fontWeight: 800 }}>OFF</span>}
           </NavLink>}
         </div>
       )}

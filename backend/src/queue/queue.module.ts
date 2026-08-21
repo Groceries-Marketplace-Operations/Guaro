@@ -61,5 +61,29 @@ export class QueueModule implements OnModuleInit {
         })
         .catch((err) => console.error('Queue emit error:', err));
     };
+    this.engine.recoverAutoStepJob = async (
+      stepInstanceId: string,
+      handlerId: string,
+      taskId: string,
+      activationEpoch: string,
+      executionGeneration: string,
+    ) => {
+      const liveStates = new Set(['active', 'waiting', 'delayed', 'waiting-children', 'prioritized']);
+      const originalJob = await this.queue.getJob(stepInstanceId);
+      if (originalJob && liveStates.has(await originalJob.getState())) return false;
+
+      const recoveryJobId = `${stepInstanceId}-onboarding-recovery-${activationEpoch}-${executionGeneration}`;
+      const existingRecovery = await this.queue.getJob(recoveryJobId);
+      if (existingRecovery) return false;
+
+      const handler = await this.prisma.handler.findUnique({ where: { id: handlerId } });
+      if (!handler) throw new Error(`Handler record not found: ${handlerId}`);
+      await this.queue.add(
+        'run-handler',
+        { stepInstanceId, handlerName: handler.name, taskId },
+        { jobId: recoveryJobId },
+      );
+      return true;
+    };
   }
 }

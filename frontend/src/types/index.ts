@@ -1003,3 +1003,316 @@ export interface AutoTurnOffShopExecution {
   startedAt?: string;
   finishedAt?: string;
 }
+
+/* ── Store Onboarding (dormant until the server status gate is enabled) ── */
+export type StoreOnboardingSource = 'create' | 'duplicate' | 'manual';
+export type StoreOnboardingStatus = 'active' | 'partial_success' | 'blocked' | 'done' | 'cancelled';
+export type StoreOnboardingStage =
+  | 'created'
+  | 'awaiting_shop_ids'
+  | 'awaiting_configuration_brief'
+  | 'integration_queued'
+  | 'configuring'
+  | 'configuration_validated'
+  | 'audit_preparing'
+  | 'awaiting_audit'
+  | 'audit_needs_information'
+  | 'audit_rejected'
+  | 'audit_approved'
+  | 'rtbo'
+  | 'integration_complete'
+  | 'awaiting_go_live'
+  | 'going_online'
+  | 'online'
+  | 'online_failed'
+  | 'no_coverage'
+  | 'creation_failed'
+  | 'blocked'
+  | 'cancelled';
+export type StoreOnboardingEtaConfidence = 'high' | 'medium' | 'low' | 'unavailable';
+export type StoreGoLiveSource = 'manual' | 'auto_open' | 'forced_open' | null;
+export type StoreOnboardingAssignee = Pick<Account, 'id' | 'name' | 'email'>;
+
+export interface StoreOnboardingOperationalStatus {
+  operationalReady?: boolean;
+  activationAllowed?: boolean;
+  activationReadiness?: {
+    ready: boolean;
+    readyScopeCount: number;
+    runtimeScopeCount: number;
+    reasons: string[];
+  };
+  configured?: boolean;
+  globalEnabled?: boolean;
+  notificationsEnabled?: boolean;
+  reason?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface StoreOnboardingControlResponse extends StoreOnboardingOperationalStatus {
+  rolloutDrafts?: number;
+  notificationProfileDrafts?: number;
+  control?: {
+    id: string;
+    globalEnabled: boolean;
+    notificationsEnabled: boolean;
+    updatedById?: string | null;
+    createdAt?: string;
+    updatedAt?: string;
+  } | null;
+}
+
+export interface StoreOnboardingUnit {
+  id: string;
+  requestId?: string;
+  shopId?: string | null;
+  externalShopId: string;
+  appShopId?: string | null;
+  stage: StoreOnboardingStage | string;
+  configurationAssigneeId?: string | null;
+  configurationAssignee?: StoreOnboardingAssignee | null;
+  commercialAssigneeId?: string | null;
+  commercialAssignee?: StoreOnboardingAssignee | null;
+  goLiveAssigneeId?: string | null;
+  goLiveAssignee?: StoreOnboardingAssignee | null;
+  checklist?: Record<string, boolean | string | number | null> | null;
+  configurationInput?: Record<string, boolean | string | number | null> | null;
+  auditStatus?: 'pending' | 'needs_information' | 'approved' | 'rejected' | null;
+  auditNote?: string | null;
+  auditEvidence?: string[] | null;
+  auditedById?: string | null;
+  auditedBy?: StoreOnboardingAssignee | null;
+  auditedAt?: string | null;
+  configurationCompletedAt?: string | null;
+  rtboAt?: string | null;
+  onlineAt?: string | null;
+  onlineSource?: StoreGoLiveSource;
+  lastError?: string | null;
+  transitions?: StoreOnboardingTransition[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StoreOnboardingTransition {
+  id: string;
+  unitId?: string;
+  fromStage: StoreOnboardingStage | string;
+  toStage: StoreOnboardingStage | string;
+  note?: string | null;
+  metadata?: Record<string, unknown> | null;
+  actor?: StoreOnboardingAssignee | null;
+  createdAt: string;
+}
+
+export interface StoreOnboardingEtaMilestone {
+  stage?: string;
+  label?: string;
+  estimatedAt?: string | null;
+  queueUnits?: number;
+  durationDays?: number;
+  status?: string;
+}
+
+export interface StoreOnboardingForecast {
+  estimatedCompletionAt?: string | null;
+  confidence?: StoreOnboardingEtaConfidence | string;
+  stageEstimates?: StoreOnboardingEtaMilestone[] | Record<string, unknown> | null;
+  explanation?: string[] | string | null;
+  queueUnits?: number;
+  calculatedAt?: string | null;
+}
+
+export type StoreOnboardingBriefFieldType = 'text' | 'long_text' | 'number' | 'select' | 'link';
+
+export interface StoreOnboardingBriefField {
+  id: string;
+  label: string;
+  type: StoreOnboardingBriefFieldType;
+  value: string | number;
+  required?: boolean;
+  options?: string[];
+}
+
+export interface StoreOnboardingBrandDependency {
+  status: 'existing' | 'waiting' | 'ready' | 'failed' | string;
+  brandTaskId?: string | null;
+  sourceTaskId?: string | null;
+  taskReference?: string | null;
+  startedAt?: string | null;
+  readyAt?: string | null;
+  durationMinutes?: number | null;
+  elapsedMinutes?: number | null;
+  sharedBatchCount?: number;
+  autoCompleted?: boolean;
+}
+
+export interface StoreOnboardingRequest {
+  id: string;
+  brandId: string;
+  taskId?: string | null;
+  countrySnapshot?: Country | null;
+  kaTypeSnapshot?: KaType | null;
+  source: StoreOnboardingSource;
+  status: StoreOnboardingStatus | string;
+  currentStage: StoreOnboardingStage | string;
+  priority?: number;
+  totalUnits: number;
+  completedUnits: number;
+  failedUnits: number;
+  estimatedCompletionAt?: string | null;
+  etaConfidence?: StoreOnboardingEtaConfidence | string | null;
+  etaCalculatedAt?: string | null;
+  workflowVersion?: string | null;
+  enrollmentStatus?: 'enrolled' | 'legacy' | 'excluded' | string | null;
+  rolloutPolicyId?: string | null;
+  eligibilitySnapshot?: Record<string, unknown> | null;
+  brandDependency?: StoreOnboardingBrandDependency | null;
+  configurationBrief?: string | null;
+  configurationBriefFields?: StoreOnboardingBriefField[] | null;
+  configurationBriefAssigneeId?: string | null;
+  configurationBriefAssignee?: StoreOnboardingAssignee | null;
+  canEditConfigurationBrief?: boolean;
+  canSubmitShopIds?: boolean;
+  shopIdsValidatedAt?: string | null;
+  shopIdsValidationSource?: string | null;
+  configurationPreparedAt?: string | null;
+  configurationPreparedBy?: StoreOnboardingAssignee | null;
+  brand: Pick<Brand, 'id' | 'brandName' | 'country' | 'kaType'> & {
+    brandId?: string;
+    owner?: StoreOnboardingAssignee | null;
+  };
+  createdBy?: StoreOnboardingAssignee | null;
+  units?: StoreOnboardingUnit[];
+  forecast?: StoreOnboardingForecast | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface StoreOnboardingListResponse {
+  data: StoreOnboardingRequest[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface StoreOnboardingRolloutPolicy {
+  id?: string;
+  revision?: number;
+  country: Country;
+  kaType: KaType;
+  sources: StoreOnboardingSource[];
+  taskTypeIds?: Partial<Record<StoreOnboardingSource, string>>;
+  sourceTaskTypes?: Array<{ source: StoreOnboardingSource; taskTypeId: string }>;
+  brandTaskTypeId?: string | null;
+  notificationProfileId?: string | null;
+  notificationProfile?: Pick<StoreOnboardingNotificationProfile, 'id' | 'logicalKey' | 'revision' | 'name' | 'enabled'> | null;
+  enabled: boolean;
+  effectiveAt?: string | null;
+  workflowVersion: string;
+  newRequestsOnly: true;
+  timezone?: string;
+  activatedAt?: string | null;
+  publishedAt?: string | null;
+  published?: boolean;
+  isRuntimeRevision?: boolean;
+  runtimeRevisionId?: string | null;
+  runtimeEnabled?: boolean;
+  pendingActivation?: boolean;
+  pendingActivationRevisionId?: string | null;
+  pendingActivationEffectiveAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StoreOnboardingTaskTypeOption {
+  id: string;
+  name: string;
+  section?: { id: string; name: string } | null;
+}
+
+export interface StoreOnboardingRolloutResponse extends StoreOnboardingOperationalStatus {
+  data: StoreOnboardingRolloutPolicy[];
+  canManage?: boolean;
+  taskTypeOptions?: StoreOnboardingTaskTypeOption[];
+}
+
+export type StoreOnboardingNotificationFrequency = 'immediate' | 'digest' | 'scheduled';
+
+export interface StoreOnboardingNotificationProfile {
+  id?: string;
+  revision?: number;
+  logicalKey?: string;
+  name: string;
+  country?: Country | null;
+  kaType?: KaType | null;
+  sources?: StoreOnboardingSource[];
+  webhookId: string;
+  enabled: boolean;
+  frequency: StoreOnboardingNotificationFrequency;
+  intervalMinutes?: number | null;
+  scheduledTime?: string | null;
+  timezone: string;
+  criticalEvents: string[];
+  template: string;
+  publishedAt?: string | null;
+  published?: boolean;
+  isRuntimeRevision?: boolean;
+  runtimeRevisionId?: string | null;
+  runtimeEnabled?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StoreOnboardingNotificationProfilesResponse extends StoreOnboardingOperationalStatus {
+  data: StoreOnboardingNotificationProfile[];
+  canManage?: boolean;
+  allowedVariables?: string[];
+  webhookOptions?: Array<{ id: string; name: string }>;
+}
+
+export type StoreOnboardingTimelineSegmentKind = 'actual' | 'forecast' | 'blocked';
+
+export interface StoreOnboardingTimelineSegment {
+  id: string;
+  type?: string;
+  unitId?: string | null;
+  batchId?: string | null;
+  batchLabel?: string | null;
+  externalShopId?: string | null;
+  key?: string;
+  label: string;
+  kind?: StoreOnboardingTimelineSegmentKind | string;
+  stage?: StoreOnboardingStage | string;
+  fromStage?: StoreOnboardingStage | string | null;
+  toStage?: StoreOnboardingStage | string | null;
+  status?: string;
+  startedAt: string;
+  endedAt?: string | null;
+  estimatedEndAt?: string | null;
+  durationMinutes?: number | null;
+  owner?: StoreOnboardingAssignee | null;
+  actor?: StoreOnboardingAssignee | null;
+  note?: string | null;
+  eventId?: string | null;
+  sharedDependency?: boolean;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface StoreOnboardingTimelineSummary {
+  startedAt?: string | null;
+  estimatedCompletionAt?: string | null;
+  inclusiveLeadTimeMinutes?: number | null;
+  batchOwnTimeMinutes?: number | null;
+  completedUnits?: number;
+  activeUnits?: number;
+  blockedUnits?: number;
+  brandDependency?: StoreOnboardingBrandDependency | null;
+}
+
+export interface StoreOnboardingTimelineResponse {
+  data: StoreOnboardingTimelineSegment[];
+  summary: StoreOnboardingTimelineSummary;
+  page: number;
+  limit: number;
+  total: number;
+}

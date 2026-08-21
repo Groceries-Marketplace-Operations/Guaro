@@ -169,30 +169,43 @@ export class HandlerProcessor extends WorkerHost {
     this.logger.log(`Running handler [${handlerName}] for step ${stepInstanceId}`);
 
     const fn = HANDLER_REGISTRY.get(handlerName);
-    if (!fn) {
-      this.logger.error(`Unknown handler: ${handlerName}`);
-      await this.engine.failStep(stepInstanceId, StepFailureReason.error_handler, `Unknown handler: ${handlerName}`);
-      return;
-    }
-
     const noteLines: string[] = [];
     const maxAttempts = job.opts.attempts ?? 1;
     const isLastAttempt = job.attemptsMade >= maxAttempts - 1;
-    const ctx = await this.buildContext(stepInstanceId, taskId, noteLines, isLastAttempt);
+    let terminalHandlerError: unknown;
 
-    try {
-      const result = await fn(ctx);
-      const note = noteLines.length ? noteLines.join('\n') : undefined;
-      await this.engine.completeStep(stepInstanceId, result, note);
-    } catch (err) {
-      const msg = (err as Error).message;
-      this.logger.error(`Handler [${handlerName}] failed: ${msg}`);
-      if (job.attemptsMade >= (job.opts.attempts ?? 1) - 1) {
-        const note = noteLines.length ? `${msg}\n${noteLines.join('\n')}` : msg;
-        await this.engine.failStep(stepInstanceId, StepFailureReason.error_handler, note);
+    const executed = await this.engine.runAutomaticHandlerUnderFence(stepInstanceId, taskId, async () => {
+      if (!fn) {
+        this.logger.error(`Unknown handler: ${handlerName}`);
+        return {
+          status: 'failed' as const,
+          failureReason: StepFailureReason.error_handler,
+          note: `Unknown handler: ${handlerName}`,
+        };
       }
-      throw err;
+      const ctx = await this.buildContext(stepInstanceId, taskId, noteLines, isLastAttempt);
+      try {
+        const result = await fn(ctx);
+        const note = noteLines.length ? noteLines.join('\n') : undefined;
+        return { status: 'completed' as const, result, note };
+      } catch (err) {
+        const msg = (err as Error).message;
+        this.logger.error(`Handler [${handlerName}] failed: ${msg}`);
+        if (job.attemptsMade >= (job.opts.attempts ?? 1) - 1) {
+          const note = noteLines.length ? `${msg}\n${noteLines.join('\n')}` : msg;
+          terminalHandlerError = err;
+          return { status: 'failed' as const, failureReason: StepFailureReason.error_handler, note };
+        }
+        throw err;
+      }
+    });
+    if (!executed) {
+      this.logger.log(`Skipped stale or disabled handler [${handlerName}] for step ${stepInstanceId}`);
     }
+    // Keep BullMQ retry/rejection semantics identical to the legacy worker:
+    // the final attempt is persisted as failed, then the original handler
+    // error is rethrown so the job itself is not reported as completed.
+    if (terminalHandlerError) throw terminalHandlerError;
   }
 
   // ── Context builder ───────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ import { useAuth } from './auth/AuthContext';
 import { hasPermission } from './auth/permissions';
 import AccessDenied from './pages/AccessDenied';
 import RoleAccessPage from './pages/admin/RoleAccessPage';
+import StoreOnboardingPage from './pages/integrations/StoreOnboardingPage';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
 
@@ -96,6 +97,8 @@ export default function App() {
               <Route path="integrations/complex-promotions-sftp" element={protectedPage('integrations.promotions_sftp', <FileIntegrationsPage kind="complex_promotion_reader" />)} />
               <Route path="integrations/custom" element={protectedPage('integrations.custom', <FileIntegrationsPage kind="price_filter" />)} />
               <Route path="integrations/promotion-api" element={protectedPage('integrations.promotion_api', <PromotionApiPage />)} />
+              <Route path="integrations/store-onboarding" element={<StoreOnboardingPage />} />
+              <Route path="integrations/store-onboarding/:id" element={<StoreOnboardingPage />} />
               <Route path="sftp-applications" element={protectedPage('sftp_applications.manage', <SftpApplicationsPage />)} />
               <Route path="admin" element={protectedPage('system.manage', <AdminPanel />)} />
               <Route path="access-denied" element={<AccessDenied />} />

@@ -201,6 +201,111 @@ enum PromotionApiMode {
   live
 }
 
+enum StoreOnboardingSource {
+  create
+  duplicate
+  manual
+}
+
+enum StoreOnboardingStatus {
+  active
+  partial_success
+  done
+  blocked
+  cancelled
+}
+
+enum StoreOnboardingStage {
+  created
+  awaiting_shop_ids
+  awaiting_configuration_brief
+  integration_queued
+  configuring
+  configuration_validated
+  audit_preparing
+  awaiting_audit
+  audit_needs_information
+  audit_rejected
+  audit_approved
+  rtbo
+  integration_complete
+  awaiting_go_live
+  going_online
+  online
+  online_failed
+  no_coverage
+  creation_failed
+  blocked
+  cancelled
+}
+
+enum StoreOnboardingAuditStatus {
+  pending
+  needs_information
+  approved
+  rejected
+}
+
+enum StoreOnboardingEtaConfidence {
+  low
+  medium
+  high
+}
+
+enum StoreOnboardingGoLiveSource {
+  manual
+  auto_open
+  forced_open
+}
+
+enum StoreOnboardingGoLiveStatus {
+  running
+  done
+  failed
+}
+
+enum StoreOnboardingEnrollmentDecision {
+  enrolled
+  excluded
+}
+
+enum BrandProvisioningStatus {
+  pending
+  ready
+  failed
+  cancelled
+}
+
+enum TaskDependencyStatus {
+  waiting
+  satisfied
+  failed
+  cancelled
+}
+
+enum StoreOnboardingNotificationFrequency {
+  immediate
+  digest
+  scheduled
+}
+
+enum StoreOnboardingOutboxStatus {
+  pending
+  processing
+  dispatched
+  suppressed
+  failed
+}
+
+enum StoreOnboardingDeliveryStatus {
+  pending
+  processing
+  retry_wait
+  delivered
+  failed
+  suppressed
+}
+
 // ---------------------------- Actors ---------------------------------------
 model Account {
   id             String        @id @default(uuid()) @db.Uuid
@@ -249,6 +354,19 @@ model Account {
   accessPermissionOverrides      AccountPermissionOverride[]
   accessSectionScopes            AccountSectionScope[]
   accessControlAudits            AccessControlAudit[]         @relation("AccessControlAuditActor")
+  storeOnboardingControls                    StoreOnboardingControl[]             @relation("StoreOnboardingControlUpdater")
+  storeOnboardingControlRevisions            StoreOnboardingControlRevision[]     @relation("StoreOnboardingControlRevisionActor")
+  storeOnboardingRolloutDrafts               StoreOnboardingRolloutRevision[]     @relation("StoreOnboardingRolloutCreator")
+  storeOnboardingProfileDrafts               StoreOnboardingNotificationProfile[] @relation("StoreOnboardingProfileCreator")
+  createdStoreOnboardingRequests             StoreOnboardingRequest[]             @relation("StoreOnboardingRequestCreator")
+  assignedStoreOnboardingConfigurationBriefs StoreOnboardingRequest[]             @relation("StoreOnboardingConfigurationBriefAssignee")
+  preparedStoreOnboardingRequests            StoreOnboardingRequest[]             @relation("StoreOnboardingConfigurationPreparedBy")
+  storeOnboardingTransitions                 StoreOnboardingTransition[]          @relation("StoreOnboardingTransitionActor")
+  storeOnboardingAudits                      StoreOnboardingUnit[]                @relation("StoreOnboardingAuditor")
+  storeOnboardingConfigurationAssignments    StoreOnboardingUnit[]                @relation("StoreOnboardingConfigurationAssignee")
+  storeOnboardingCommercialAssignments       StoreOnboardingUnit[]                @relation("StoreOnboardingCommercialAssignee")
+  storeOnboardingGoLiveAssignments           StoreOnboardingUnit[]                @relation("StoreOnboardingGoLiveAssignee")
+  storeOnboardingGoLiveAttempts              StoreOnboardingGoLiveAttempt[]       @relation("StoreOnboardingGoLiveActor")
 
   @@index([sectionId])
   @@map("account")
@@ -303,6 +421,8 @@ model TaskType {
   formFields      FormField[]
   tasks           Task[]
   templates       TaskTypeTemplate[]
+  storeOnboardingSourceRollouts StoreOnboardingRolloutSource[]   @relation("StoreOnboardingSourceTaskType")
+  storeOnboardingBrandRollouts  StoreOnboardingRolloutRevision[] @relation("StoreOnboardingBrandTaskType")
 
   @@index([sectionId])
   @@map("task_type")
@@ -515,6 +635,7 @@ model Webhook {
   brandWebhooks    BrandWebhook[]
   autoOpenPools    AutoOpenPool[]
   autoTurnOffPools AutoTurnOffPool[]
+  storeOnboardingNotificationProfiles StoreOnboardingNotificationProfile[]
 
   @@map("webhook")
 }
@@ -620,6 +741,8 @@ model Brand {
   sftpApplications       SftpApplication[]
   promotionApiExecutions PromotionApiExecution[]
   targetedMenuRules      TargetedMenuRule[]
+  storeOnboardingProvisioning BrandProvisioning?
+  storeOnboardingRequests     StoreOnboardingRequest[]
 
   @@index([ownerId])
   @@index([applicationId])
@@ -669,6 +792,7 @@ model Shop {
   emergencies            StoreEmergencyTarget[]
   forcedOpenTargets      ForcedOpenTarget[]
   promotionApiExecutions PromotionApiExecution[]
+  storeOnboardingUnits   StoreOnboardingUnit[]
 
   @@unique([brandId, appShopId])
   @@index([brandId])
@@ -795,6 +919,12 @@ model Task {
   stepInstances StepInstance[]
   formValues    FormValue[]
   taskShops     TaskShop[]
+  storeOnboardingEnrollment    StoreOnboardingTaskEnrollment? @relation("StoreOnboardingEnrollmentTask")
+  storeOnboardingRequest       StoreOnboardingRequest?        @relation("StoreOnboardingRequestTask")
+  storeOnboardingProvisioning  BrandProvisioning?             @relation("StoreOnboardingProvisioningSourceTask")
+  storeOnboardingDependencies  TaskDependency[]               @relation("StoreOnboardingDependentTask")
+  storeOnboardingPrerequisites TaskDependency[]               @relation("StoreOnboardingPrerequisiteTask")
+  storeOnboardingOutboxEvents  StoreOnboardingOutboxEvent[]
 
   @@index([taskTypeId])
   @@index([brandId])
@@ -832,6 +962,7 @@ model StepInstance {
   task           Task           @relation(fields: [taskId], references: [id], onDelete: Cascade)
   stepDefinition StepDefinition @relation(fields: [stepDefinitionId], references: [id])
   assignedTo     Account?       @relation(fields: [assignedToId], references: [id])
+  storeOnboardingBatches StoreOnboardingBatch[]
 
   @@index([taskId])
   @@index([assignedToId])
@@ -1646,6 +1777,459 @@ model ForcedOpenTarget {
   @@unique([operationId, shopId])
   @@index([operationId, status])
   @@map("forced_open_target")
+}
+
+// ---------------- Store Onboarding -----------------------------------------
+// No row is inserted by migrations. Missing control state is interpreted as
+// OFF. Activation is an explicit, audited API operation; rollout enrollment
+// never backfills Tasks created before the activation boundary.
+model StoreOnboardingControl {
+  id                     String    @id @default("default")
+  globalEnabled          Boolean   @default(false) @map("global_enabled")
+  notificationsEnabled   Boolean   @default(false) @map("notifications_enabled")
+  globalEnabledAt        DateTime? @map("global_enabled_at") @db.Timestamptz
+  notificationsEnabledAt DateTime? @map("notifications_enabled_at") @db.Timestamptz
+  activationConfirmedAt  DateTime? @map("activation_confirmed_at") @db.Timestamptz
+  updatedById            String?   @map("updated_by_id") @db.Uuid
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  updatedBy Account?                         @relation("StoreOnboardingControlUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  revisions StoreOnboardingControlRevision[]
+
+  @@map("store_onboarding_control")
+}
+
+model StoreOnboardingControlRevision {
+  id                         String   @id @default(uuid()) @db.Uuid
+  controlId                  String   @default("default") @map("control_id")
+  beforeGlobalEnabled        Boolean  @map("before_global_enabled")
+  afterGlobalEnabled         Boolean  @map("after_global_enabled")
+  beforeNotificationsEnabled Boolean  @map("before_notifications_enabled")
+  afterNotificationsEnabled  Boolean  @map("after_notifications_enabled")
+  activationConfirmed        Boolean  @default(false) @map("activation_confirmed")
+  actorId                    String?  @map("actor_id") @db.Uuid
+  reason                     String?  @db.Text
+  createdAt                  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  control StoreOnboardingControl @relation(fields: [controlId], references: [id], onDelete: Cascade)
+  actor   Account?               @relation("StoreOnboardingControlRevisionActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([controlId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("store_onboarding_control_revision")
+}
+
+// Revisions are immutable. Enabling creates a new confirmed revision; the
+// effective boundary is max(effectiveAt, activatedAt, globalEnabledAt).
+model StoreOnboardingRolloutRevision {
+  id                    String    @id @default(uuid()) @db.Uuid
+  country               Country
+  kaType                KaType    @map("ka_type")
+  revision              Int
+  enabled               Boolean   @default(false)
+  effectiveAt           DateTime  @map("effective_at") @db.Timestamptz
+  workflowVersion       String    @map("workflow_version")
+  newRequestsOnly       Boolean   @default(true) @map("new_requests_only")
+  timezone              String    @default("America/Mexico_City")
+  notificationProfileId String?   @map("notification_profile_id") @db.Uuid
+  brandTaskTypeId       String?   @map("brand_task_type_id") @db.Uuid
+  activatedAt           DateTime? @map("activated_at") @db.Timestamptz
+  createdById           String    @map("created_by_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  notificationProfile StoreOnboardingNotificationProfile? @relation(fields: [notificationProfileId], references: [id], onDelete: SetNull)
+  createdBy           Account                             @relation("StoreOnboardingRolloutCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  brandTaskType       TaskType?                           @relation("StoreOnboardingBrandTaskType", fields: [brandTaskTypeId], references: [id], onDelete: Restrict)
+  sourceTaskTypes     StoreOnboardingRolloutSource[]
+  taskEnrollments     StoreOnboardingTaskEnrollment[]
+  onboardingRequests  StoreOnboardingRequest[]
+
+  @@unique([country, kaType, revision])
+  @@index([country, kaType, createdAt], map: "so_rollout_scope_created_idx")
+  @@index([enabled, effectiveAt])
+  @@index([notificationProfileId])
+  @@index([brandTaskTypeId])
+  @@map("store_onboarding_rollout_revision")
+}
+
+// Immutable source-to-TaskType mappings avoid relying on seeded names or a
+// systemKey that is not present in the production TaskType table.
+model StoreOnboardingRolloutSource {
+  rolloutRevisionId String                @map("rollout_revision_id") @db.Uuid
+  source            StoreOnboardingSource
+  taskTypeId        String                @map("task_type_id") @db.Uuid
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz
+
+  rolloutRevision StoreOnboardingRolloutRevision @relation(fields: [rolloutRevisionId], references: [id], onDelete: Cascade)
+  taskType        TaskType                       @relation("StoreOnboardingSourceTaskType", fields: [taskTypeId], references: [id], onDelete: Restrict)
+
+  @@id([rolloutRevisionId, source])
+  @@unique([rolloutRevisionId, taskTypeId], map: "so_rollout_source_task_type_key")
+  @@index([taskTypeId])
+  @@map("store_onboarding_rollout_source")
+}
+
+// Each save creates a new immutable profile revision. Templates are split by
+// domain event so their allowed placeholders can be validated independently.
+model StoreOnboardingNotificationProfile {
+  id              String                               @id @default(uuid()) @db.Uuid
+  logicalKey      String                               @map("logical_key")
+  revision        Int
+  name            String
+  country         Country?
+  kaType          KaType?                              @map("ka_type")
+  sources         StoreOnboardingSource[]
+  webhookId       String                               @map("webhook_id") @db.Uuid
+  enabled         Boolean                              @default(false)
+  frequency       StoreOnboardingNotificationFrequency
+  intervalMinutes Int?                                 @map("interval_minutes")
+  scheduledTime   String?                              @map("scheduled_time")
+  timezone        String                               @default("America/Mexico_City")
+  criticalEvents  String[]                             @default([]) @map("critical_events")
+  activatedAt     DateTime?                            @map("activated_at") @db.Timestamptz
+  createdById     String                               @map("created_by_id") @db.Uuid
+  createdAt       DateTime                             @default(now()) @map("created_at") @db.Timestamptz
+
+  webhook    Webhook                               @relation(fields: [webhookId], references: [id], onDelete: Restrict)
+  createdBy  Account                               @relation("StoreOnboardingProfileCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  templates  StoreOnboardingNotificationTemplate[]
+  rollouts   StoreOnboardingRolloutRevision[]
+  deliveries StoreOnboardingNotificationDelivery[]
+
+  @@unique([logicalKey, revision])
+  @@index([enabled, country, kaType], map: "so_profile_enabled_scope_idx")
+  @@index([logicalKey, activatedAt], map: "so_profile_logical_activated_idx")
+  @@index([webhookId])
+  @@map("store_onboarding_notification_profile")
+}
+
+model StoreOnboardingNotificationTemplate {
+  id        String   @id @default(uuid()) @db.Uuid
+  profileId String   @map("profile_id") @db.Uuid
+  eventType String   @map("event_type") @db.VarChar(100)
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  profile StoreOnboardingNotificationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, eventType], map: "so_template_profile_event_key")
+  @@index([eventType])
+  @@map("store_onboarding_notification_template")
+}
+
+// Immutable enrollment decision made only inside the Task creation
+// transaction. An OFF master switch produces no row at all.
+model StoreOnboardingTaskEnrollment {
+  taskId              String                            @id @map("task_id") @db.Uuid
+  decision            StoreOnboardingEnrollmentDecision
+  source              StoreOnboardingSource
+  reason              String                            @db.VarChar(80)
+  rolloutRevisionId   String?                           @map("rollout_revision_id") @db.Uuid
+  countrySnapshot     Country?                          @map("country_snapshot")
+  kaTypeSnapshot      KaType?                           @map("ka_type_snapshot")
+  workflowVersion     String?                           @map("workflow_version")
+  taskCreatedAt       DateTime                          @map("task_created_at") @db.Timestamptz
+  evaluatedAt         DateTime                          @default(now()) @map("evaluated_at") @db.Timestamptz
+  eligibilitySnapshot Json                              @map("eligibility_snapshot")
+
+  task            Task                            @relation("StoreOnboardingEnrollmentTask", fields: [taskId], references: [id], onDelete: Cascade)
+  rolloutRevision StoreOnboardingRolloutRevision? @relation(fields: [rolloutRevisionId], references: [id], onDelete: SetNull)
+
+  @@index([decision, taskCreatedAt])
+  @@index([rolloutRevisionId])
+  @@map("store_onboarding_task_enrollment")
+}
+
+// One shared prerequisite per Brand. If no matching Brand Task exists, the
+// Brand is treated as existing and the prerequisite is zero-duration.
+model BrandProvisioning {
+  id            String                  @id @default(uuid()) @db.Uuid
+  brandId       String                  @unique @map("brand_id") @db.Uuid
+  sourceTaskId  String?                 @unique @map("source_task_id") @db.Uuid
+  status        BrandProvisioningStatus @default(pending)
+  autoCompleted Boolean                 @default(false) @map("auto_completed")
+  startedAt     DateTime                @map("started_at") @db.Timestamptz
+  readyAt       DateTime?               @map("ready_at") @db.Timestamptz
+  failedAt      DateTime?               @map("failed_at") @db.Timestamptz
+  lastError     String?                 @map("last_error") @db.Text
+  createdAt     DateTime                @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime                @updatedAt @map("updated_at") @db.Timestamptz
+
+  brand        Brand                    @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  sourceTask   Task?                    @relation("StoreOnboardingProvisioningSourceTask", fields: [sourceTaskId], references: [id], onDelete: SetNull)
+  dependencies TaskDependency[]
+  requests     StoreOnboardingRequest[]
+  batches      StoreOnboardingBatch[]
+
+  @@index([status, startedAt])
+  @@map("brand_provisioning")
+}
+
+model TaskDependency {
+  id                  String               @id @default(uuid()) @db.Uuid
+  taskId              String               @map("task_id") @db.Uuid
+  prerequisiteTaskId  String?              @map("prerequisite_task_id") @db.Uuid
+  brandProvisioningId String               @map("brand_provisioning_id") @db.Uuid
+  kind                String               @default("brand_ready") @db.VarChar(80)
+  status              TaskDependencyStatus
+  autoCompleted       Boolean              @default(false) @map("auto_completed")
+  startedAt           DateTime             @map("started_at") @db.Timestamptz
+  satisfiedAt         DateTime?            @map("satisfied_at") @db.Timestamptz
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+
+  task              Task              @relation("StoreOnboardingDependentTask", fields: [taskId], references: [id], onDelete: Cascade)
+  prerequisiteTask  Task?             @relation("StoreOnboardingPrerequisiteTask", fields: [prerequisiteTaskId], references: [id], onDelete: SetNull)
+  brandProvisioning BrandProvisioning @relation(fields: [brandProvisioningId], references: [id], onDelete: Restrict)
+
+  @@unique([taskId, brandProvisioningId, kind])
+  @@index([brandProvisioningId, status])
+  @@index([prerequisiteTaskId, status])
+  @@map("task_dependency")
+}
+
+model StoreOnboardingRequest {
+  id                           String                        @id @default(uuid()) @db.Uuid
+  brandId                      String                        @map("brand_id") @db.Uuid
+  taskId                       String                        @unique @map("task_id") @db.Uuid
+  source                       StoreOnboardingSource
+  status                       StoreOnboardingStatus         @default(active)
+  currentStage                 StoreOnboardingStage          @default(created) @map("current_stage")
+  priority                     Int                           @default(0)
+  totalUnits                   Int                           @default(0) @map("total_units")
+  completedUnits               Int                           @default(0) @map("completed_units")
+  failedUnits                  Int                           @default(0) @map("failed_units")
+  rolloutRevisionId            String                        @map("rollout_revision_id") @db.Uuid
+  workflowVersion              String                        @map("workflow_version")
+  countrySnapshot              Country                       @map("country_snapshot")
+  kaTypeSnapshot               KaType                        @map("ka_type_snapshot")
+  enrollmentSnapshot           Json                          @map("enrollment_snapshot")
+  brandProvisioningId          String                        @map("brand_provisioning_id") @db.Uuid
+  configurationBrief           String?                       @map("configuration_brief") @db.Text
+  configurationBriefFields     Json?                         @map("configuration_brief_fields")
+  shopIdsValidatedAt           DateTime?                     @map("shop_ids_validated_at") @db.Timestamptz
+  shopIdsValidationSource      String?                       @map("shop_ids_validation_source") @db.VarChar(80)
+  configurationBriefAssigneeId String?                       @map("configuration_brief_assignee_id") @db.Uuid
+  configurationPreparedById    String?                       @map("configuration_prepared_by_id") @db.Uuid
+  configurationPreparedAt      DateTime?                     @map("configuration_prepared_at") @db.Timestamptz
+  estimatedCompletionAt        DateTime?                     @map("estimated_completion_at") @db.Timestamptz
+  etaConfidence                StoreOnboardingEtaConfidence? @map("eta_confidence")
+  etaCalculatedAt              DateTime?                     @map("eta_calculated_at") @db.Timestamptz
+  createdById                  String                        @map("created_by_id") @db.Uuid
+  startedAt                    DateTime?                     @map("started_at") @db.Timestamptz
+  completedAt                  DateTime?                     @map("completed_at") @db.Timestamptz
+  cancelledAt                  DateTime?                     @map("cancelled_at") @db.Timestamptz
+  lastError                    String?                       @map("last_error") @db.Text
+  createdAt                    DateTime                      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                    DateTime                      @updatedAt @map("updated_at") @db.Timestamptz
+
+  brand                      Brand                             @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  task                       Task                              @relation("StoreOnboardingRequestTask", fields: [taskId], references: [id], onDelete: Restrict)
+  rolloutRevision            StoreOnboardingRolloutRevision    @relation(fields: [rolloutRevisionId], references: [id], onDelete: Restrict)
+  brandProvisioning          BrandProvisioning                 @relation(fields: [brandProvisioningId], references: [id], onDelete: Restrict)
+  createdBy                  Account                           @relation("StoreOnboardingRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  configurationBriefAssignee Account?                          @relation("StoreOnboardingConfigurationBriefAssignee", fields: [configurationBriefAssigneeId], references: [id], onDelete: SetNull)
+  configurationPreparedBy    Account?                          @relation("StoreOnboardingConfigurationPreparedBy", fields: [configurationPreparedById], references: [id], onDelete: SetNull)
+  units                      StoreOnboardingUnit[]
+  batches                    StoreOnboardingBatch[]
+  forecastSnapshots          StoreOnboardingForecastSnapshot[]
+  outboxEvents               StoreOnboardingOutboxEvent[]
+
+  @@index([brandId, status, createdAt])
+  @@index([currentStage, status])
+  @@index([estimatedCompletionAt])
+  @@index([rolloutRevisionId])
+  @@index([brandProvisioningId])
+  @@index([configurationBriefAssigneeId, currentStage])
+  @@map("store_onboarding_request")
+}
+
+model StoreOnboardingBatch {
+  id                   String    @id @default(uuid()) @db.Uuid
+  requestId            String    @map("request_id") @db.Uuid
+  ordinal              Int
+  label                String
+  sourceStepInstanceId String?   @map("source_step_instance_id") @db.Uuid
+  brandProvisioningId  String    @map("brand_provisioning_id") @db.Uuid
+  startedAt            DateTime  @map("started_at") @db.Timestamptz
+  completedAt          DateTime? @map("completed_at") @db.Timestamptz
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  request            StoreOnboardingRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  sourceStepInstance StepInstance?          @relation(fields: [sourceStepInstanceId], references: [id], onDelete: SetNull)
+  brandProvisioning  BrandProvisioning      @relation(fields: [brandProvisioningId], references: [id], onDelete: Restrict)
+  units              StoreOnboardingUnit[]
+
+  @@unique([requestId, ordinal])
+  @@index([requestId, startedAt])
+  @@index([sourceStepInstanceId])
+  @@index([brandProvisioningId])
+  @@map("store_onboarding_batch")
+}
+
+model StoreOnboardingUnit {
+  id                       String                       @id @default(uuid()) @db.Uuid
+  requestId                String                       @map("request_id") @db.Uuid
+  batchId                  String                       @map("batch_id") @db.Uuid
+  shopId                   String?                      @map("shop_id") @db.Uuid
+  externalShopId           String                       @map("external_shop_id")
+  appShopId                String?                      @map("app_shop_id")
+  stage                    StoreOnboardingStage         @default(created)
+  blockedFromStage         StoreOnboardingStage?        @map("blocked_from_stage")
+  configurationAssigneeId  String?                      @map("configuration_assignee_id") @db.Uuid
+  commercialAssigneeId     String?                      @map("commercial_assignee_id") @db.Uuid
+  goLiveAssigneeId         String?                      @map("go_live_assignee_id") @db.Uuid
+  checklist                Json?
+  configurationInput       Json?                        @map("configuration_input")
+  lastNote                 String?                      @map("last_note") @db.Text
+  lastError                String?                      @map("last_error") @db.Text
+  auditStatus              StoreOnboardingAuditStatus?  @map("audit_status")
+  auditNote                String?                      @map("audit_note") @db.Text
+  auditEvidence            Json?                        @map("audit_evidence")
+  auditedById              String?                      @map("audited_by_id") @db.Uuid
+  auditedAt                DateTime?                    @map("audited_at") @db.Timestamptz
+  configurationCompletedAt DateTime?                    @map("configuration_completed_at") @db.Timestamptz
+  rtboAt                   DateTime?                    @map("rtbo_at") @db.Timestamptz
+  onlineAt                 DateTime?                    @map("online_at") @db.Timestamptz
+  onlineSource             StoreOnboardingGoLiveSource? @map("online_source")
+  onlineExternalRef        String?                      @map("online_external_ref")
+  createdAt                DateTime                     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                DateTime                     @updatedAt @map("updated_at") @db.Timestamptz
+
+  request               StoreOnboardingRequest         @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  batch                 StoreOnboardingBatch           @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  shop                  Shop?                          @relation(fields: [shopId], references: [id], onDelete: SetNull)
+  configurationAssignee Account?                       @relation("StoreOnboardingConfigurationAssignee", fields: [configurationAssigneeId], references: [id], onDelete: SetNull)
+  commercialAssignee    Account?                       @relation("StoreOnboardingCommercialAssignee", fields: [commercialAssigneeId], references: [id], onDelete: SetNull)
+  goLiveAssignee        Account?                       @relation("StoreOnboardingGoLiveAssignee", fields: [goLiveAssigneeId], references: [id], onDelete: SetNull)
+  auditedBy             Account?                       @relation("StoreOnboardingAuditor", fields: [auditedById], references: [id], onDelete: SetNull)
+  transitions           StoreOnboardingTransition[]
+  goLiveAttempts        StoreOnboardingGoLiveAttempt[]
+  outboxEvents          StoreOnboardingOutboxEvent[]
+
+  @@unique([requestId, externalShopId])
+  @@index([requestId, stage])
+  @@index([batchId, stage])
+  @@index([shopId])
+  @@index([configurationAssigneeId, stage])
+  @@index([commercialAssigneeId, stage])
+  @@index([goLiveAssigneeId, stage])
+  @@map("store_onboarding_unit")
+}
+
+model StoreOnboardingTransition {
+  id        String               @id @default(uuid()) @db.Uuid
+  unitId    String               @map("unit_id") @db.Uuid
+  fromStage StoreOnboardingStage @map("from_stage")
+  toStage   StoreOnboardingStage @map("to_stage")
+  actorId   String?              @map("actor_id") @db.Uuid
+  note      String?              @db.Text
+  metadata  Json?
+  createdAt DateTime             @default(now()) @map("created_at") @db.Timestamptz
+
+  unit  StoreOnboardingUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  actor Account?            @relation("StoreOnboardingTransitionActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([unitId, createdAt])
+  @@map("store_onboarding_transition")
+}
+
+model StoreOnboardingForecastSnapshot {
+  id                    String                       @id @default(uuid()) @db.Uuid
+  requestId             String                       @map("request_id") @db.Uuid
+  estimatedCompletionAt DateTime                     @map("estimated_completion_at") @db.Timestamptz
+  confidence            StoreOnboardingEtaConfidence
+  stageEstimates        Json                         @map("stage_estimates")
+  queueUnits            Int                          @default(0) @map("queue_units")
+  explanation           String                       @db.Text
+  calculatedAt          DateTime                     @default(now()) @map("calculated_at") @db.Timestamptz
+
+  request StoreOnboardingRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, calculatedAt])
+  @@map("store_onboarding_forecast_snapshot")
+}
+
+model StoreOnboardingGoLiveAttempt {
+  id              String                      @id @default(uuid()) @db.Uuid
+  unitId          String                      @map("unit_id") @db.Uuid
+  source          StoreOnboardingGoLiveSource
+  status          StoreOnboardingGoLiveStatus @default(running)
+  actorId         String?                     @map("actor_id") @db.Uuid
+  endpoint        String                      @default("manual-confirmation")
+  externalRef     String?                     @map("external_ref")
+  response        Json?
+  error           String?                     @db.Text
+  remoteBizStatus Int?                        @map("remote_biz_status")
+  startedAt       DateTime                    @default(now()) @map("started_at") @db.Timestamptz
+  finishedAt      DateTime?                   @map("finished_at") @db.Timestamptz
+
+  unit  StoreOnboardingUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  actor Account?            @relation("StoreOnboardingGoLiveActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([unitId, startedAt])
+  @@index([status, startedAt])
+  @@map("store_onboarding_go_live_attempt")
+}
+
+model StoreOnboardingOutboxEvent {
+  id                  String                      @id @default(uuid()) @db.Uuid
+  eventKey            String                      @unique @map("event_key")
+  eventType           String                      @map("event_type") @db.VarChar(100)
+  aggregateType       String                      @map("aggregate_type") @db.VarChar(80)
+  aggregateId         String                      @map("aggregate_id")
+  requestId           String?                     @map("request_id") @db.Uuid
+  taskId              String?                     @map("task_id") @db.Uuid
+  unitId              String?                     @map("unit_id") @db.Uuid
+  payload             Json
+  status              StoreOnboardingOutboxStatus @default(pending)
+  availableAt         DateTime                    @default(now()) @map("available_at") @db.Timestamptz
+  occurredAt          DateTime                    @default(now()) @map("occurred_at") @db.Timestamptz
+  processingStartedAt DateTime?                   @map("processing_started_at") @db.Timestamptz
+  attempts            Int                         @default(0)
+  lastError           String?                     @map("last_error") @db.Text
+  createdAt           DateTime                    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
+
+  request    StoreOnboardingRequest?               @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  task       Task?                                 @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  unit       StoreOnboardingUnit?                  @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  deliveries StoreOnboardingNotificationDelivery[]
+
+  @@index([status, availableAt])
+  @@index([requestId, occurredAt])
+  @@index([taskId, occurredAt])
+  @@map("store_onboarding_outbox_event")
+}
+
+model StoreOnboardingNotificationDelivery {
+  id                  String                        @id @default(uuid()) @db.Uuid
+  outboxEventId       String                        @map("outbox_event_id") @db.Uuid
+  profileRevisionId   String                        @map("profile_revision_id") @db.Uuid
+  status              StoreOnboardingDeliveryStatus @default(pending)
+  renderedBody        String?                       @map("rendered_body") @db.Text
+  groupKey            String                        @map("group_key")
+  attemptCount        Int                           @default(0) @map("attempt_count")
+  nextAttemptAt       DateTime                      @default(now()) @map("next_attempt_at") @db.Timestamptz
+  processingStartedAt DateTime?                     @map("processing_started_at") @db.Timestamptz
+  lastAttemptAt       DateTime?                     @map("last_attempt_at") @db.Timestamptz
+  deliveredAt         DateTime?                     @map("delivered_at") @db.Timestamptz
+  responseStatus      Int?                          @map("response_status")
+  responseBody        String?                       @map("response_body") @db.Text
+  lastError           String?                       @map("last_error") @db.Text
+  createdAt           DateTime                      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime                      @updatedAt @map("updated_at") @db.Timestamptz
+
+  outboxEvent     StoreOnboardingOutboxEvent         @relation(fields: [outboxEventId], references: [id], onDelete: Restrict)
+  profileRevision StoreOnboardingNotificationProfile @relation(fields: [profileRevisionId], references: [id], onDelete: Restrict)
+
+  @@unique([outboxEventId, profileRevisionId])
+  @@index([status, nextAttemptAt])
+  @@index([groupKey, status])
+  @@index([profileRevisionId, createdAt])
+  @@map("store_onboarding_notification_delivery")
 }
 
 // -------------------------- Auth / invitations -----------------------------
