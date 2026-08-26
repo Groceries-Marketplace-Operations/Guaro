@@ -241,6 +241,12 @@ export const menuCopyApi = {
   stop: (id: string) => client.post(`/integrations/menu-copy/executions/${id}/stop`),
 };
 
+export const massiveRtboApi = {
+  list: () => client.get('/integrations/massive-rtbo/executions'),
+  create: (data: object) => client.post('/integrations/massive-rtbo/executions', data),
+  stop: (id: string) => client.post(`/integrations/massive-rtbo/executions/${id}/stop`),
+};
+
 export const promotionApi = {
   contract: () => client.get('/integrations/promotion-api/contract'),
   execute: (data: object) => client.post('/integrations/promotion-api/execute', data),

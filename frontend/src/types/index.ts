@@ -818,6 +818,34 @@ export interface MenuCopyExecution {
   createdBy?: Pick<Account, 'id' | 'name' | 'email'>;
 }
 
+export interface MassiveRtboShopResult {
+  shopId: string;
+  appShopId?: string;
+  status: 'done' | 'failed';
+  error?: string;
+}
+
+export interface MassiveRtboExecution {
+  id: string;
+  status: AutoOpenStatus;
+  applicationId: string;
+  shopIds: string[];
+  promiseProduceTime: number;
+  totalShops: number;
+  processedShops: number;
+  successfulShops: number;
+  failedShops: number;
+  currentShopId?: string;
+  currentStep?: string;
+  errorMessage?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  createdAt: string;
+  result?: { shops?: MassiveRtboShopResult[] };
+  application: Pick<Application, 'id' | 'appId' | 'appName' | 'country'>;
+  createdBy?: Pick<Account, 'id' | 'name' | 'email'>;
+}
+
 export type StoreEmergencyStatus =
   | 'pending'
   | 'running'

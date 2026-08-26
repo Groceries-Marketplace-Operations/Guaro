@@ -10,6 +10,7 @@ import CrossAppMenuCopySection from './CrossAppMenuCopySection';
 import OfferMenuUploadSection from './OfferMenuUploadSection';
 import StoreFileSplitterSection from './StoreFileSplitterSection';
 import DailyStatusActivationSection from './DailyStatusActivationSection';
+import MassiveRtboSection from './MassiveRtboSection';
 import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 
 interface RuleForm {
@@ -29,7 +30,7 @@ interface RuleForm {
   maxFilesPerRun: number;
 }
 
-type CustomIntegrationSection = 'sftp' | 'daily-activation' | 'store-splitter' | 'offer-menu' | 'targeted-menu' | 'cross-app';
+type CustomIntegrationSection = 'sftp' | 'massive-rtbo' | 'daily-activation' | 'store-splitter' | 'offer-menu' | 'targeted-menu' | 'cross-app';
 
 const runningStatuses = new Set(['pending', 'running']);
 
@@ -147,6 +148,10 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           <span className="custom-integration-icon">TM</span>
           <span><strong>Targeted Menu Upload</strong><small>Carga UPC seleccionados en tiendas específicas</small></span>
         </button>
+        <button type="button" className={customSection === 'massive-rtbo' ? 'is-active' : ''} onClick={() => setCustomSection('massive-rtbo')} aria-selected={customSection === 'massive-rtbo'}>
+          <span className="custom-integration-icon">RT</span>
+          <span><strong>Massive RTBO</strong><small>Actualiza promise_produce_time por aplicación y tienda</small></span>
+        </button>
         <button type="button" className={customSection === 'store-splitter' ? 'is-active' : ''} onClick={() => setCustomSection('store-splitter')} aria-selected={customSection === 'store-splitter'}>
           <span className="custom-integration-icon">ST</span>
           <span><strong>Split CSV por tienda</strong><small>Divide preciosdidi por sucursal y publica los archivos resultantes</small></span>
@@ -170,6 +175,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           : 'Funciona como Auto Menu Fetch para promociones: conserva una instantánea local por App Shop ID. Las credenciales permanecen cifradas.'}
       </div>}
       {isFilter && customSection === 'targeted-menu' && <TargetedMenuSection />}
+      {isFilter && customSection === 'massive-rtbo' && <MassiveRtboSection />}
       {isFilter && customSection === 'store-splitter' && <StoreFileSplitterSection />}
       {isFilter && customSection === 'daily-activation' && <DailyStatusActivationSection />}
       {isFilter && customSection === 'offer-menu' && <OfferMenuUploadSection />}

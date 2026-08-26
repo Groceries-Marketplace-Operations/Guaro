@@ -22,6 +22,9 @@ import { OfferMenuUploadController } from './offer-menu-upload.controller';
 import { OfferMenuUploadProcessor } from './offer-menu-upload.processor';
 import { OfferMenuUploadScheduler } from './offer-menu-upload.scheduler';
 import { OfferMenuUploadService } from './offer-menu-upload.service';
+import { MassiveRtboController } from './massive-rtbo.controller';
+import { MassiveRtboProcessor } from './massive-rtbo.processor';
+import { MassiveRtboService } from './massive-rtbo.service';
 
 @Module({
   imports: [
@@ -29,8 +32,9 @@ import { OfferMenuUploadService } from './offer-menu-upload.service';
     BullModule.registerQueue({ name: 'targeted-menu' }),
     BullModule.registerQueue({ name: 'menu-copy' }),
     BullModule.registerQueue({ name: 'offer-menu-upload' }),
+    BullModule.registerQueue({ name: 'massive-rtbo' }),
   ],
-  controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController, TargetedMenuController, MenuCopyController, OfferMenuUploadController],
+  controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController, TargetedMenuController, MenuCopyController, OfferMenuUploadController, MassiveRtboController],
   providers: [
     FileIntegrationsService,
     FileIntegrationProcessor,
@@ -48,6 +52,8 @@ import { OfferMenuUploadService } from './offer-menu-upload.service';
     OfferMenuUploadService,
     OfferMenuUploadProcessor,
     OfferMenuUploadScheduler,
+    MassiveRtboService,
+    MassiveRtboProcessor,
   ],
   exports: [TargetedPromotionReaderService],
 })

@@ -347,6 +347,7 @@ model Account {
   updatedTargetedMenuRules       TargetedMenuRule[]           @relation("TargetedMenuRuleUpdater")
   createdTargetedMenuRuns        TargetedMenuExecution[]      @relation("TargetedMenuExecutionCreator")
   createdMenuCopyRuns            MenuCopyExecution[]          @relation("MenuCopyExecutionCreator")
+  createdMassiveRtboRuns         MassiveRtboExecution[]       @relation("MassiveRtboExecutionCreator")
   createdOfferMenuRules          OfferMenuUploadRule[]        @relation("OfferMenuRuleCreator")
   updatedOfferMenuRules          OfferMenuUploadRule[]        @relation("OfferMenuRuleUpdater")
   createdOfferMenuRuns           OfferMenuUploadExecution[]   @relation("OfferMenuExecutionCreator")
@@ -672,6 +673,7 @@ model Application {
   brands                   Brand[]
   sourceMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopySourceApplication")
   targetMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopyTargetApplication")
+  massiveRtboExecutions    MassiveRtboExecution[]
   offerMenuUploadRules     OfferMenuUploadRule[]
 
   @@unique([id, country]) // target of composite FK (see constraints.sql)
@@ -1482,6 +1484,34 @@ model MenuCopyExecution {
   @@index([sourceApplicationId])
   @@index([targetApplicationId])
   @@map("menu_copy_execution")
+}
+
+model MassiveRtboExecution {
+  id                 String         @id @default(uuid()) @db.Uuid
+  status             AutoOpenStatus @default(pending)
+  applicationId      String         @map("application_id") @db.Uuid
+  shopIds            String[]       @default([]) @map("shop_ids")
+  promiseProduceTime Int            @map("promise_produce_time")
+  totalShops         Int            @default(0) @map("total_shops")
+  processedShops     Int            @default(0) @map("processed_shops")
+  successfulShops    Int            @default(0) @map("successful_shops")
+  failedShops        Int            @default(0) @map("failed_shops")
+  currentShopId      String?        @map("current_shop_id")
+  currentStep        String?        @map("current_step")
+  cancelRequested    Boolean        @default(false) @map("cancel_requested")
+  errorMessage       String?        @map("error_message") @db.Text
+  result             Json?
+  startedAt          DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt         DateTime?      @map("finished_at") @db.Timestamptz
+  createdById        String?        @map("created_by") @db.Uuid
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  createdBy   Account?    @relation("MassiveRtboExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([applicationId, createdAt])
+  @@index([status])
+  @@map("massive_rtbo_execution")
 }
 
 model StorePromotion {

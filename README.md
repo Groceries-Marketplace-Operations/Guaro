@@ -573,6 +573,14 @@ horas de inicio de reapertura que no existían en el modelo anterior.
 | POST | `/integrations/menu-copy/executions/:id/retry` | Crear un nuevo intento con la configuración de una ejecución terminada |
 | POST | `/integrations/menu-copy/executions/:id/stop` | Solicitar la cancelación de una ejecución activa |
 
+Massive RTBO usa la misma sección de Custom Integrations para actualizar el tiempo promedio de preparación de una lista de tiendas o de todas las tiendas de una aplicación:
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/integrations/massive-rtbo/executions` | Historial y progreso por tienda |
+| POST | `/integrations/massive-rtbo/executions` | Encola una actualización masiva de `promise_produce_time` |
+| POST | `/integrations/massive-rtbo/executions/:id/stop` | Detiene una ejecución pendiente o activa |
+
 Lectura requiere `integrations.custom`; crear, reintentar, detener o forzar handshake requiere `integrations.custom.execute`.
 
 #### Admin — `/admin`
