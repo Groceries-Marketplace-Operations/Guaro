@@ -600,6 +600,8 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
 .s-partial_success, .s-partial_restored { background: var(--amber-bg); color: var(--amber-text); }
 .s-restored    { background: var(--green-bg); color: var(--green-text); }
 .s-restore_failed { background: var(--red-bg); color: var(--red-text); }
+.s-required    { background: var(--amber-bg); color: var(--amber-text); }
+.s-not_required { background: var(--surface-hover); color: var(--text-muted); }
 
 .auto-turn-off-progress {
   height: 7px;
@@ -1708,7 +1710,7 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
 .emergency-meta-grid dd { min-width: 0; margin: 4px 0 0; font-size: .75rem; font-weight: 650; }
 .emergency-meta-grid code { display: block; overflow: hidden; color: var(--text-secondary); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
 .emergency-meta-grid small { display: block; margin-top: 2px; overflow: hidden; color: var(--text-muted); font-size: .64rem; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
-.emergency-count-grid { display: grid; grid-template-columns: repeat(7, minmax(105px, 1fr)); gap: 8px; margin-top: 14px; }
+.emergency-count-grid { display: grid; grid-template-columns: repeat(9, minmax(105px, 1fr)); gap: 8px; margin-top: 14px; }
 .emergency-count-card { position: relative; overflow: hidden; padding: 11px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .emergency-count-card::before { position: absolute; inset: 0 auto 0 0; width: 3px; background: #98a2b3; content: ''; }
 .emergency-count-card span { display: block; min-height: 28px; color: var(--text-muted); font-size: .63rem; line-height: 1.25; }
@@ -1717,6 +1719,7 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
 .emergency-count-card.tone-red::before { background: #f04438; }
 .emergency-count-card.tone-green::before { background: #12b76a; }
 .emergency-count-card.tone-blue::before { background: #2e90fa; }
+.emergency-snapshot-note { margin-top: 10px; color: var(--text-muted); font-size: .66rem; line-height: 1.45; }
 .emergency-milestones { margin-top: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
 .emergency-section-title h3 { font-size: .84rem; }
 .emergency-section-title p { margin-top: 2px; color: var(--text-muted); font-size: .65rem; }

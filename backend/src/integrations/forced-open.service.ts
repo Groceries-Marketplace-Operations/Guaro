@@ -3,12 +3,14 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateForcedOpenDto } from './dto/create-forced-open.dto';
+import { StoreOpeningGuardService } from './store-opening-guard.service';
 
 @Injectable()
 export class ForcedOpenService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue('forced-open') private readonly queue: Queue,
+    private readonly openingGuard: StoreOpeningGuardService,
   ) {}
 
   async create(dto: CreateForcedOpenDto, createdById: string) {
@@ -44,6 +46,12 @@ export class ForcedOpenService {
         );
       }
     }
+
+    await this.openingGuard.assertCanOpenMany({
+      brandId: brand.id,
+      shopIds: shops.map(shop => shop.id),
+      operation: 'forced_open_preflight',
+    });
 
     const operation = await this.prisma.forcedOpenOperation.create({
       data: {

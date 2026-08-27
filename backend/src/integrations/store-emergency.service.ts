@@ -16,12 +16,15 @@ import {
   StoreEmergencyEventSource,
   StoreEmergencyJobData,
 } from './store-emergency-events';
+import {
+  storeEmergencyConflict,
+  storeEmergencyLiveWhere,
+} from './store-emergency-status';
 
-const ACTIVE_STATUSES = ['pending', 'running', 'offline', 'partial_success', 'restoring', 'partial_restored', 'restore_failed'];
-const LIVE_STATUSES = ['pending', 'running', 'offline', 'partial_success', 'restoring'];
 const REOPENING_EDITABLE_STATUSES = ['pending', 'running', 'offline', 'partial_success'];
-const TARGET_STATUSES = ['pending', 'running', 'done', 'failed'] as const;
+const TARGET_STATUSES = ['pending', 'running', 'required', 'not_required', 'done', 'failed'] as const;
 const TARGET_PHASES = ['shutdown', 'restore'] as const;
+const STALLED_TRANSITION_MS = 5 * 60 * 1_000;
 
 interface TargetCountRow {
   emergencyId: string;
@@ -38,6 +41,8 @@ export interface StoreEmergencyTargetCounts {
   restoreSucceeded: number;
   restoreFailed: number;
   restorePending: number;
+  restoreRequired: number;
+  restoreNotRequired: number;
 }
 
 @Injectable()
@@ -85,34 +90,72 @@ export class StoreEmergencyService {
       }
     }
 
-    const conflict = await this.prisma.storeEmergencyTarget.findFirst({
+    const conflict = await this.prisma.storeEmergency.findFirst({
       where: {
-        shopId: { in: shops.map(shop => shop.id) },
-        emergency: { status: { in: ACTIVE_STATUSES } },
+        ...storeEmergencyLiveWhere({ brandId: brand.id }),
+        OR: [
+          { mode: 'all_brand' },
+          { mode: 'shop_list', targets: { some: { shopId: { in: shops.map(shop => shop.id) } } } },
+        ],
       },
-      select: { shop: { select: { shopId: true } }, emergencyId: true },
+      select: {
+        id: true,
+        brandId: true,
+        mode: true,
+        status: true,
+        endsAt: true,
+        targets: {
+          where: { shopId: { in: shops.map(shop => shop.id) } },
+          select: { shop: { select: { id: true, shopId: true } } },
+          take: 1,
+        },
+      },
+      orderBy: { createdAt: 'asc' },
     });
     if (conflict) {
-      throw new BadRequestException(
-        `Store ${conflict.shop.shopId} already belongs to active emergency ${conflict.emergencyId}`,
-      );
+      const blockedShop = conflict.targets[0]?.shop ?? shops[0];
+      throw storeEmergencyConflict({
+        operation: 'create a store emergency',
+        emergency: conflict,
+        shop: blockedShop,
+        message: `Store ${blockedShop.shopId} already belongs to active emergency ${conflict.id}`,
+      });
     }
 
     const emergency = await this.prisma.$transaction(async tx => {
       await tx.$executeRaw(Prisma.sql`
         SELECT pg_advisory_xact_lock(hashtextextended(CAST(${brand.id} AS text), 0))
       `);
-      const transactionConflict = await tx.storeEmergencyTarget.findFirst({
+      const transactionConflict = await tx.storeEmergency.findFirst({
         where: {
-          shopId: { in: shops.map(shop => shop.id) },
-          emergency: { status: { in: ACTIVE_STATUSES } },
+          ...storeEmergencyLiveWhere({ brandId: brand.id }),
+          OR: [
+            { mode: 'all_brand' },
+            { mode: 'shop_list', targets: { some: { shopId: { in: shops.map(shop => shop.id) } } } },
+          ],
         },
-        select: { shop: { select: { shopId: true } }, emergencyId: true },
+        select: {
+          id: true,
+          brandId: true,
+          mode: true,
+          status: true,
+          endsAt: true,
+          targets: {
+            where: { shopId: { in: shops.map(shop => shop.id) } },
+            select: { shop: { select: { id: true, shopId: true } } },
+            take: 1,
+          },
+        },
+        orderBy: { createdAt: 'asc' },
       });
       if (transactionConflict) {
-        throw new BadRequestException(
-          `Store ${transactionConflict.shop.shopId} already belongs to active emergency ${transactionConflict.emergencyId}`,
-        );
+        const blockedShop = transactionConflict.targets[0]?.shop ?? shops[0];
+        throw storeEmergencyConflict({
+          operation: 'create a store emergency',
+          emergency: transactionConflict,
+          shop: blockedShop,
+          message: `Store ${blockedShop.shopId} already belongs to active emergency ${transactionConflict.id}`,
+        });
       }
       const created = await tx.storeEmergency.create({
         data: {
@@ -143,7 +186,7 @@ export class StoreEmergencyService {
         }),
       });
       return created;
-    }, { maxWait: 10_000, timeout: 30_000 });
+    }, { maxWait: 10_000, timeout: 45_000 });
 
     const jobData: StoreEmergencyJobData = {
       emergencyId: emergency.id,
@@ -162,16 +205,23 @@ export class StoreEmergencyService {
     } catch (error) {
       const message = sanitizeEmergencyMessage(`Could not enqueue emergency: ${(error as Error).message}`);
       const failedAt = new Date();
-      await this.prisma.$transaction([
-        this.prisma.storeEmergency.update({
-          where: { id: emergency.id },
+      await this.prisma.$transaction(async tx => {
+        const terminalized = await tx.storeEmergency.updateMany({
+          where: {
+            id: emergency.id,
+            status: 'pending',
+            updatedAt: emergency.updatedAt,
+            finishedAt: null,
+          },
           data: { status: 'failed', errorMessage: message, finishedAt: failedAt },
-        }),
-        this.prisma.storeEmergencyTarget.updateMany({
-          where: { emergencyId: emergency.id, offlineStatus: { in: ['pending', 'running'] } },
-          data: { offlineStatus: 'failed', offlineError: message },
-        }),
-        this.prisma.storeEmergencyEvent.create({
+        });
+        if (terminalized.count === 1) {
+          await tx.storeEmergencyTarget.updateMany({
+            where: { emergencyId: emergency.id, offlineStatus: 'pending' },
+            data: { offlineStatus: 'failed', offlineError: message },
+          });
+        }
+        await tx.storeEmergencyEvent.create({
           data: emergencyEventData({
             emergencyId: emergency.id,
             type: 'queue_failed',
@@ -180,22 +230,27 @@ export class StoreEmergencyService {
             source: 'system',
             actorId: createdById,
             message,
-            metadata: { action: 'offline' },
+            metadata: { action: 'offline', terminalized: terminalized.count === 1 },
             occurredAt: failedAt,
           }),
-        }),
-      ]);
+        });
+      });
       throw error;
     }
 
     const queuedAt = new Date(queuedJob.timestamp);
     try {
-      await this.prisma.$transaction([
-        this.prisma.storeEmergency.update({
-          where: { id: emergency.id },
+      await this.prisma.$transaction(async tx => {
+        const marked = await tx.storeEmergency.updateMany({
+          where: {
+            id: emergency.id,
+            status: { in: ['pending', 'running'] },
+            finishedAt: null,
+          },
           data: { shutdownQueuedAt: queuedAt },
-        }),
-        this.prisma.storeEmergencyEvent.create({
+        });
+        if (marked.count === 0) return;
+        await tx.storeEmergencyEvent.create({
           data: emergencyEventData({
             emergencyId: emergency.id,
             type: 'shutdown_queued',
@@ -207,8 +262,8 @@ export class StoreEmergencyService {
             metadata: { jobId: String(queuedJob.id ?? `${emergency.id}-offline`) },
             occurredAt: queuedAt,
           }),
-        }),
-      ]);
+        });
+      });
     } catch (error) {
       this.logger.error(`Shutdown job ${String(queuedJob.id ?? '')} was queued but its audit event could not be persisted: ${(error as Error).message}`);
     }
@@ -454,21 +509,37 @@ export class StoreEmergencyService {
   }
 
   async summary() {
-    const [activeEmergencies, storesOffline, storesWithErrors, nextReopening] = await Promise.all([
-      this.prisma.storeEmergency.count({ where: { status: { in: LIVE_STATUSES } } }),
+    const stalledBefore = new Date(Date.now() - STALLED_TRANSITION_MS);
+    const [activeEmergencies, stalledEmergencies, storesOffline, storesWithErrors, nextReopening] = await Promise.all([
+      this.prisma.storeEmergency.count({ where: storeEmergencyLiveWhere() }),
+      this.prisma.storeEmergency.count({
+        where: {
+          ...storeEmergencyLiveWhere(),
+          status: { in: ['pending', 'running', 'restoring'] },
+          updatedAt: { lte: stalledBefore },
+        },
+      }),
       this.prisma.storeEmergencyTarget.count({
-        where: { offlineStatus: 'done', restoreStatus: { not: 'done' } },
+        where: {
+          emergency: storeEmergencyLiveWhere(),
+          offlineStatus: 'done',
+          restoreStatus: { in: ['pending', 'running', 'required', 'failed'] },
+        },
       }),
       this.prisma.storeEmergencyTarget.count({
         where: { OR: [{ offlineStatus: 'failed' }, { restoreStatus: 'failed' }] },
       }),
       this.prisma.storeEmergency.findFirst({
-        where: { status: { in: ['offline', 'partial_success'] }, endsAt: { gt: new Date() } },
+        where: {
+          ...storeEmergencyLiveWhere(),
+          status: { in: ['offline', 'partial_success'] },
+          endsAt: { gt: new Date() },
+        },
         select: { id: true, endsAt: true, brand: { select: { brandName: true } } },
         orderBy: { endsAt: 'asc' },
       }),
     ]);
-    return { activeEmergencies, storesOffline, storesWithErrors, nextReopening };
+    return { activeEmergencies, stalledEmergencies, storesOffline, storesWithErrors, nextReopening };
   }
 
   async updateReopening(id: string, dto: UpdateStoreEmergencyReopeningDto, actorId: string) {
@@ -511,32 +582,58 @@ export class StoreEmergencyService {
   }
 
   async restoreNow(id: string, actorId: string) {
-    const emergency = await this.prisma.storeEmergency.findUnique({
+    const snapshot = await this.prisma.storeEmergency.findUnique({
       where: { id },
-      select: {
-        id: true,
-        status: true,
-        endsAt: true,
-        restoreRequestedAt: true,
-        restoreQueuedAt: true,
-        finishedAt: true,
-      },
+      select: { id: true, brandId: true },
     });
-    if (!emergency) throw new NotFoundException('Store emergency not found');
-    if (!['offline', 'partial_success'].includes(emergency.status)) {
-      throw new BadRequestException('Only an active offline emergency can be restored immediately');
-    }
+    if (!snapshot) throw new NotFoundException('Store emergency not found');
     const requestedAt = new Date();
-    await this.prisma.$transaction(async tx => {
+    const transition = await this.prisma.$transaction(async tx => {
+      await tx.$executeRaw(Prisma.sql`
+        SELECT pg_advisory_xact_lock(hashtextextended(CAST(${snapshot.brandId} AS text), 0))
+      `);
+      const current = await tx.storeEmergency.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          brandId: true,
+          mode: true,
+          status: true,
+          endsAt: true,
+          restoreRequestedAt: true,
+          restoreQueuedAt: true,
+          finishedAt: true,
+          updatedAt: true,
+        },
+      });
+      if (!current) throw new NotFoundException('Store emergency not found');
+      if (!['offline', 'partial_success'].includes(current.status) || current.finishedAt) {
+        throw storeEmergencyConflict({
+          operation: 'restore stores immediately',
+          emergency: current,
+          message: 'Only an active offline emergency can be restored immediately',
+        });
+      }
       const claimed = await tx.storeEmergency.updateMany({
-        where: { id, status: { in: ['offline', 'partial_success'] } },
+        where: {
+          id,
+          status: current.status,
+          finishedAt: null,
+          updatedAt: current.updatedAt,
+        },
         data: {
           status: 'restoring',
           errorMessage: null,
-          ...(!emergency.restoreRequestedAt ? { restoreRequestedAt: requestedAt } : {}),
+          ...(!current.restoreRequestedAt ? { restoreRequestedAt: requestedAt } : {}),
         },
       });
-      if (claimed.count === 0) throw new BadRequestException('Emergency is already changing status');
+      if (claimed.count === 0) {
+        throw storeEmergencyConflict({
+          operation: 'restore stores immediately',
+          emergency: current,
+          message: 'Emergency is already changing status',
+        });
+      }
       await tx.storeEmergencyEvent.create({
         data: emergencyEventData({
           emergencyId: id,
@@ -546,11 +643,16 @@ export class StoreEmergencyService {
           source: 'user',
           actorId,
           message: 'Immediate store reopening requested',
-          metadata: { trigger: 'manual', previousScheduledReopeningAt: emergency.endsAt.toISOString() },
+          metadata: { trigger: 'manual', previousScheduledReopeningAt: current.endsAt.toISOString() },
           occurredAt: requestedAt,
         }),
       });
-    });
+      const transitioned = await tx.storeEmergency.findUniqueOrThrow({
+        where: { id },
+        select: { updatedAt: true },
+      });
+      return { previous: current, updatedAt: transitioned.updatedAt };
+    }, { maxWait: 10_000, timeout: 45_000 });
 
     const jobData: StoreEmergencyJobData = { emergencyId: id, action: 'restore', source: 'user', actorId };
     let queuedJob: Awaited<ReturnType<Queue['add']>>;
@@ -564,17 +666,18 @@ export class StoreEmergencyService {
     } catch (error) {
       const message = sanitizeEmergencyMessage(`Could not enqueue immediate restore: ${(error as Error).message}`);
       const failedAt = new Date();
-      await this.prisma.$transaction([
-        this.prisma.storeEmergency.update({
-          where: { id },
+      await this.prisma.$transaction(async tx => {
+        const rolledBack = await tx.storeEmergency.updateMany({
+          where: { id, status: 'restoring', updatedAt: transition.updatedAt },
           data: {
-            status: emergency.status,
-            restoreQueuedAt: emergency.restoreQueuedAt,
-            finishedAt: emergency.finishedAt,
+            status: transition.previous.status,
+            restoreRequestedAt: transition.previous.restoreRequestedAt,
+            restoreQueuedAt: transition.previous.restoreQueuedAt,
+            finishedAt: transition.previous.finishedAt,
             errorMessage: message,
           },
-        }),
-        this.prisma.storeEmergencyEvent.create({
+        });
+        await tx.storeEmergencyEvent.create({
           data: emergencyEventData({
             emergencyId: id,
             type: 'queue_failed',
@@ -583,22 +686,23 @@ export class StoreEmergencyService {
             source: 'system',
             actorId,
             message,
-            metadata: { action: 'restore', trigger: 'manual' },
+            metadata: { action: 'restore', trigger: 'manual', rollbackApplied: rolledBack.count === 1 },
             occurredAt: failedAt,
           }),
-        }),
-      ]);
+        });
+      });
       throw error;
     }
 
     const queuedAt = new Date(queuedJob.timestamp);
     try {
-      await this.prisma.$transaction([
-        this.prisma.storeEmergency.update({
-          where: { id },
-          data: { ...(!emergency.restoreQueuedAt ? { restoreQueuedAt: queuedAt } : {}) },
-        }),
-        this.prisma.storeEmergencyEvent.create({
+      await this.prisma.$transaction(async tx => {
+        const marked = await tx.storeEmergency.updateMany({
+          where: { id, status: 'restoring', finishedAt: null },
+          data: { ...(!transition.previous.restoreQueuedAt ? { restoreQueuedAt: queuedAt } : {}) },
+        });
+        if (marked.count === 0) return;
+        await tx.storeEmergencyEvent.create({
           data: emergencyEventData({
             emergencyId: id,
             type: 'restore_queued',
@@ -610,8 +714,8 @@ export class StoreEmergencyService {
             metadata: { trigger: 'manual', jobId: String(queuedJob.id ?? `${id}-restore`) },
             occurredAt: queuedAt,
           }),
-        }),
-      ]);
+        });
+      });
     } catch (error) {
       this.logger.error(`Restore job ${String(queuedJob.id ?? '')} was queued but its audit event could not be persisted: ${(error as Error).message}`);
     }
@@ -619,72 +723,127 @@ export class StoreEmergencyService {
   }
 
   async retryFailures(id: string, actorId: string) {
-    const emergency = await this.prisma.storeEmergency.findUnique({
+    const snapshot = await this.prisma.storeEmergency.findUnique({
       where: { id },
-      include: { targets: { select: { id: true, shopId: true, offlineStatus: true, restoreStatus: true } } },
+      select: { id: true, brandId: true },
     });
-    if (!emergency) throw new NotFoundException('Store emergency not found');
-
-    const offlineRetry = ['failed', 'partial_success'].includes(emergency.status);
-    const restoreRetry = ['restore_failed', 'partial_restored'].includes(emergency.status);
-    if (!offlineRetry && !restoreRetry) {
-      throw new BadRequestException('This emergency has no retryable failed stores');
-    }
-    if (offlineRetry && emergency.endsAt.getTime() <= Date.now()) {
-      throw new BadRequestException('Move the reopening time to the future before retrying the shutdown');
-    }
-
-    const conflict = await this.prisma.storeEmergencyTarget.findFirst({
-      where: {
-        emergencyId: { not: id },
-        shopId: { in: emergency.targets.map(target => target.shopId) },
-        emergency: { status: { in: ACTIVE_STATUSES } },
-      },
-      select: { emergencyId: true, shop: { select: { shopId: true } } },
-    });
-    if (conflict) {
-      throw new BadRequestException(`Store ${conflict.shop.shopId} belongs to active emergency ${conflict.emergencyId}`);
-    }
-
-    const action = offlineRetry ? 'offline' : 'restore';
-    const retryTargets = emergency.targets.filter(target => offlineRetry
-      ? target.offlineStatus !== 'done'
-      : target.offlineStatus === 'done' && target.restoreStatus !== 'done');
-    if (!retryTargets.length) {
-      throw new BadRequestException(`No failed ${offlineRetry ? 'shutdown' : 'restoration'} target is available to retry`);
-    }
-    const targetIds = retryTargets.map(target => target.id);
+    if (!snapshot) throw new NotFoundException('Store emergency not found');
     const requestedAt = new Date();
-    await this.prisma.$transaction(async tx => {
+    const retry = await this.prisma.$transaction(async tx => {
       await tx.$executeRaw(Prisma.sql`
-        SELECT pg_advisory_xact_lock(hashtextextended(CAST(${emergency.brandId} AS text), 0))
+        SELECT pg_advisory_xact_lock(hashtextextended(CAST(${snapshot.brandId} AS text), 0))
       `);
-      const transactionConflict = await tx.storeEmergencyTarget.findFirst({
-        where: {
-          emergencyId: { not: id },
-          shopId: { in: emergency.targets.map(target => target.shopId) },
-          emergency: { status: { in: ACTIVE_STATUSES } },
+      const emergency = await tx.storeEmergency.findUnique({
+        where: { id },
+        include: {
+          targets: {
+            select: {
+              id: true,
+              shopId: true,
+              offlineStatus: true,
+              restoreStatus: true,
+              restoreAttempts: true,
+              shop: { select: { id: true, shopId: true } },
+            },
+          },
         },
-        select: { emergencyId: true, shop: { select: { shopId: true } } },
+      });
+      if (!emergency) throw new NotFoundException('Store emergency not found');
+
+      const offlineRetry = ['failed', 'partial_success'].includes(emergency.status);
+      const restoreRetry = ['restore_failed', 'partial_restored'].includes(emergency.status);
+      if (!offlineRetry && !restoreRetry) {
+        throw storeEmergencyConflict({
+          operation: 'retry failed emergency targets',
+          emergency,
+          message: 'This emergency has no retryable failed stores',
+        });
+      }
+      if (offlineRetry && emergency.endsAt.getTime() <= Date.now()) {
+        throw new BadRequestException('Move the reopening time to the future before retrying the shutdown');
+      }
+
+      const action = offlineRetry ? 'offline' as const : 'restore' as const;
+      const retryTargets = emergency.targets.filter(target => offlineRetry
+        ? target.offlineStatus === 'failed'
+        : target.restoreStatus === 'required' || (
+          target.restoreStatus === 'failed' && (
+            target.offlineStatus === 'done'
+            // A prior restore attempt proves this target was claimed from a
+            // verified shutdown or a durable `required` ownership marker.
+            || target.restoreAttempts > 0
+          )
+        ));
+      if (!retryTargets.length) {
+        throw new BadRequestException(`No failed ${offlineRetry ? 'shutdown' : 'restoration'} target is available to retry`);
+      }
+      const targetIds = retryTargets.map(target => target.id);
+      const previousRequiredTargetIds = retryTargets
+        .filter(target => target.restoreStatus === 'required')
+        .map(target => target.id);
+      const transactionConflict = await tx.storeEmergency.findFirst({
+        where: {
+          ...storeEmergencyLiveWhere({
+            brandId: emergency.brandId,
+            excludeEmergencyId: id,
+          }),
+          OR: [
+            { mode: 'all_brand' },
+            {
+              mode: 'shop_list',
+              targets: { some: { shopId: { in: retryTargets.map(target => target.shopId) } } },
+            },
+          ],
+        },
+        select: {
+          id: true,
+          brandId: true,
+          mode: true,
+          status: true,
+          endsAt: true,
+          targets: {
+            where: { shopId: { in: retryTargets.map(target => target.shopId) } },
+            select: { shop: { select: { id: true, shopId: true } } },
+            take: 1,
+          },
+        },
+        orderBy: { createdAt: 'asc' },
       });
       if (transactionConflict) {
-        throw new BadRequestException(
-          `Store ${transactionConflict.shop.shopId} belongs to active emergency ${transactionConflict.emergencyId}`,
-        );
+        const blockedShop = transactionConflict.targets[0]?.shop ?? retryTargets[0].shop;
+        throw storeEmergencyConflict({
+          operation: `retry the emergency ${action === 'offline' ? 'shutdown' : 'restoration'}`,
+          emergency: transactionConflict,
+          shop: blockedShop,
+          message: `Store ${blockedShop.shopId} belongs to active emergency ${transactionConflict.id}`,
+        });
       }
       if (offlineRetry) {
         const claimed = await tx.storeEmergency.updateMany({
-          where: { id, status: emergency.status },
+          where: { id, status: emergency.status, updatedAt: emergency.updatedAt },
           data: { status: 'pending', errorMessage: null, finishedAt: null },
         });
-        if (claimed.count === 0) throw new BadRequestException('Emergency is already changing status');
-        await tx.storeEmergencyTarget.updateMany({
-          where: { id: { in: targetIds }, offlineStatus: { not: 'done' } },
+        if (claimed.count === 0) {
+          throw storeEmergencyConflict({
+            operation: 'retry the emergency shutdown',
+            emergency,
+            message: 'Emergency is already changing status',
+          });
+        }
+        const reset = await tx.storeEmergencyTarget.updateMany({
+          where: { id: { in: targetIds }, offlineStatus: 'failed' },
           data: { offlineStatus: 'pending', offlineError: null },
         });
+        if (reset.count !== targetIds.length) {
+          throw storeEmergencyConflict({
+            operation: 'retry the emergency shutdown',
+            emergency,
+            message: 'Emergency targets changed concurrently',
+          });
+        }
       } else {
         const claimed = await tx.storeEmergency.updateMany({
-          where: { id, status: emergency.status },
+          where: { id, status: emergency.status, updatedAt: emergency.updatedAt },
           data: {
             status: 'restoring',
             errorMessage: null,
@@ -692,11 +851,24 @@ export class StoreEmergencyService {
             ...(!emergency.restoreRequestedAt ? { restoreRequestedAt: requestedAt } : {}),
           },
         });
-        if (claimed.count === 0) throw new BadRequestException('Emergency is already changing status');
-        await tx.storeEmergencyTarget.updateMany({
-          where: { id: { in: targetIds }, offlineStatus: 'done', restoreStatus: { not: 'done' } },
-          data: { restoreStatus: 'pending', restoreError: null },
+        if (claimed.count === 0) {
+          throw storeEmergencyConflict({
+            operation: 'retry the emergency restoration',
+            emergency,
+            message: 'Emergency is already changing status',
+          });
+        }
+        const reset = await tx.storeEmergencyTarget.updateMany({
+          where: { id: { in: targetIds }, restoreStatus: { in: ['failed', 'required'] } },
+          data: { restoreStatus: 'required', restoreError: null },
         });
+        if (reset.count !== targetIds.length) {
+          throw storeEmergencyConflict({
+            operation: 'retry the emergency restoration',
+            emergency,
+            message: 'Emergency targets changed concurrently',
+          });
+        }
       }
       await tx.storeEmergencyEvent.create({
         data: emergencyEventData({
@@ -711,11 +883,29 @@ export class StoreEmergencyService {
           occurredAt: requestedAt,
         }),
       });
-    }, { maxWait: 10_000, timeout: 30_000 });
+      const transitioned = await tx.storeEmergency.findUniqueOrThrow({
+        where: { id },
+        select: { updatedAt: true },
+      });
+      return {
+        action,
+        offlineRetry,
+        targetIds,
+        previousRequiredTargetIds,
+        updatedAt: transitioned.updatedAt,
+        previous: {
+          status: emergency.status,
+          finishedAt: emergency.finishedAt,
+          shutdownQueuedAt: emergency.shutdownQueuedAt,
+          restoreRequestedAt: emergency.restoreRequestedAt,
+          restoreQueuedAt: emergency.restoreQueuedAt,
+        },
+      };
+    }, { maxWait: 10_000, timeout: 45_000 });
 
     const jobData: StoreEmergencyJobData = {
       emergencyId: id,
-      action,
+      action: retry.action,
       source: 'user',
       actorId,
       retry: true,
@@ -723,7 +913,7 @@ export class StoreEmergencyService {
     let queuedJob: Awaited<ReturnType<Queue['add']>>;
     try {
       queuedJob = await this.queue.add('set-store-emergency-status', jobData, {
-        jobId: `${id}-${action}-retry-${Date.now()}`,
+        jobId: `${id}-${retry.action}-retry-${Date.now()}`,
         attempts: 1,
         removeOnComplete: 500,
         removeOnFail: 500,
@@ -732,20 +922,44 @@ export class StoreEmergencyService {
       const message = sanitizeEmergencyMessage(`Could not enqueue emergency retry: ${(error as Error).message}`);
       const failedAt = new Date();
       await this.prisma.$transaction(async tx => {
-        await tx.storeEmergency.update({
-          where: { id },
+        const rolledBack = await tx.storeEmergency.updateMany({
+          where: {
+            id,
+            status: retry.action === 'offline' ? 'pending' : 'restoring',
+            updatedAt: retry.updatedAt,
+          },
           data: {
-            status: emergency.status,
+            status: retry.previous.status,
             errorMessage: message,
-            finishedAt: emergency.finishedAt,
+            finishedAt: retry.previous.finishedAt,
+            ...(retry.action === 'restore'
+              ? { restoreRequestedAt: retry.previous.restoreRequestedAt }
+              : {}),
           },
         });
-        await tx.storeEmergencyTarget.updateMany({
-          where: { id: { in: targetIds } },
-          data: offlineRetry
-            ? { offlineStatus: 'failed', offlineError: 'Emergency retry could not be enqueued' }
-            : { restoreStatus: 'failed', restoreError: 'Emergency retry could not be enqueued' },
-        });
+        if (rolledBack.count === 1) {
+          if (retry.offlineRetry) {
+            await tx.storeEmergencyTarget.updateMany({
+              where: { id: { in: retry.targetIds }, offlineStatus: 'pending' },
+              data: { offlineStatus: 'failed', offlineError: 'Emergency retry could not be enqueued' },
+            });
+          } else {
+            const previousRequiredIds = new Set(retry.previousRequiredTargetIds);
+            const previousFailedIds = retry.targetIds.filter(targetId => !previousRequiredIds.has(targetId));
+            if (previousFailedIds.length) {
+              await tx.storeEmergencyTarget.updateMany({
+                where: { id: { in: previousFailedIds }, restoreStatus: 'required' },
+                data: { restoreStatus: 'failed', restoreError: 'Emergency retry could not be enqueued' },
+              });
+            }
+            if (retry.previousRequiredTargetIds.length) {
+              await tx.storeEmergencyTarget.updateMany({
+                where: { id: { in: retry.previousRequiredTargetIds }, restoreStatus: 'required' },
+                data: { restoreError: 'Emergency retry could not be enqueued' },
+              });
+            }
+          }
+        }
         await tx.storeEmergencyEvent.create({
           data: emergencyEventData({
             emergencyId: id,
@@ -755,7 +969,12 @@ export class StoreEmergencyService {
             source: 'system',
             actorId,
             message,
-            metadata: { action, retry: true, targetCount: targetIds.length },
+            metadata: {
+              action: retry.action,
+              retry: true,
+              targetCount: retry.targetIds.length,
+              rollbackApplied: rolledBack.count === 1,
+            },
             occurredAt: failedAt,
           }),
         });
@@ -765,27 +984,32 @@ export class StoreEmergencyService {
 
     const queuedAt = new Date(queuedJob.timestamp);
     try {
-      await this.prisma.$transaction([
-        this.prisma.storeEmergency.update({
-          where: { id },
-          data: action === 'offline'
-            ? { ...(!emergency.shutdownQueuedAt ? { shutdownQueuedAt: queuedAt } : {}) }
-            : { ...(!emergency.restoreQueuedAt ? { restoreQueuedAt: queuedAt } : {}) },
-        }),
-        this.prisma.storeEmergencyEvent.create({
+      await this.prisma.$transaction(async tx => {
+        const marked = await tx.storeEmergency.updateMany({
+          where: {
+            id,
+            status: retry.action === 'offline' ? { in: ['pending', 'running'] } : 'restoring',
+            finishedAt: null,
+          },
+          data: retry.action === 'offline'
+            ? { ...(!retry.previous.shutdownQueuedAt ? { shutdownQueuedAt: queuedAt } : {}) }
+            : { ...(!retry.previous.restoreQueuedAt ? { restoreQueuedAt: queuedAt } : {}) },
+        });
+        if (marked.count === 0) return;
+        await tx.storeEmergencyEvent.create({
           data: emergencyEventData({
             emergencyId: id,
-            type: action === 'offline' ? 'shutdown_queued' : 'restore_queued',
-            phase: action === 'offline' ? 'shutdown' : 'restore',
+            type: retry.action === 'offline' ? 'shutdown_queued' : 'restore_queued',
+            phase: retry.action === 'offline' ? 'shutdown' : 'restore',
             outcome: 'queued',
             source: 'user',
             actorId,
-            message: `Retry queued for ${targetIds.length} failed store(s)`,
-            metadata: { retry: true, targetCount: targetIds.length, jobId: String(queuedJob.id ?? '') },
+            message: `Retry queued for ${retry.targetIds.length} failed store(s)`,
+            metadata: { retry: true, targetCount: retry.targetIds.length, jobId: String(queuedJob.id ?? '') },
             occurredAt: queuedAt,
           }),
-        }),
-      ]);
+        });
+      });
     } catch (error) {
       this.logger.error(`Retry job ${String(queuedJob.id ?? '')} was queued but its audit event could not be persisted: ${(error as Error).message}`);
     }
@@ -848,7 +1072,9 @@ export class StoreEmergencyService {
       else counts.shutdownPending += amount;
       if (row.restoreStatus === 'done') counts.restoreSucceeded += amount;
       else if (row.restoreStatus === 'failed') counts.restoreFailed += amount;
-      else if (row.offlineStatus === 'done') counts.restorePending += amount;
+      else if (row.restoreStatus === 'not_required') counts.restoreNotRequired += amount;
+      else if (row.offlineStatus === 'done' || row.restoreStatus === 'required') counts.restorePending += amount;
+      if (row.restoreStatus === 'required') counts.restoreRequired += amount;
       map.set(row.emergencyId, counts);
     }
     return map;
@@ -863,7 +1089,9 @@ export class StoreEmergencyService {
       else counts.shutdownPending += 1;
       if (target.restoreStatus === 'done') counts.restoreSucceeded += 1;
       else if (target.restoreStatus === 'failed') counts.restoreFailed += 1;
-      else if (target.offlineStatus === 'done') counts.restorePending += 1;
+      else if (target.restoreStatus === 'not_required') counts.restoreNotRequired += 1;
+      else if (target.offlineStatus === 'done' || target.restoreStatus === 'required') counts.restorePending += 1;
+      if (target.restoreStatus === 'required') counts.restoreRequired += 1;
     }
     return counts;
   }
@@ -877,6 +1105,8 @@ export class StoreEmergencyService {
       restoreSucceeded: 0,
       restoreFailed: 0,
       restorePending: 0,
+      restoreRequired: 0,
+      restoreNotRequired: 0,
     };
   }
 

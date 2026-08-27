@@ -23,6 +23,10 @@ import { PermissionAccessService } from '../access-control/permission-access.ser
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  storeEmergencyConflict,
+  storeEmergencyLiveWhere,
+} from '../integrations/store-emergency-status';
+import {
   AssignStoreOnboardingConfigurationBriefDto,
   AssignStoreOnboardingUnitDto,
   AuditStoreOnboardingUnitDto,
@@ -902,6 +906,39 @@ export class StoreOnboardingService {
           const activeAttempt = await tx.storeOnboardingGoLiveAttempt.findUnique({ where: { id: attempt.id } });
           if (activeAttempt?.status !== StoreOnboardingGoLiveStatus.running || activeUnit?.stage !== StoreOnboardingStage.going_online) {
             throw new ConflictException('Go-Live attempt changed concurrently; reload and retry');
+          }
+          await tx.$executeRaw(Prisma.sql`SET LOCAL lock_timeout = '5s'`);
+          await tx.$executeRaw(Prisma.sql`
+            SELECT pg_advisory_xact_lock_shared(
+              hashtextextended(CAST(${activeRequest.brandId} AS text), 0)
+            )
+          `);
+          const blockingEmergency = await tx.storeEmergency.findFirst({
+            where: {
+              ...storeEmergencyLiveWhere({ brandId: activeRequest.brandId }),
+              OR: [
+                { mode: 'all_brand' },
+                {
+                  mode: 'shop_list',
+                  targets: {
+                    some: activeUnit.shopId
+                      ? { shopId: activeUnit.shopId }
+                      : { shop: { appShopId: activeUnit.appShopId! } },
+                  },
+                },
+              ],
+            },
+            select: { id: true, brandId: true, mode: true, status: true, endsAt: true },
+            orderBy: { createdAt: 'asc' },
+          });
+          if (blockingEmergency) {
+            throw storeEmergencyConflict({
+              operation: 'start Store Onboarding Go-Live',
+              emergency: blockingEmergency,
+              ...(activeUnit.shopId
+                ? { shop: { id: activeUnit.shopId, shopId: activeUnit.externalShopId } }
+                : {}),
+            });
           }
           const freshCredentials = await tx.brand.findUnique({
             where: { id: activeRequest.brandId },

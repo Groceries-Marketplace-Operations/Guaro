@@ -17,6 +17,10 @@ const ACTIVE_STATUSES = new Set(['pending', 'running', 'offline', 'partial_succe
 const TIMELINE_LIMIT = 25;
 const TARGET_LIMIT = 25;
 
+function shouldPoll(emergency?: Pick<StoreEmergency, 'status' | 'finishedAt'>) {
+  return !!emergency && ACTIVE_STATUSES.has(emergency.status) && !emergency.finishedAt;
+}
+
 const milestoneDefinitions: Array<{ key: keyof StoreEmergencyMilestones; label: string }> = [
   { key: 'createdAt', label: 'Emergencia creada' },
   { key: 'shutdownQueuedAt', label: 'Apagado en cola' },
@@ -122,7 +126,9 @@ function countsFor(emergency?: StoreEmergency, timeline?: StoreEmergencyTimeline
     shutdownPending: counts?.shutdownPending ?? counts?.offlinePending ?? targets.filter(target => ['pending', 'running'].includes(target.offlineStatus)).length,
     restoreSucceeded: counts?.restoreSucceeded ?? counts?.restoreDone ?? counts?.restored ?? targets.filter(target => target.restoreStatus === 'done').length,
     restoreFailed: counts?.restoreFailed ?? targets.filter(target => target.restoreStatus === 'failed').length,
-    restorePending: counts?.restorePending ?? targets.filter(target => target.offlineStatus === 'done' && ['pending', 'running'].includes(target.restoreStatus)).length,
+    restorePending: counts?.restorePending ?? targets.filter(target => target.offlineStatus === 'done' && ['pending', 'running', 'required'].includes(target.restoreStatus)).length,
+    restoreRequired: counts?.restoreRequired ?? targets.filter(target => target.restoreStatus === 'required').length,
+    restoreNotRequired: counts?.restoreNotRequired ?? targets.filter(target => target.restoreStatus === 'not_required').length,
   };
 }
 
@@ -253,7 +259,10 @@ export default function EmergencyDetailModal({ emergencyId, fallback, onClose }:
       source: timelineSource || undefined,
       outcome: timelineOutcome || undefined,
     }).then(response => response.data),
-    refetchInterval: query => timelinePage === 1 && ACTIVE_STATUSES.has(query.state.data?.emergency.status ?? detailQuery.data?.status ?? fallback?.status ?? '') ? 4000 : false,
+    refetchInterval: query => {
+      const current = query.state.data?.emergency ?? detailQuery.data ?? fallback;
+      return timelinePage === 1 && shouldPoll(current) ? 4000 : false;
+    },
   });
   const targetsQuery = useQuery({
     queryKey: ['store-emergency', emergencyId, 'targets', targetPage, targetSearch, targetPhase, targetStatus, targetErrorsOnly],
@@ -266,7 +275,7 @@ export default function EmergencyDetailModal({ emergencyId, fallback, onClose }:
       errorsOnly: targetErrorsOnly || undefined,
     }).then(response => response.data),
     enabled: tab === 'targets',
-    refetchInterval: targetPage === 1 && ACTIVE_STATUSES.has(detailQuery.data?.status ?? fallback?.status ?? '') ? 4000 : false,
+    refetchInterval: targetPage === 1 && shouldPoll(timelineQuery.data?.emergency ?? detailQuery.data ?? fallback) ? 4000 : false,
   });
 
   const fetchedEmergency = detailQuery.data ?? fallback;
@@ -316,8 +325,9 @@ export default function EmergencyDetailModal({ emergencyId, fallback, onClose }:
 
       <div className="emergency-detail-body">
         {detailQuery.isLoading && !emergency && <div className="emergency-detail-loading" role="status">Cargando detalle…</div>}
-        {detailQuery.isError && !emergency && <div className="error-banner" role="alert">
-          {queryError(detailQuery.error, 'No se pudo cargar la emergencia')}
+        {detailQuery.isError && <div className="error-banner" role="alert">
+          {queryError(detailQuery.error, 'No se pudo actualizar la emergencia')}
+          {emergency ? ' Se muestra la última información disponible.' : ''}
         </div>}
 
         {emergency && <>
@@ -338,16 +348,21 @@ export default function EmergencyDetailModal({ emergencyId, fallback, onClose }:
           <section className="emergency-count-grid" aria-label="Resultados por tienda">
             {[
               ['Tiendas', counts.total, 'neutral'],
-              ['Apagadas', counts.shutdownSucceeded, 'orange'],
+              ['Apagado confirmado', counts.shutdownSucceeded, 'orange'],
               ['Error al apagar', counts.shutdownFailed, 'red'],
               ['Pendientes de apagar', counts.shutdownPending, 'gray'],
-              ['Reabiertas', counts.restoreSucceeded, 'green'],
+              ['Reapertura confirmada', counts.restoreSucceeded, 'green'],
               ['Error al reabrir', counts.restoreFailed, 'red'],
               ['Pendientes de reabrir', counts.restorePending, 'blue'],
+              ['Reapertura requerida', counts.restoreRequired ?? 0, 'orange'],
+              ['No requieren reapertura', counts.restoreNotRequired ?? 0, 'gray'],
             ].map(([label, value, tone]) => <div key={label} className={`emergency-count-card tone-${tone}`}>
               <span>{label}</span><strong>{value}</strong>
             </div>)}
           </section>
+          <p className="emergency-snapshot-note">
+            Estos conteos son confirmaciones registradas por el proceso de emergencia; no representan una consulta en vivo del estado actual en DiDi.
+          </p>
 
           <section className="emergency-milestones" aria-labelledby="emergency-milestones-title">
             <div className="emergency-section-title">
@@ -421,15 +436,18 @@ export default function EmergencyDetailModal({ emergencyId, fallback, onClose }:
             <div className="emergency-target-toolbar">
               <label className="emergency-target-search">Buscar tienda<input type="search" placeholder="shop_id, app_shop_id, nombre o ciudad" value={targetSearchInput} onChange={event => setTargetSearchInput(event.target.value)} /></label>
               <label>Fase<select value={targetPhase} onChange={event => { setTargetPhase(event.target.value as typeof targetPhase); setTargetPage(1); }}><option value="">Ambas</option><option value="shutdown">Apagado</option><option value="restore">Reapertura</option></select></label>
-              <label>Estado<select value={targetStatus} onChange={event => { setTargetStatus(event.target.value); setTargetPage(1); }}><option value="">Todos</option><option value="pending">Pendiente</option><option value="running">En proceso</option><option value="done">Correcto</option><option value="failed">Fallido</option></select></label>
+              <label>Estado<select value={targetStatus} onChange={event => { setTargetStatus(event.target.value); setTargetPage(1); }}><option value="">Todos</option><option value="pending">Pendiente</option><option value="running">En proceso</option><option value="required">Reapertura requerida</option><option value="not_required">Reapertura no requerida</option><option value="done">Correcto</option><option value="failed">Fallido</option></select></label>
               <label className="emergency-errors-check"><input type="checkbox" checked={targetErrorsOnly} onChange={event => { setTargetErrorsOnly(event.target.checked); setTargetPage(1); }} /> Solo errores</label>
             </div>
             {targetsQuery.isLoading && <div className="emergency-detail-loading" role="status">Cargando tiendas…</div>}
-            {targetsQuery.isError && (!emergency.targets || emergency.targets.length === 0) && <div className="error-banner" role="alert">{queryError(targetsQuery.error, 'No se pudieron cargar las tiendas')}</div>}
+            {targetsQuery.isError && <div className="error-banner" role="alert">
+              {queryError(targetsQuery.error, 'No se pudieron actualizar las tiendas')}
+              {targetRows.length > 0 ? ' Se muestran datos previamente cargados.' : ''}
+            </div>}
             {!targetsQuery.isLoading && !targetsQuery.isError && targetRows.length === 0 && <div className="emergency-detail-empty">No hay tiendas con estos filtros.</div>}
             {targetRows.length > 0 && <div className="emergency-target-table-wrap"><table>
               <caption className="sr-only">Estados y horas por tienda afectada</caption>
-              <thead><tr><th scope="col">Tienda</th><th scope="col">Ubicación</th><th scope="col">Apagado</th><th scope="col">Reapertura</th></tr></thead>
+              <thead><tr><th scope="col">Tienda</th><th scope="col">Ubicación</th><th scope="col">Resultado de apagado</th><th scope="col">Resultado de reapertura</th></tr></thead>
               <tbody>{targetRows.map(target => <tr key={target.id}>
                 <td><strong className="td-mono">{target.shop.shopId}</strong><small>{target.shop.name || 'Sin nombre'} · app_shop_id {target.shop.appShopId}</small></td>
                 <td>{target.shop.city || '—'}</td>

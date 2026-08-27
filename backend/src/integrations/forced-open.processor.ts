@@ -10,13 +10,18 @@ import {
   getAuthToken,
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
+import { StoreOpeningGuardService } from './store-opening-guard.service';
 
 @Injectable()
 @Processor('forced-open', { concurrency: 3 })
 export class ForcedOpenProcessor extends WorkerHost {
   private readonly logger = new Logger(ForcedOpenProcessor.name);
 
-  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService) { super(); }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+    private readonly openingGuard: StoreOpeningGuardService,
+  ) { super(); }
 
   async process(job: Job<{ operationId: string }>) {
     const { operationId } = job.data;
@@ -55,22 +60,27 @@ export class ForcedOpenProcessor extends WorkerHost {
         const index = cursor++;
         if (index >= operation.targets.length) return;
         const target = operation.targets[index];
-        await this.processTarget(target.id, target.shop.appShopId, application.appId, appSecret);
+        await this.processTarget(target.id, target.shop.id, target.shop.appShopId, application.appId, appSecret);
       }
     };
     await Promise.all(Array.from({ length: workers }, () => worker()));
     await this.finalize(operationId);
   }
 
-  private async processTarget(targetId: string, appShopId: string, appId: string, appSecret: string) {
+  private async processTarget(targetId: string, shopId: string, appShopId: string, appId: string, appSecret: string) {
     await this.prisma.forcedOpenTarget.update({ where: { id: targetId }, data: { status: 'running', error: null } });
     try {
-      const authToken = await getAuthToken(appId, appSecret, appShopId);
+      const authToken = await getAuthToken(appId, appSecret, appShopId, AbortSignal.timeout(30_000));
       const endpoint = 'POST /v1/shop/shop/setStatus';
-      const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v1/shop/shop/setStatus`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auth_token: authToken, biz_status: 1, auto_switch: 1 }),
+      const response = await this.openingGuard.withOpeningPermit({
+        shopId,
+        operation: 'forced_open',
+        execute: () => fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v1/shop/shop/setStatus`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auth_token: authToken, biz_status: 1, auto_switch: 1 }),
+          signal: AbortSignal.timeout(8_000),
+        }),
       });
       const body = parseJsonKeepingIds(await response.text());
       if (!response.ok || body.errno !== 0) {

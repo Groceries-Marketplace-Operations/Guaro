@@ -857,7 +857,13 @@ export type StoreEmergencyStatus =
   | 'partial_restored'
   | 'restore_failed';
 
-export type StoreEmergencyTargetStatus = 'pending' | 'running' | 'done' | 'failed';
+export type StoreEmergencyTargetStatus =
+  | 'pending'
+  | 'running'
+  | 'required'
+  | 'not_required'
+  | 'done'
+  | 'failed';
 
 export interface StoreEmergencyTarget {
   id: string;
@@ -882,6 +888,8 @@ export interface StoreEmergencyTargetCounts {
   restoreSucceeded: number;
   restoreFailed: number;
   restorePending: number;
+  restoreRequired?: number;
+  restoreNotRequired?: number;
   // Compatibility aliases keep the frontend safe during a rolling deployment.
   offlinePending?: number;
   offlineDone?: number;
@@ -967,6 +975,7 @@ export interface StoreEmergencyTimelineResponse {
 
 export interface StoreEmergencySummary {
   activeEmergencies: number;
+  stalledEmergencies?: number;
   storesOffline: number;
   storesWithErrors: number;
   nextReopening?: {

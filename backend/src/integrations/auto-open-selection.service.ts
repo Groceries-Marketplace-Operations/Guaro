@@ -5,17 +5,15 @@ import {
   AutoOpenStoreInclusionFilter,
   ListAutoOpenStoresDto,
 } from './dto/list-auto-open-stores.dto';
+import {
+  STORE_EMERGENCY_LIVE_STATUSES,
+  storeEmergencyLiveWhere,
+} from './store-emergency-status';
 
 // Product decision: partial_restored and restore_failed are intentionally not
 // live emergencies for Auto Open. Keep every preview and execution query on
 // this shared policy so the UI cannot drift from the worker.
-export const LIVE_AUTO_OPEN_EMERGENCY_STATUSES = [
-  'pending',
-  'running',
-  'offline',
-  'partial_success',
-  'restoring',
-] as const;
+export const LIVE_AUTO_OPEN_EMERGENCY_STATUSES = STORE_EMERGENCY_LIVE_STATUSES;
 
 export type AutoOpenStoreInclusion = 'included' | 'emergency' | 'configuration';
 export type AutoOpenEmergencyScope = 'brand' | 'store';
@@ -52,10 +50,7 @@ export function emptyAutoOpenStoreSummary(calculatedAt: string): AutoOpenStoreSu
 }
 
 export function liveAutoOpenEmergencyWhere(): Prisma.StoreEmergencyWhereInput {
-  return {
-    status: { in: [...LIVE_AUTO_OPEN_EMERGENCY_STATUSES] },
-    finishedAt: null,
-  };
+  return storeEmergencyLiveWhere();
 }
 
 function configurationBlockedWhere(): Prisma.ShopWhereInput {

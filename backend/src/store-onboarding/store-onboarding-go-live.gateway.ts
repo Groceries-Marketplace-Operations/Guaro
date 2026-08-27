@@ -54,7 +54,7 @@ export class StoreOnboardingGoLiveGateway {
     let postMayHaveBeenSent = false;
     try {
       return await this.withTimeout(async signal => {
-        const authToken = await this.authenticate(input);
+        const authToken = await this.authenticate(input, signal);
         const endpoint = 'POST /v1/shop/shop/setStatus';
         postMayHaveBeenSent = true;
         const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v1/shop/shop/setStatus`, {
@@ -110,13 +110,13 @@ export class StoreOnboardingGoLiveGateway {
   /** Read-only recovery path for an attempt left going_online after a crash. */
   async verify(input: StoreOnboardingGoLiveInput) {
     return this.withTimeout(async signal => {
-      const authToken = await this.authenticate(input);
+      const authToken = await this.authenticate(input, signal);
       const remoteBizStatus = await this.verifyWithToken(authToken, signal);
       return { endpoint: 'GET /v1/shop/shop/detail', remoteBizStatus, response: { verified: true } };
     });
   }
 
-  private async authenticate(input: StoreOnboardingGoLiveInput) {
+  private async authenticate(input: StoreOnboardingGoLiveInput, signal?: AbortSignal) {
     if (!input.appShopId.trim()) throw new BadRequestException('app_shop_id is required for Go-Live');
     let appSecret: string;
     try {
@@ -125,7 +125,7 @@ export class StoreOnboardingGoLiveGateway {
     } catch {
       throw new BadRequestException('Application credential could not be decrypted');
     }
-    return getAuthToken(input.appId, appSecret, input.appShopId);
+    return getAuthToken(input.appId, appSecret, input.appShopId, signal);
   }
 
   private async verifyWithToken(authToken: string, signal: AbortSignal) {

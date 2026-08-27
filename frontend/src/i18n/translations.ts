@@ -217,6 +217,8 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'status.restored': 'Restored',
     'status.partial_restored': 'Partially restored',
     'status.restore_failed': 'Restore failed',
+    'status.required': 'Reopening required',
+    'status.not_required': 'Reopening not required',
 
     // ── Dashboard ────────────────────────────────────────────────────────────
     'pages.dashboard.title': 'Dashboard',
@@ -1123,6 +1125,8 @@ export const translations: Record<'en' | 'es', Record<string, string>> = {
     'status.restored': 'Reabierta',
     'status.partial_restored': 'Reapertura parcial',
     'status.restore_failed': 'Error de reapertura',
+    'status.required': 'Reapertura requerida',
+    'status.not_required': 'Reapertura no requerida',
 
     // ── Dashboard ────────────────────────────────────────────────────────────
     'pages.dashboard.title': 'Dashboard',

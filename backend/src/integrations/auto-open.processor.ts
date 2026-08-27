@@ -9,12 +9,15 @@ import {
   BATCH_SIZE,
   COOLDOWN_BATCH_MS,
   DIDI_BASE,
+  fetchWithEndpointContext,
   getAuthToken,
   parseJsonKeepingIds,
   sleep,
 } from '../queue/handlers/didi-food.util';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { AutoOpenSelectionService } from './auto-open-selection.service';
+import { StoreOpeningGuardService } from './store-opening-guard.service';
+import { isEmergencyConflict } from './store-emergency-status';
 
 export { LIVE_AUTO_OPEN_EMERGENCY_STATUSES } from './auto-open-selection.service';
 
@@ -221,10 +224,11 @@ export function buildEmergencyProtection(emergencies: Array<{
 
 async function openShop(authToken: string): Promise<void> {
   const endpoint = 'POST /v1/shop/shop/setStatus';
-  const response = await fetch(`${DIDI_BASE}/v1/shop/shop/setStatus`, {
+  const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v1/shop/shop/setStatus`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ auth_token: authToken, biz_status: 1, auto_switch: 3 }),
+    signal: AbortSignal.timeout(8_000),
   });
   const body = parseJsonKeepingIds(await response.text());
   if (!response.ok || body.errno !== 0) {
@@ -243,6 +247,7 @@ export class AutoOpenProcessor extends WorkerHost {
     private readonly webhooks: WebhookSenderService,
     @InjectQueue('auto-open') private readonly queue: Queue,
     private readonly selection: AutoOpenSelectionService,
+    private readonly openingGuard: StoreOpeningGuardService,
   ) {
     super();
   }
@@ -555,16 +560,31 @@ export class AutoOpenProcessor extends WorkerHost {
           if (execution.dryRun) continue;
 
           try {
-            const token = await getAuthToken(brand.application.appId, appSecret, shop.appShopId);
+            const token = await getAuthToken(
+              brand.application.appId,
+              appSecret,
+              shop.appShopId,
+              AbortSignal.timeout(30_000),
+            );
             if (await this.selection.hasLiveEmergency(brand.id, shop.id)) {
               shopsProcessed--;
               shopsWouldOpen--;
               shopsSkippedEmergency++;
               continue;
             }
-            await openShop(token);
+            await this.openingGuard.withOpeningPermit({
+              shopId: shop.id,
+              operation: 'auto_open',
+              execute: () => openShop(token),
+            });
             shopsOpened++;
           } catch (error) {
+            if (isEmergencyConflict(error)) {
+              shopsProcessed--;
+              shopsWouldOpen--;
+              shopsSkippedEmergency++;
+              continue;
+            }
             shopsFailed++;
             if (shopErrors.length < MAX_RECORDED_SHOP_ERRORS) {
               shopErrors.push({ shopId: shop.shopId, appShopId: shop.appShopId, error: (error as Error).message });

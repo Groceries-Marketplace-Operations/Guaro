@@ -28,7 +28,13 @@ interface FakeBrandRun {
   createdAt: Date;
 }
 
-function fixture(dryRun: boolean, serverWritesEnabled: boolean, dynamicEmergency = false, webhookId: string | null = null) {
+function fixture(
+  dryRun: boolean,
+  serverWritesEnabled: boolean,
+  dynamicEmergency = false,
+  webhookId: string | null = null,
+  guardEmergency = false,
+) {
   const queued: Array<{ name: string; data: { executionId: string; brandRunId: string } }> = [];
   const notifications: Array<{ webhookId: string; payload: any }> = [];
   const execution: Record<string, any> = {
@@ -124,6 +130,14 @@ function fixture(dryRun: boolean, serverWritesEnabled: boolean, dynamicEmergency
       webhooks as never,
       queue as never,
       new AutoOpenSelectionService(prisma as never),
+      {
+        withOpeningPermit: async ({ execute }: { execute: () => Promise<unknown> }) => {
+          if (guardEmergency) {
+            throw { getResponse: () => ({ code: 'EMERGENCY_CONFLICT' }) };
+          }
+          return execute();
+        },
+      } as never,
     ),
     execution, brandRuns, queued, notifications,
   };
@@ -270,6 +284,20 @@ test('live execution skips a shop when an emergency appears immediately before o
   assert.equal(calls.filter(call => call.url.includes('/shop/setStatus')).length, 0);
   assert.equal(value.execution.shopsSkippedEmergency, 1);
   assert.equal(value.execution.shopsOpened, 0);
+});
+
+test('final opening permit closes the race when an emergency commits after the preview check', async t => {
+  const originalFetch = global.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = successfulDidiFetch(calls) as typeof fetch;
+  const value = fixture(false, true, false, null, true);
+
+  await prepareAndRunBrand(value);
+
+  assert.equal(calls.filter(call => call.url.includes('/shop/setStatus')).length, 0);
+  assert.equal(value.execution.shopsSkippedEmergency, 1);
+  assert.equal(value.execution.shopsFailed, 0);
 });
 
 test('partial_restored is not a live emergency for Auto Open', () => {

@@ -26,7 +26,7 @@ export interface StoreEmergencyEventInput {
 
 export interface StoreEmergencyJobData {
   emergencyId: string;
-  action: 'offline' | 'restore';
+  action: 'offline' | 'restore' | 'reconcile';
   source: 'user' | 'scheduler' | 'system';
   actorId?: string | null;
   retry?: boolean;

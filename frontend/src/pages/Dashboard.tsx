@@ -242,7 +242,7 @@ export default function Dashboard() {
     }
     if (canSeeEmergencies) {
       const emergencies = emergenciesQuery.data?.data ?? [];
-      cards.push({ id: 'emergencies', title: t('pages.dashboard.emergencies'), description: t('pages.dashboard.integrationEmergencies'), href: '/integrations/emergencies', active: emergencies.filter(item => ['pending', 'running', 'offline', 'partial_success', 'restoring'].includes(item.status)).length, total: emergenciesQuery.data?.total ?? emergencies.length, running: emergencies.filter(item => RUNNING.has(item.status)).length, issues: emergencies.filter(item => ISSUES.has(item.status)).length, tone: 'red' });
+      cards.push({ id: 'emergencies', title: t('pages.dashboard.emergencies'), description: t('pages.dashboard.integrationEmergencies'), href: '/integrations/emergencies', active: emergencies.filter(item => !item.finishedAt && ['pending', 'running', 'offline', 'partial_success', 'restoring'].includes(item.status)).length, total: emergenciesQuery.data?.total ?? emergencies.length, running: emergencies.filter(item => RUNNING.has(item.status)).length, issues: emergencies.filter(item => ISSUES.has(item.status)).length, tone: 'red' });
     }
     return cards;
   }, [autoOpenQuery.data, canSeeAutoOpen, canSeeCustom, canSeeEmergencies, canSeeMenuFetch, canSeePromotions, canSeeStoresFetch, canSeeTurnOff, customFilesQuery.data, emergenciesQuery.data, menuFetchQuery.data, offerQuery.data, promotionsQuery.data, storesFetchQuery.data, t, targetedQuery.data, turnOffQuery.data]);

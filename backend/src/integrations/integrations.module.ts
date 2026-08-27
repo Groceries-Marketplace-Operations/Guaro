@@ -31,6 +31,7 @@ import { AutoOpenProcessor } from './auto-open.processor';
 import { AutoOpenRecoveryService } from './auto-open-recovery.service';
 import { AutoOpenScheduler } from './auto-open.scheduler';
 import { AutoOpenSelectionService } from './auto-open-selection.service';
+import { StoreOpeningGuardService } from './store-opening-guard.service';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { AutoOpenSelectionService } from './auto-open-selection.service';
     StoreEmergencyService,
     StoreEmergencyProcessor,
     StoreEmergencyScheduler,
+    StoreOpeningGuardService,
     ForcedOpenService,
     ForcedOpenProcessor,
     AutoOpenPoolsService,
@@ -70,5 +72,6 @@ import { AutoOpenSelectionService } from './auto-open-selection.service';
     AutoOpenRecoveryService,
     AutoOpenScheduler,
   ],
+  exports: [StoreOpeningGuardService],
 })
 export class IntegrationsModule {}

@@ -133,6 +133,7 @@ export async function getAuthToken(
   appId: string,
   appSecret: string,
   appShopId: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const timestamp = String(Math.floor(Date.now() / 1000));
 
@@ -143,7 +144,7 @@ export async function getAuthToken(
   Object.entries(refreshParams).forEach(([k, v]) => refreshUrl.searchParams.set(k, v));
 
   const refreshEndpoint = 'GET /v1/auth/authtoken/refresh';
-  const refreshRes = await fetchWithEndpointContext(refreshEndpoint, refreshUrl);
+  const refreshRes = await fetchWithEndpointContext(refreshEndpoint, refreshUrl, { signal });
   const refreshBody = parseJsonKeepingIds(await refreshRes.text());
   if (!refreshRes.ok || refreshBody.errno !== 0) {
     throw new Error(
@@ -159,7 +160,7 @@ export async function getAuthToken(
   Object.entries(getParams).forEach(([k, v]) => getUrl.searchParams.set(k, v));
 
   const getEndpoint = 'GET /v1/auth/authtoken/get';
-  const getRes = await fetchWithEndpointContext(getEndpoint, getUrl);
+  const getRes = await fetchWithEndpointContext(getEndpoint, getUrl, { signal });
   const getBody = parseJsonKeepingIds(await getRes.text());
   if (!getRes.ok || getBody.errno !== 0) {
     throw new Error(
