@@ -98,6 +98,40 @@ test('Go-Live POST retryable HTTP responses are ambiguous while definitive 4xx/b
   }
 });
 
+test('Go-Live authentication can finish before the locked provider-write path starts', async () => {
+  const gateway = new StoreOnboardingGoLiveGateway({} as never);
+  let authenticationCalls = 0;
+  (gateway as unknown as { authenticate: () => Promise<string> }).authenticate = async () => {
+    authenticationCalls += 1;
+    return 'fictional-prepared-token';
+  };
+  const input = { appId: 'app', encryptedAppSecret: 'secret', appShopId: 'shop' };
+  const token = await gateway.prepare(input);
+  (gateway as unknown as { authenticate: () => Promise<string> }).authenticate = async () => {
+    throw new Error('authentication must not run inside openAuthenticated');
+  };
+  const calls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (request: string | URL | Request) => {
+    const url = String(request);
+    calls.push(url);
+    if (url.includes('/setStatus')) {
+      return new Response(JSON.stringify({ errno: 0 }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ errno: 0, data: { biz_status: 1 } }), { status: 200 });
+  };
+  try {
+    const result = await gateway.openAuthenticated(input, token);
+    assert.equal(result.remoteBizStatus, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(authenticationCalls, 1);
+  assert.equal(calls.filter(url => url.includes('/setStatus')).length, 1);
+  assert.equal(calls.filter(url => url.includes('/shop/detail')).length, 1);
+});
+
 test('control read failure is fail-closed and Task registration performs zero onboarding writes', async () => {
   let writes = 0;
   const unavailable = async () => {
@@ -978,7 +1012,8 @@ test('fictional MX KA, CKA and SME scenarios run end-to-end without external cal
   const openedIdentities: Array<{ appId: string; appShopId: string }> = [];
   const verifiedIdentities: Array<{ appId: string; appShopId: string }> = [];
   const goLiveGateway = {
-    open: async (input: { appId: string; appShopId: string }) => {
+    prepare: async () => 'fictional-prepared-token',
+    openAuthenticated: async (input: { appId: string; appShopId: string }) => {
       gatewayCalls++;
       openedIdentities.push({ appId: input.appId, appShopId: input.appShopId });
       if (waitBeforeOpen) await waitBeforeOpen;
@@ -1430,7 +1465,7 @@ test('fictional MX KA, CKA and SME scenarios run end-to-end without external cal
     }
   });
 
-  await t.test('manual Go-Live and stale recovery use the fresh locked application and App Shop identity', async () => {
+  await t.test('manual Go-Live rejects an identity change after auth, then retry and recovery use the fresh identity', async () => {
     const replacementApplication = await prisma.application.create({
       data: {
         appId: `replacement-app-${suffix}`,
@@ -1478,6 +1513,7 @@ test('fictional MX KA, CKA and SME scenarios run end-to-end without external cal
       return originalAssertEnabled(tx);
     };
     try {
+      const opensBeforeIdentityChange = openedIdentities.length;
       const execution = service.goLive(manual.request.id, { unitIds: [manual.unit.id] }, owner);
       await secondFence;
       await prisma.$transaction([
@@ -1487,7 +1523,12 @@ test('fictional MX KA, CKA and SME scenarios run end-to-end without external cal
       ]);
       releaseSecondFence();
       const result = await execution;
-      assert.equal(result.succeeded, 1);
+      assert.equal(result.succeeded, 0);
+      assert.equal(result.failed, 1);
+      assert.equal(openedIdentities.length, opensBeforeIdentityChange);
+
+      const retry = await service.goLive(manual.request.id, { unitIds: [manual.unit.id] }, owner);
+      assert.equal(retry.succeeded, 1);
       assert.deepEqual(openedIdentities.at(-1), {
         appId: replacementApplication.appId,
         appShopId: manualAppShopId,

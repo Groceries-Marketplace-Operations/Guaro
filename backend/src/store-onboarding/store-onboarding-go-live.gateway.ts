@@ -50,11 +50,19 @@ export class StoreOnboardingAmbiguousGoLiveError extends Error {
 export class StoreOnboardingGoLiveGateway {
   constructor(private readonly config: ConfigService) {}
 
+  async prepare(input: StoreOnboardingGoLiveInput) {
+    return this.withTimeout(signal => this.authenticate(input, signal));
+  }
+
   async open(input: StoreOnboardingGoLiveInput) {
+    const authToken = await this.prepare(input);
+    return this.openAuthenticated(input, authToken);
+  }
+
+  async openAuthenticated(_input: StoreOnboardingGoLiveInput, authToken: string) {
     let postMayHaveBeenSent = false;
     try {
       return await this.withTimeout(async signal => {
-        const authToken = await this.authenticate(input, signal);
         const endpoint = 'POST /v1/shop/shop/setStatus';
         postMayHaveBeenSent = true;
         const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v1/shop/shop/setStatus`, {

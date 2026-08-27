@@ -175,12 +175,41 @@ test('opening permit holds a shared brand lock and returns a structured emergenc
 
   assert.equal(lockCalls, 2);
   assert.equal(executeCalls, 0);
-  assert.deepEqual(transactionOptions, { maxWait: 5_000, timeout: 15_000 });
+  assert.deepEqual(transactionOptions, { maxWait: 5_000, timeout: 25_000 });
   assert.equal((emergencyWhere?.status as { in: string[] }).in.includes('restore_failed'), false);
   assert.equal(emergencyWhere?.finishedAt, null);
   assert.deepEqual(emergencyWhere?.id, { not: 'emergency-1' });
   assert.equal(isEmergencyConflict(thrown), true);
   assert.equal((thrown as { getResponse: () => { code: string } }).getResponse().code, STORE_EMERGENCY_CONFLICT_CODE);
+});
+
+test('opening permit refuses to start a provider write after its pre-write budget expires', async t => {
+  const originalNow = Date.now;
+  let nowCalls = 0;
+  Date.now = () => nowCalls++ === 0 ? 1_000 : 11_001;
+  t.after(() => { Date.now = originalNow; });
+  let validateCalls = 0;
+  let executeCalls = 0;
+  const tx = {
+    shop: {
+      findUnique: async () => ({ id: 'shop-1', shopId: 'S1', brandId: 'brand-1', deletedAt: null }),
+    },
+    $executeRaw: async () => 1,
+    storeEmergency: { findFirst: async () => null },
+  };
+  const guard = new StoreOpeningGuardService({
+    $transaction: async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+  } as never);
+
+  await assert.rejects(guard.withOpeningPermit({
+    shopId: 'shop-1',
+    operation: 'budget_test',
+    validate: async () => { validateCalls += 1; },
+    execute: async () => { executeCalls += 1; },
+  }), /expired before the provider write/);
+
+  assert.equal(validateCalls, 1);
+  assert.equal(executeCalls, 0);
 });
 
 test('timeline applies filters, pagination and newest-first deterministic order', async () => {

@@ -1030,15 +1030,23 @@ export class StoreEmergencyProcessor extends WorkerHost {
       let writeError: Error | null = null;
       try {
         if (action === 'restore') {
+          lease = await this.renewTargetLease(lease);
+          await this.heartbeat(emergencyId, action);
+          const permittedLease = lease;
           await this.openingGuard.withOpeningPermit({
             shopId,
             allowedEmergencyId: emergencyId,
             operation: 'store_emergency_restore',
-            execute: async () => {
-              lease = await this.renewTargetLease(lease);
-              await this.heartbeat(emergencyId, action);
-              await this.setStoreStatus(authToken, 1);
+            validate: async tx => {
+              const currentLease = await tx.storeEmergencyTarget.updateMany({
+                where: this.leaseWhere(permittedLease),
+                // A no-op CAS takes a row lock until the provider write ends,
+                // so the watchdog cannot steal the exact lease after validation.
+                data: { updatedAt: permittedLease.updatedAt },
+              });
+              if (currentLease.count === 0) throw new StoreEmergencyLeaseLostError();
             },
+            execute: () => this.setStoreStatus(authToken, 1),
           });
         } else {
           lease = await this.renewTargetLease(lease);

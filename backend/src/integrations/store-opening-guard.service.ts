@@ -10,6 +10,7 @@ export interface StoreOpeningPermitOptions<T> {
   shopId: string;
   allowedEmergencyId?: string;
   operation: string;
+  validate?: (tx: Prisma.TransactionClient) => Promise<void>;
   execute: () => Promise<T>;
 }
 
@@ -26,6 +27,8 @@ const BLOCKING_EMERGENCY_SELECT = {
   status: true,
   endsAt: true,
 } as const;
+
+const OPENING_PERMIT_PRE_WRITE_BUDGET_MS = 10_000;
 
 @Injectable()
 export class StoreOpeningGuardService {
@@ -88,13 +91,14 @@ export class StoreOpeningGuardService {
    */
   async withOpeningPermit<T>(options: StoreOpeningPermitOptions<T>): Promise<T> {
     return this.prisma.$transaction(async tx => {
+      const permitStartedAt = Date.now();
       const shop = await tx.shop.findUnique({
         where: { id: options.shopId },
         select: { id: true, shopId: true, brandId: true, deletedAt: true },
       });
       if (!shop || shop.deletedAt) throw new NotFoundException('Store not found');
 
-      // Reserve enough of the 15-second transaction budget for the caller's
+      // Reserve enough of the 25-second transaction budget for the caller's
       // bounded provider write; never start it after a long lock wait.
       await tx.$executeRaw(Prisma.sql`SET LOCAL lock_timeout = '5s'`);
       await tx.$executeRaw(Prisma.sql`
@@ -116,7 +120,11 @@ export class StoreOpeningGuardService {
           shop: { id: shop.id, shopId: shop.shopId },
         });
       }
+      if (options.validate) await options.validate(tx);
+      if (Date.now() - permitStartedAt > OPENING_PERMIT_PRE_WRITE_BUDGET_MS) {
+        throw new Error(`Opening permit for ${options.operation} expired before the provider write`);
+      }
       return options.execute();
-    }, { maxWait: 5_000, timeout: 15_000 });
+    }, { maxWait: 5_000, timeout: 25_000 });
   }
 }

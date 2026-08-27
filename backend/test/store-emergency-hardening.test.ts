@@ -153,17 +153,55 @@ test('emergency restore takes the opening permit and verifies the remote online 
   t.after(() => { globalThis.fetch = originalFetch; });
   globalThis.fetch = remote.fetcher;
   let permit: Record<string, unknown> | undefined;
-  const fixture = processorFixture(async options => {
+  let validateWrite: TargetWrite | undefined;
+  let writesDuringExecute = -1;
+  let fixture: ReturnType<typeof processorFixture>;
+  fixture = processorFixture(async options => {
     permit = options;
-    return (options.execute as () => Promise<unknown>)();
+    await (options.validate as (tx: Record<string, unknown>) => Promise<void>)({
+      storeEmergencyTarget: {
+        updateMany: async (input: TargetWrite) => {
+          validateWrite = input;
+          return { count: 1 };
+        },
+      },
+    });
+    const before = fixture.writes.length;
+    const result = await (options.execute as () => Promise<unknown>)();
+    writesDuringExecute = fixture.writes.length - before;
+    return result;
   });
 
   await processTarget(fixture.processor, 'restore', 'pending');
 
   assert.equal(permit?.shopId, 'shop-1');
   assert.equal(permit?.allowedEmergencyId, 'emergency-1');
+  assert.equal(validateWrite?.where.restoreStatus, 'running');
+  assert.equal(validateWrite?.where.updatedAt, validateWrite?.data.updatedAt);
+  assert.deepEqual(validateWrite?.where.emergency, {
+    id: 'emergency-1', status: 'restoring', finishedAt: null,
+  });
+  assert.equal(writesDuringExecute, 0);
   assert.equal(remote.calls.filter(call => call.url.includes('/setStatus')).length, 1);
   assert.equal(fixture.writes.some(write => write.data.restoreStatus === 'done'), true);
+});
+
+test('emergency restore never sends POST after the exact lease validation is lost', async t => {
+  const originalFetch = globalThis.fetch;
+  const remote = didiFetch([2]);
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = remote.fetcher;
+  const fixture = processorFixture(async options => {
+    await (options.validate as (tx: Record<string, unknown>) => Promise<void>)({
+      storeEmergencyTarget: { updateMany: async () => ({ count: 0 }) },
+    });
+    return (options.execute as () => Promise<unknown>)();
+  });
+
+  await processTarget(fixture.processor, 'restore', 'pending');
+
+  assert.equal(remote.calls.some(call => call.url.includes('/setStatus')), false);
+  assert.equal(fixture.events.some(event => event.type === 'target_restore_failed'), false);
 });
 
 test('BullMQ failed event is diagnostic only and sanitizes credentials', async () => {

@@ -895,7 +895,25 @@ export class StoreOnboardingService {
       });
       let remoteConfirmedByGateway = false;
       try {
+        if (!unit.appShopId) throw new BadRequestException('app_shop_id is required for Go-Live');
+        const preparedCredentials = await this.prisma.brand.findUnique({
+          where: { id: request.brandId },
+          select: { application: { select: { appId: true, appSecret: true } } },
+        });
+        const preparedApplication = preparedCredentials?.application;
+        if (!preparedApplication) {
+          throw new BadRequestException('The Brand has no linked application credentials');
+        }
+        const preparedInput = {
+          appId: preparedApplication.appId,
+          encryptedAppSecret: preparedApplication.appSecret,
+          appShopId: unit.appShopId,
+        };
+        // Authentication is deliberately outside the shared brand lock. Only
+        // the bounded provider write/readback may run while that lock is held.
+        const preparedAuthToken = await this.goLiveGateway.prepare(preparedInput);
         await this.prisma.$transaction(async tx => {
+          const permitStartedAt = Date.now();
           // The shared domain lock is intentionally held through the bounded
           // remote call. An OFF update takes the exclusive lock, so no new
           // external side effect can begin after the kill-switch commits.
@@ -949,11 +967,17 @@ export class StoreOnboardingService {
             throw new BadRequestException('The Brand has no linked application credentials');
           }
           if (!activeUnit.appShopId) throw new BadRequestException('app_shop_id is required for Go-Live');
-          const response = await this.goLiveGateway.open({
-            appId: activeApplication.appId,
-            encryptedAppSecret: activeApplication.appSecret,
-            appShopId: activeUnit.appShopId!,
-          });
+          if (
+            activeUnit.appShopId !== preparedInput.appShopId
+            || activeApplication.appId !== preparedInput.appId
+            || activeApplication.appSecret !== preparedInput.encryptedAppSecret
+          ) {
+            throw new ConflictException('Go-Live identity or credentials changed during authentication; retry safely');
+          }
+          if (Date.now() - permitStartedAt > 10_000) {
+            throw new ConflictException('Go-Live permit expired before the provider write; retry safely');
+          }
+          const response = await this.goLiveGateway.openAuthenticated(preparedInput, preparedAuthToken);
           remoteConfirmedByGateway = true;
           const now = new Date();
           await tx.storeOnboardingGoLiveAttempt.update({
@@ -988,7 +1012,7 @@ export class StoreOnboardingService {
             actorId: user.id,
             payload: { requestId, unitId: unit.id, transitionId: transition.id, attemptId: attempt.id },
           });
-        }, { maxWait: 5_000, timeout: 30_000 });
+        }, { maxWait: 5_000, timeout: 45_000 });
         results.push({ unitId: unit.id, externalShopId: unit.externalShopId, status: 'online' });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
