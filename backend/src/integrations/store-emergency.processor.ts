@@ -32,8 +32,6 @@ interface StoreEmergencyReconcileLease {
   brandId: string;
   targetId: string;
   updatedAt: Date;
-  previousOfflineStatus: string;
-  previousRestoreStatus: string;
 }
 
 interface StoreEmergencyReconcileTarget {
@@ -43,20 +41,30 @@ interface StoreEmergencyReconcileTarget {
   offlineError: string | null;
   updatedAt: Date;
   shop: { id: string; appShopId: string };
+  events: Array<{ occurredAt: Date }>;
+}
+
+interface StoreStatusWriteResult {
+  bizStatus: 1 | 2;
+  autoSwitch: boolean | null;
+  subBizStatus: number | null;
 }
 
 type StoreEmergencyReconcileResult = 'already_offline' | 'reapplied' | 'failed' | 'skipped';
 
 const AUTH_TIMEOUT_MS = 30_000;
-const READ_TIMEOUT_MS = 30_000;
 const WRITE_TIMEOUT_MS = 8_000;
-const VERIFY_ATTEMPTS = 3;
-const VERIFY_DELAY_MS = 750;
 const RECONCILE_AUTH_TIMEOUT_MS = 10_000;
 const RECONCILE_READ_TIMEOUT_MS = 8_000;
-const RECONCILE_VERIFY_TIMEOUT_MS = 18_000;
-const RECONCILE_BATCH_SIZE = 30;
-const RECONCILE_LEASE_MS = 50_000;
+const RECONCILE_BATCH_SIZE = 1;
+const RECONCILE_DETAIL_COOLDOWN_MS = 65_000;
+const RECONCILE_HEALTHY_SAMPLE_MINUTES = 10;
+const RECONCILE_VERIFICATION_PENDING = 'OFF request pending remote verification';
+const RECONCILE_DETAIL_SLOT_EVENT = 'reconcile_detail_read_reserved';
+
+function isDidiDetailRateLimit(error: unknown): boolean {
+  return error instanceof Error && /\berrno\s*=\s*10005\b/i.test(error.message);
+}
 
 class StoreEmergencyLeaseLostError extends Error {
   constructor() {
@@ -222,7 +230,7 @@ export class StoreEmergencyProcessor extends WorkerHost {
         status: true,
         finishedAt: true,
         endsAt: true,
-        brand: { select: { application: { select: { appId: true, appSecret: true } } } },
+        brand: { select: { application: { select: { id: true, appId: true, appSecret: true } } } },
         targets: {
           select: {
             id: true,
@@ -231,6 +239,12 @@ export class StoreEmergencyProcessor extends WorkerHost {
             offlineError: true,
             updatedAt: true,
             shop: { select: { id: true, appShopId: true } },
+            events: {
+              where: { type: RECONCILE_DETAIL_SLOT_EVENT },
+              select: { occurredAt: true },
+              orderBy: { occurredAt: 'desc' },
+              take: 1,
+            },
           },
           orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
         },
@@ -276,6 +290,7 @@ export class StoreEmergencyProcessor extends WorkerHost {
           emergency.id,
           emergency.brandId,
           target,
+          application.id,
           application.appId,
           appSecret,
         ));
@@ -351,7 +366,17 @@ export class StoreEmergencyProcessor extends WorkerHost {
     targets: StoreEmergencyReconcileTarget[],
     jobTimestamp: number,
   ): StoreEmergencyReconcileTarget[] {
-    const minuteBucket = Math.floor(jobTimestamp / 60_000);
+    const latestReservationAt = (values: StoreEmergencyReconcileTarget[]) => values.reduce(
+      (latest, target) => Math.max(latest, target.events[0]?.occurredAt.getTime() ?? Number.NEGATIVE_INFINITY),
+      Number.NEGATIVE_INFINITY,
+    );
+    const leastRecentlyReserved = (values: StoreEmergencyReconcileTarget[]) => [...values].sort((left, right) => {
+      const leftReservedAt = left.events[0]?.occurredAt.getTime() ?? Number.NEGATIVE_INFINITY;
+      const rightReservedAt = right.events[0]?.occurredAt.getTime() ?? Number.NEGATIVE_INFINITY;
+      return leftReservedAt - rightReservedAt
+        || left.updatedAt.getTime() - right.updatedAt.getTime()
+        || left.id.localeCompare(right.id);
+    })[0];
     const urgent = targets.filter(target => (
       target.offlineStatus !== 'done'
       || target.offlineError !== null
@@ -359,30 +384,122 @@ export class StoreEmergencyProcessor extends WorkerHost {
     ));
     const urgentIds = new Set(urgent.map(target => target.id));
     const healthy = targets.filter(target => !urgentIds.has(target.id));
-    const healthyReserve = urgent.length > 0 && healthy.length > 0
-      ? Math.min(10, healthy.length)
-      : Math.min(RECONCILE_BATCH_SIZE, healthy.length);
-    let urgentLimit = Math.min(urgent.length, RECONCILE_BATCH_SIZE - healthyReserve);
-    let healthyLimit = Math.min(healthy.length, RECONCILE_BATCH_SIZE - urgentLimit);
-    urgentLimit = Math.min(urgent.length, RECONCILE_BATCH_SIZE - healthyLimit);
-    const window = (values: StoreEmergencyReconcileTarget[], limit: number) => {
-      if (limit === 0 || values.length === 0) return [];
-      const chunkCount = Math.ceil(values.length / limit);
-      const start = (minuteBucket % chunkCount) * limit;
-      return values.slice(start, start + limit);
-    };
-    return [...window(urgent, urgentLimit), ...window(healthy, healthyLimit)];
+    const lastUrgentReservation = latestReservationAt(urgent);
+    const lastHealthyReservation = latestReservationAt(healthy);
+    const sampleHealthy = urgent.length > 0 && healthy.length > 0 && (
+      lastHealthyReservation === Number.NEGATIVE_INFINITY
+        ? lastUrgentReservation !== Number.NEGATIVE_INFINITY
+        : lastHealthyReservation <= jobTimestamp - RECONCILE_HEALTHY_SAMPLE_MINUTES * 60_000
+    );
+    const selectedPool = sampleHealthy || urgent.length === 0 ? healthy : urgent;
+    if (selectedPool.length === 0) return [];
+    return [leastRecentlyReserved(selectedPool)].slice(0, RECONCILE_BATCH_SIZE);
+  }
+
+  /**
+   * DiDi enforces shop/detail as an application-wide one-request-per-minute
+   * endpoint. The advisory lock serializes replicas while the durable event
+   * keeps the cooldown across restarts and across emergencies sharing an app.
+   */
+  private async claimReconcileDetailSlot(
+    emergencyId: string,
+    brandId: string,
+    targetId: string,
+    applicationId: string,
+  ): Promise<boolean> {
+    return this.withReconcileTargetLock(brandId, targetId, 15_000, async tx => {
+      if (!await this.reconcileStillLive(tx, emergencyId)) return false;
+      const target = await tx.storeEmergencyTarget.findUnique({
+        where: { id: targetId },
+        select: { emergencyId: true, restoreStatus: true, updatedAt: true },
+      });
+      if (!target || target.emergencyId !== emergencyId) return false;
+      if (
+        ['required', 'running'].includes(target.restoreStatus)
+        && target.updatedAt.getTime() > Date.now() - RECONCILE_DETAIL_COOLDOWN_MS
+      ) return false;
+
+      // This claim transaction performs only bounded database work. A short
+      // blocking lock lets the rightful fair-turn contender proceed after a
+      // non-selected peer releases the application lane.
+      await tx.$executeRaw(Prisma.sql`
+        SELECT pg_advisory_xact_lock(hashtextextended(CAST(${applicationId} AS text), 2))
+      `);
+
+      const reservedAt = new Date();
+      const cutoff = new Date(reservedAt.getTime() - RECONCILE_DETAIL_COOLDOWN_MS);
+      const recent = await tx.storeEmergencyEvent.findFirst({
+        where: {
+          type: RECONCILE_DETAIL_SLOT_EVENT,
+          occurredAt: { gt: cutoff },
+          metadata: { path: ['applicationId'], equals: applicationId },
+        },
+        select: { id: true },
+        orderBy: { occurredAt: 'desc' },
+      });
+      if (recent) return false;
+
+      const peers = await tx.storeEmergency.findMany({
+        where: {
+          status: { in: ['offline', 'partial_success'] },
+          finishedAt: null,
+          endsAt: { gt: reservedAt },
+          brand: { applicationId },
+          targets: { some: {} },
+        },
+        select: { id: true },
+      });
+      const peerIds = peers.map(peer => peer.id);
+      if (!peerIds.includes(emergencyId)) return false;
+      const reservations = await tx.storeEmergencyEvent.findMany({
+        where: {
+          emergencyId: { in: peerIds },
+          type: RECONCILE_DETAIL_SLOT_EVENT,
+          metadata: { path: ['applicationId'], equals: applicationId },
+        },
+        select: { emergencyId: true, occurredAt: true },
+        orderBy: { occurredAt: 'desc' },
+        distinct: ['emergencyId'],
+      });
+      const lastServed = new Map(reservations.map(event => [event.emergencyId, event.occurredAt.getTime()]));
+      const nextEmergencyId = peers
+        .map(peer => ({ id: peer.id, lastServedAt: lastServed.get(peer.id) ?? Number.NEGATIVE_INFINITY }))
+        .sort((left, right) => left.lastServedAt - right.lastServedAt || left.id.localeCompare(right.id))[0]?.id;
+      if (nextEmergencyId !== emergencyId) return false;
+
+      await tx.storeEmergencyEvent.create({
+        data: emergencyEventData({
+          emergencyId,
+          targetId,
+          type: RECONCILE_DETAIL_SLOT_EVENT,
+          phase: 'system',
+          outcome: 'requested',
+          source: 'worker',
+          message: 'Reserved the application-wide DiDi shop/detail reconciliation slot',
+          metadata: { applicationId, cooldownMs: RECONCILE_DETAIL_COOLDOWN_MS },
+          occurredAt: reservedAt,
+        }),
+      });
+      return true;
+    });
   }
 
   private async reconcileTarget(
     emergencyId: string,
     brandId: string,
     target: StoreEmergencyReconcileTarget,
+    applicationId: string,
     appId: string,
     appSecret: string,
   ): Promise<StoreEmergencyReconcileResult> {
+    if (
+      ['required', 'running'].includes(target.restoreStatus)
+      && target.updatedAt.getTime() > Date.now() - RECONCILE_DETAIL_COOLDOWN_MS
+    ) return 'skipped';
+    if (!await this.claimReconcileDetailSlot(emergencyId, brandId, target.id, applicationId)) {
+      return 'skipped';
+    }
     let authToken: string;
-    let remoteStatus: number;
     try {
       authToken = await getAuthToken(
         appId,
@@ -390,7 +507,6 @@ export class StoreEmergencyProcessor extends WorkerHost {
         target.shop.appShopId,
         AbortSignal.timeout(RECONCILE_AUTH_TIMEOUT_MS),
       );
-      remoteStatus = await this.readStoreStatus(authToken, RECONCILE_READ_TIMEOUT_MS);
     } catch (error) {
       await this.recordReconcileTargetFailure(
         emergencyId,
@@ -398,50 +514,21 @@ export class StoreEmergencyProcessor extends WorkerHost {
         target.id,
         target.shop.appShopId,
         error,
-        'preflight',
-      );
-      return 'failed';
-    }
-
-    if (remoteStatus === 2) {
-      try {
-        const lockedResult = await this.completeAlreadyOfflineReconcile(
-          emergencyId,
-          brandId,
-          target.id,
-          target.shop.appShopId,
-          authToken,
-        );
-        if (lockedResult !== 'online') return lockedResult;
-        remoteStatus = 1;
-      } catch (error) {
-        await this.recordReconcileTargetFailure(
-          emergencyId,
-          brandId,
-          target.id,
-          target.shop.appShopId,
-          error,
-          'locked_preflight',
-        );
-        return 'failed';
-      }
-    }
-    if (remoteStatus !== 1) {
-      await this.recordReconcileTargetFailure(
-        emergencyId,
-        brandId,
-        target.id,
-        target.shop.appShopId,
-        new Error(`GET /v1/shop/shop/detail returned unsupported biz_status=${remoteStatus}`),
-        'preflight',
+        'auth',
       );
       return 'failed';
     }
 
     try {
-      const lease = await this.claimReconcileLease(emergencyId, brandId, target.id);
-      if (!lease) return 'skipped';
-      return await this.executeReconcileWrite(lease, authToken, target.shop.appShopId);
+      const inspection = await this.inspectReconcileTarget(
+        emergencyId,
+        brandId,
+        target.id,
+        target.shop.appShopId,
+        authToken,
+      );
+      if (typeof inspection === 'string') return inspection;
+      return await this.executeReconcileWrite(inspection, authToken, target.shop.appShopId);
     } catch (error) {
       await this.recordReconcileTargetFailure(
         emergencyId,
@@ -449,28 +536,21 @@ export class StoreEmergencyProcessor extends WorkerHost {
         target.id,
         target.shop.appShopId,
         error,
-        'claim_or_write',
+        'locked_detail_or_write',
       );
       return 'failed';
     }
   }
 
-  private async completeAlreadyOfflineReconcile(
+  private async inspectReconcileTarget(
     emergencyId: string,
     brandId: string,
     targetId: string,
     appShopId: string,
     authToken: string,
-  ): Promise<StoreEmergencyReconcileResult | 'online'> {
-    return this.withReconcileTargetLock(brandId, targetId, 15_000, async tx => {
+  ): Promise<StoreEmergencyReconcileResult | StoreEmergencyReconcileLease> {
+    return this.withReconcileTargetLock(brandId, targetId, 25_000, async tx => {
       if (!await this.reconcileStillLive(tx, emergencyId)) return 'skipped';
-      const lockedRemoteStatus = await this.readStoreStatus(authToken, RECONCILE_READ_TIMEOUT_MS);
-      if (lockedRemoteStatus === 1) return 'online';
-      if (lockedRemoteStatus !== 2) {
-        throw new Error(
-          `GET /v1/shop/shop/detail returned unsupported biz_status=${lockedRemoteStatus}`,
-        );
-      }
       const target = await tx.storeEmergencyTarget.findUnique({
         where: { id: targetId },
         select: {
@@ -479,153 +559,39 @@ export class StoreEmergencyProcessor extends WorkerHost {
           restoreStatus: true,
           offlineError: true,
           offlineAt: true,
+          restoreError: true,
           updatedAt: true,
         },
       });
       if (!target || target.emergencyId !== emergencyId) return 'skipped';
-      const owned = target.restoreStatus === 'required'
-        || target.restoreStatus === 'running'
-        || (target.offlineStatus === 'done' && target.restoreStatus === 'pending');
-      const restoreStatus = owned ? 'pending' : 'not_required';
-      if (
-        target.offlineStatus === 'done'
-        && target.offlineError === null
-        && target.restoreStatus === restoreStatus
-      ) return 'already_offline';
-      const completedAt = new Date();
-      const completed = await tx.storeEmergencyTarget.updateMany({
-        where: { id: targetId, emergencyId, updatedAt: target.updatedAt },
-        data: {
-          offlineStatus: 'done',
-          offlineError: null,
-          offlineAt: target.offlineAt ?? completedAt,
-          restoreStatus,
-          restoreError: null,
-          updatedAt: completedAt,
-        },
-      });
-      if (completed.count === 0) return 'skipped';
-      await tx.storeEmergencyEvent.create({
-        data: emergencyEventData({
-          emergencyId,
-          targetId,
-          type: 'target_reconcile_observed_offline',
-          phase: 'shutdown',
-          outcome: 'succeeded',
-          source: 'worker',
-          message: `Offline state reconciled for store ${appShopId} without a provider write`,
-          metadata: { appShopId, providerWriteAttempted: false, restoreOwnership: restoreStatus },
-          occurredAt: completedAt,
-        }),
-      });
-      return 'already_offline';
-    });
-  }
-
-  private async claimReconcileLease(
-    emergencyId: string,
-    brandId: string,
-    targetId: string,
-  ): Promise<StoreEmergencyReconcileLease | null> {
-    return this.withReconcileTargetLock(brandId, targetId, 15_000, async tx => {
-      if (!await this.reconcileStillLive(tx, emergencyId)) return null;
-      const target = await tx.storeEmergencyTarget.findUnique({
-        where: { id: targetId },
-        select: {
-          emergencyId: true,
-          offlineStatus: true,
-          restoreStatus: true,
-          updatedAt: true,
-        },
-      });
-      if (!target || target.emergencyId !== emergencyId) return null;
       if (
         ['required', 'running'].includes(target.restoreStatus)
-        && target.updatedAt.getTime() > Date.now() - RECONCILE_LEASE_MS
-      ) return null;
-      const leaseAt = new Date(Math.max(Date.now(), target.updatedAt.getTime() + 1));
-      const claimed = await tx.storeEmergencyTarget.updateMany({
-        where: { id: targetId, emergencyId, updatedAt: target.updatedAt },
-        data: {
-          restoreStatus: 'required',
-          restoreError: null,
-          offlineError: null,
-          offlineAttempts: { increment: 1 },
-          updatedAt: leaseAt,
-        },
-      });
-      if (claimed.count === 0) return null;
-      await tx.storeEmergencyEvent.create({
-        data: emergencyEventData({
-          emergencyId,
-          targetId,
-          type: 'target_reconcile_claimed',
-          phase: 'shutdown',
-          outcome: 'requested',
-          source: 'worker',
-          message: 'Online drift detected; durable shutdown ownership recorded before retry',
-          metadata: { ownershipDurable: true },
-          occurredAt: leaseAt,
-        }),
-      });
-      return {
-        emergencyId,
-        brandId,
-        targetId,
-        updatedAt: leaseAt,
-        previousOfflineStatus: target.offlineStatus,
-        previousRestoreStatus: target.restoreStatus,
-      };
-    });
-  }
-
-  private async executeReconcileWrite(
-    lease: StoreEmergencyReconcileLease,
-    authToken: string,
-    appShopId: string,
-  ): Promise<StoreEmergencyReconcileResult> {
-    return this.withReconcileTargetLock(lease.brandId, lease.targetId, 45_000, async tx => {
-      if (!await this.reconcileStillLive(tx, lease.emergencyId)) return 'skipped';
-      const target = await tx.storeEmergencyTarget.findFirst({
-        where: {
-          id: lease.targetId,
-          emergencyId: lease.emergencyId,
-          restoreStatus: 'required',
-          updatedAt: lease.updatedAt,
-        },
-        select: { offlineStatus: true, offlineAt: true },
-      });
-      if (!target) return 'skipped';
-
-      let providerWriteAttempted = false;
-      let writeError: Error | null = null;
+        && target.updatedAt.getTime() > Date.now() - RECONCILE_DETAIL_COOLDOWN_MS
+      ) return 'skipped';
+      let remoteStatus: number;
       try {
-        const currentRemoteStatus = await this.readStoreStatus(authToken, RECONCILE_READ_TIMEOUT_MS);
-        if (currentRemoteStatus === 1) {
-          providerWriteAttempted = true;
-          try {
-            await this.setStoreStatus(authToken, 2);
-          } catch (error) {
-            writeError = error instanceof Error ? error : new Error(String(error));
-          }
-          await this.verifyStoreStatus(authToken, 2, RECONCILE_VERIFY_TIMEOUT_MS);
-        } else if (currentRemoteStatus !== 2) {
-          throw new Error(
-            `GET /v1/shop/shop/detail returned unsupported biz_status=${currentRemoteStatus}`,
-          );
-        }
-
-        const completedAt = new Date();
-        const previouslyOwned = ['required', 'running'].includes(lease.previousRestoreStatus)
-          || (lease.previousOfflineStatus === 'done' && lease.previousRestoreStatus === 'pending');
-        const restoreStatus = providerWriteAttempted || previouslyOwned ? 'pending' : 'not_required';
+        remoteStatus = await this.readStoreStatus(authToken, RECONCILE_READ_TIMEOUT_MS);
+      } catch (error) {
+        if (!isDidiDetailRateLimit(error)) throw error;
+        this.logger.warn(
+          `detail rate limit deferred reconciliation for app_shop_id ${appShopId}; target state was not changed`,
+        );
+        return 'skipped';
+      }
+      if (remoteStatus === 2) {
+        const pendingVerification = ['required', 'running'].includes(target.restoreStatus);
+        const owned = pendingVerification
+          || (target.offlineStatus === 'done' && target.restoreStatus === 'pending');
+        const restoreStatus = owned ? 'pending' : 'not_required';
+        if (
+          target.offlineStatus === 'done'
+          && target.offlineError === null
+          && target.restoreStatus === restoreStatus
+          && target.restoreError === null
+        ) return 'already_offline';
+        const completedAt = new Date(Math.max(Date.now(), target.updatedAt.getTime() + 1));
         const completed = await tx.storeEmergencyTarget.updateMany({
-          where: {
-            id: lease.targetId,
-            emergencyId: lease.emergencyId,
-            restoreStatus: 'required',
-            updatedAt: lease.updatedAt,
-          },
+          where: { id: targetId, emergencyId, updatedAt: target.updatedAt },
           data: {
             offlineStatus: 'done',
             offlineError: null,
@@ -638,38 +604,131 @@ export class StoreEmergencyProcessor extends WorkerHost {
         if (completed.count === 0) return 'skipped';
         await tx.storeEmergencyEvent.create({
           data: emergencyEventData({
-            emergencyId: lease.emergencyId,
-            targetId: lease.targetId,
-            type: providerWriteAttempted ? 'target_reconcile_succeeded' : 'target_reconcile_observed_offline',
+            emergencyId,
+            targetId,
+            type: pendingVerification ? 'target_reconcile_succeeded' : 'target_reconcile_observed_offline',
             phase: 'shutdown',
             outcome: 'succeeded',
             source: 'worker',
-            message: providerWriteAttempted
-              ? `Offline drift corrected and verified for store ${appShopId}`
-              : `Store ${appShopId} became offline before the reconciliation write`,
+            message: pendingVerification
+              ? `Deferred offline verification succeeded for store ${appShopId}`
+              : `Offline state reconciled for store ${appShopId} without a provider write`,
             metadata: {
               appShopId,
-              providerWriteAttempted,
+              providerWriteAttempted: false,
+              providerWritePreviouslyAttempted: pendingVerification,
               remoteVerified: true,
-              postReturnedError: Boolean(writeError),
+              verificationSource: 'shop_detail',
+              restoreOwnership: restoreStatus,
+            },
+            occurredAt: completedAt,
+          }),
+        });
+        return 'already_offline';
+      }
+      if (remoteStatus !== 1) {
+        throw new Error(`GET /v1/shop/shop/detail returned unsupported biz_status=${remoteStatus}`);
+      }
+      const leaseAt = new Date(Math.max(Date.now(), target.updatedAt.getTime() + 1));
+      const claimed = await tx.storeEmergencyTarget.updateMany({
+        where: { id: targetId, emergencyId, updatedAt: target.updatedAt },
+        data: {
+          restoreStatus: 'required',
+          restoreError: null,
+          offlineAttempts: { increment: 1 },
+          updatedAt: leaseAt,
+        },
+      });
+      if (claimed.count === 0) return 'skipped';
+      await tx.storeEmergencyEvent.create({
+        data: emergencyEventData({
+          emergencyId,
+          targetId,
+          type: 'target_reconcile_claimed',
+          phase: 'shutdown',
+          outcome: 'requested',
+          source: 'worker',
+          message: 'Online drift detected; durable shutdown ownership recorded before provider write',
+          metadata: { ownershipDurable: true, remoteStatus, verificationPending: true },
+          occurredAt: leaseAt,
+        }),
+      });
+      return {
+        emergencyId,
+        brandId,
+        targetId,
+        updatedAt: leaseAt,
+      };
+    });
+  }
+
+  private async executeReconcileWrite(
+    lease: StoreEmergencyReconcileLease,
+    authToken: string,
+    appShopId: string,
+  ): Promise<StoreEmergencyReconcileResult> {
+    return this.withReconcileTargetLock(lease.brandId, lease.targetId, 25_000, async tx => {
+      if (!await this.reconcileStillLive(tx, lease.emergencyId)) return 'skipped';
+      const target = await tx.storeEmergencyTarget.findFirst({
+        where: {
+          id: lease.targetId,
+          emergencyId: lease.emergencyId,
+          restoreStatus: 'required',
+          updatedAt: lease.updatedAt,
+        },
+        select: { offlineAt: true },
+      });
+      if (!target) return 'skipped';
+
+      try {
+        const provider = await this.setStoreStatus(authToken, 2);
+        const completedAt = new Date();
+        const completed = await tx.storeEmergencyTarget.updateMany({
+          where: {
+            id: lease.targetId,
+            emergencyId: lease.emergencyId,
+            restoreStatus: 'required',
+            updatedAt: lease.updatedAt,
+          },
+          data: {
+            offlineStatus: 'done',
+            offlineError: null,
+            offlineAt: target.offlineAt ?? completedAt,
+            restoreStatus: 'pending',
+            restoreError: null,
+            updatedAt: completedAt,
+          },
+        });
+        if (completed.count === 0) return 'skipped';
+        await tx.storeEmergencyEvent.create({
+          data: emergencyEventData({
+            emergencyId: lease.emergencyId,
+            targetId: lease.targetId,
+            type: 'target_reconcile_succeeded',
+            phase: 'shutdown',
+            outcome: 'succeeded',
+            source: 'worker',
+            message: `Offline drift corrected and confirmed for store ${appShopId}`,
+            metadata: {
+              appShopId,
+              providerWriteAttempted: true,
+              remoteVerified: true,
+              verificationSource: 'setStatus_response',
+              providerBizStatus: provider.bizStatus,
+              providerAutoSwitch: provider.autoSwitch,
+              providerSubBizStatus: provider.subBizStatus,
               ownershipDurable: true,
             },
             occurredAt: completedAt,
           }),
         });
-        return providerWriteAttempted ? 'reapplied' : 'already_offline';
+        return 'reapplied';
       } catch (error) {
-        const verificationError = error instanceof Error ? error : new Error(String(error));
-        const message = sanitizeEmergencyMessage(writeError
-          ? `${writeError.message}; provider result remained unverified: ${verificationError.message}`
-          : verificationError.message);
+        const writeError = error instanceof Error ? error : new Error(String(error));
+        const message = sanitizeEmergencyMessage(
+          `${writeError.message}; provider result is unverified until the next reconciliation minute`,
+        );
         const failedAt = new Date();
-        const previousOwnership = ['required', 'running'].includes(lease.previousRestoreStatus)
-          ? 'required'
-          : lease.previousOfflineStatus === 'done' && lease.previousRestoreStatus === 'pending'
-            ? 'pending'
-            : 'not_required';
-        const restoreStatus = providerWriteAttempted ? 'required' : previousOwnership;
         const failed = await tx.storeEmergencyTarget.updateMany({
           where: {
             id: lease.targetId,
@@ -678,11 +737,11 @@ export class StoreEmergencyProcessor extends WorkerHost {
             updatedAt: lease.updatedAt,
           },
           data: {
-            offlineStatus: target.offlineStatus === 'done' ? 'done' : 'failed',
-            offlineError: message,
-            restoreStatus,
-            // Preserve the durable lease age so the next minute can retry
-            // immediately instead of extending a failed ownership claim.
+            offlineStatus: 'failed',
+            offlineError: RECONCILE_VERIFICATION_PENDING,
+            restoreStatus: 'required',
+            // Preserve the durable claim age. A later tick must perform the
+            // single allowed detail read before deciding whether to retry.
             updatedAt: lease.updatedAt,
           },
         });
@@ -698,8 +757,10 @@ export class StoreEmergencyProcessor extends WorkerHost {
               message,
               metadata: {
                 appShopId,
-                stage: 'write_verify',
-                providerWriteAttempted,
+                stage: 'write',
+                providerWriteAttempted: true,
+                remoteVerified: false,
+                verificationPending: true,
                 ownershipDurable: true,
                 retryable: true,
               },
@@ -917,7 +978,7 @@ export class StoreEmergencyProcessor extends WorkerHost {
     appId: string,
     appSecret: string,
     action: EmergencyAction,
-    initialRestoreStatus: string,
+    _initialRestoreStatus: string,
     actorId: string | null,
     triggerSource: string,
   ) {
@@ -956,10 +1017,9 @@ export class StoreEmergencyProcessor extends WorkerHost {
     let lease: StoreEmergencyTargetLease = { emergencyId, targetId, action, updatedAt: startedAt };
     const target = await this.prisma.storeEmergencyTarget.findUnique({
       where: { id: targetId },
-      select: { offlineAttempts: true, restoreAttempts: true, restoreStatus: true },
+      select: { offlineAttempts: true, restoreAttempts: true },
     });
     const attempt = action === 'offline' ? target?.offlineAttempts : target?.restoreAttempts;
-    const restoreOwnershipAtClaim = target?.restoreStatus ?? initialRestoreStatus;
     await this.prisma.storeEmergencyEvent.create({
       data: emergencyEventData({
         emergencyId,
@@ -982,90 +1042,40 @@ export class StoreEmergencyProcessor extends WorkerHost {
         appShopId,
         AbortSignal.timeout(AUTH_TIMEOUT_MS),
       );
-      const initialRemoteStatus = await this.readStoreStatus(authToken, READ_TIMEOUT_MS);
-
-      if (action === 'offline' && initialRemoteStatus === 2) {
-        await this.completeTarget(lease, {
-          actorId,
-          appShopId,
-          attempt: attempt ?? 1,
-          triggerSource,
-          preflightAlreadyDesired: true,
-          data: {
-            offlineStatus: 'done',
-            offlineAt: new Date(),
-            restoreStatus: restoreOwnershipAtClaim === 'required' ? 'pending' : 'not_required',
-            restoreError: null,
-          },
-        });
-        return;
-      }
-      if (action === 'restore' && initialRemoteStatus === 1) {
-        await this.completeTarget(lease, {
-          actorId,
-          appShopId,
-          attempt: attempt ?? 1,
-          triggerSource,
-          preflightAlreadyDesired: true,
-          data: { restoreStatus: 'done', restoredAt: new Date(), restoreError: null },
-        });
-        return;
-      }
-      const expectedInitialStatus = action === 'offline' ? 1 : 2;
-      if (initialRemoteStatus !== expectedInitialStatus) {
-        throw new Error(
-          `GET /v1/shop/shop/detail returned unsupported biz_status=${initialRemoteStatus}; provider write was not attempted`,
-        );
-      }
 
       if (action === 'offline') {
-        // Ownership must be durable before the OFF request. If the worker dies
-        // after DiDi applies it, recovery can distinguish stores that Guaro owns.
+        // Every emergency OFF write is owned before it reaches DiDi. The
+        // provider's detail endpoint is limited to one application-wide read
+        // per minute, so it cannot be used as a per-store preflight.
         lease = await this.renewTargetLease(lease, { restoreStatus: 'required' });
       } else {
         lease = await this.renewTargetLease(lease);
       }
       await this.heartbeat(emergencyId, action);
 
-      let writeError: Error | null = null;
-      try {
-        if (action === 'restore') {
-          lease = await this.renewTargetLease(lease);
-          await this.heartbeat(emergencyId, action);
-          const permittedLease = lease;
-          await this.openingGuard.withOpeningPermit({
-            shopId,
-            allowedEmergencyId: emergencyId,
-            operation: 'store_emergency_restore',
-            validate: async tx => {
-              const currentLease = await tx.storeEmergencyTarget.updateMany({
-                where: this.leaseWhere(permittedLease),
-                // A no-op CAS takes a row lock until the provider write ends,
-                // so the watchdog cannot steal the exact lease after validation.
-                data: { updatedAt: permittedLease.updatedAt },
-              });
-              if (currentLease.count === 0) throw new StoreEmergencyLeaseLostError();
-            },
-            execute: () => this.setStoreStatus(authToken, 1),
-          });
-        } else {
-          lease = await this.renewTargetLease(lease);
-          await this.setStoreStatus(authToken, 2);
-        }
-      } catch (error) {
-        writeError = error instanceof Error ? error : new Error(String(error));
-      }
-      if (writeError instanceof StoreEmergencyLeaseLostError) throw writeError;
-
-      try {
-        await this.verifyStoreStatus(authToken, action === 'offline' ? 2 : 1);
-      } catch (verificationError) {
-        const verificationMessage = verificationError instanceof Error
-          ? verificationError.message
-          : String(verificationError);
-        throw new Error(writeError
-          ? `${writeError.message}; provider result remained unverified: ${verificationMessage}`
-          : verificationMessage);
+      let provider: StoreStatusWriteResult;
+      if (action === 'restore') {
+        lease = await this.renewTargetLease(lease);
+        await this.heartbeat(emergencyId, action);
+        const permittedLease = lease;
+        provider = await this.openingGuard.withOpeningPermit({
+          shopId,
+          allowedEmergencyId: emergencyId,
+          operation: 'store_emergency_restore',
+          validate: async tx => {
+            const currentLease = await tx.storeEmergencyTarget.updateMany({
+              where: this.leaseWhere(permittedLease),
+              // A no-op CAS takes a row lock until the provider write ends,
+              // so the watchdog cannot steal the exact lease after validation.
+              data: { updatedAt: permittedLease.updatedAt },
+            });
+            if (currentLease.count === 0) throw new StoreEmergencyLeaseLostError();
+          },
+          execute: () => this.setStoreStatus(authToken, 1),
+        });
+      } else {
+        lease = await this.renewTargetLease(lease);
+        provider = await this.setStoreStatus(authToken, 2);
       }
 
       await this.completeTarget(lease, {
@@ -1074,6 +1084,7 @@ export class StoreEmergencyProcessor extends WorkerHost {
         attempt: attempt ?? 1,
         triggerSource,
         preflightAlreadyDesired: false,
+        provider,
         data: action === 'offline'
           ? {
             offlineStatus: 'done',
@@ -1100,7 +1111,7 @@ export class StoreEmergencyProcessor extends WorkerHost {
     }
   }
 
-  private async setStoreStatus(authToken: string, bizStatus: 1 | 2) {
+  private async setStoreStatus(authToken: string, bizStatus: 1 | 2): Promise<StoreStatusWriteResult> {
     const endpoint = 'POST /v1/shop/shop/setStatus';
     const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v1/shop/shop/setStatus`, {
       method: 'POST',
@@ -1112,6 +1123,24 @@ export class StoreEmergencyProcessor extends WorkerHost {
     if (!response.ok || body.errno !== 0) {
       throw new Error(`${endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
     }
+    const rawStatus = body.data?.biz_status ?? body.data?.bizStatus;
+    if (typeof rawStatus !== 'boolean') {
+      throw new Error(`${endpoint} returned errno=0 without a boolean data.biz_status; provider result is ambiguous`);
+    }
+    const confirmedStatus: 1 | 2 = rawStatus ? 1 : 2;
+    if (confirmedStatus !== bizStatus) {
+      throw new Error(
+        `${endpoint} returned errno=0 but confirmed biz_status=${confirmedStatus}; expected ${bizStatus}`,
+      );
+    }
+    const rawAutoSwitch = body.data?.auto_switch ?? body.data?.autoSwitch;
+    const rawSubBizStatus = body.data?.sub_biz_status ?? body.data?.subBizStatus;
+    const subBizStatus = Number(rawSubBizStatus);
+    return {
+      bizStatus: confirmedStatus,
+      autoSwitch: typeof rawAutoSwitch === 'boolean' ? rawAutoSwitch : null,
+      subBizStatus: Number.isFinite(subBizStatus) ? subBizStatus : null,
+    };
   }
 
   private async readStoreStatus(authToken: string, timeoutMs: number): Promise<number> {
@@ -1129,33 +1158,6 @@ export class StoreEmergencyProcessor extends WorkerHost {
     const status = raw === true ? 1 : raw === false ? 2 : Number(raw);
     if (!Number.isFinite(status)) throw new Error(`${endpoint} returned an invalid biz_status`);
     return status;
-  }
-
-  private async verifyStoreStatus(
-    authToken: string,
-    desiredStatus: 1 | 2,
-    totalTimeoutMs = READ_TIMEOUT_MS,
-  ): Promise<void> {
-    let observedStatus: number | null = null;
-    let lastError: Error | null = null;
-    const delayBudget = VERIFY_DELAY_MS * (VERIFY_ATTEMPTS - 1);
-    const perAttemptTimeout = Math.max(
-      1_000,
-      Math.floor((totalTimeoutMs - delayBudget) / VERIFY_ATTEMPTS),
-    );
-    for (let attempt = 0; attempt < VERIFY_ATTEMPTS; attempt++) {
-      if (attempt > 0) await new Promise(resolve => setTimeout(resolve, VERIFY_DELAY_MS));
-      try {
-        observedStatus = await this.readStoreStatus(authToken, perAttemptTimeout);
-        if (observedStatus === desiredStatus) return;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-      }
-    }
-    if (lastError && observedStatus === null) throw lastError;
-    throw new Error(
-      `POST /v1/shop/shop/setStatus was not verified: expected biz_status=${desiredStatus}, observed ${observedStatus ?? 'unknown'}`,
-    );
   }
 
   private async heartbeat(emergencyId: string, action: EmergencyAction): Promise<void> {
@@ -1206,6 +1208,7 @@ export class StoreEmergencyProcessor extends WorkerHost {
       attempt: number;
       triggerSource: string;
       preflightAlreadyDesired: boolean;
+      provider?: StoreStatusWriteResult;
       data: Prisma.StoreEmergencyTargetUpdateManyMutationInput;
     },
   ): Promise<void> {
@@ -1233,6 +1236,10 @@ export class StoreEmergencyProcessor extends WorkerHost {
             triggerSource: input.triggerSource,
             providerWriteAttempted: !input.preflightAlreadyDesired,
             remoteVerified: true,
+            verificationSource: input.preflightAlreadyDesired ? 'shop_detail' : 'setStatus_response',
+            providerBizStatus: input.provider?.bizStatus ?? null,
+            providerAutoSwitch: input.provider?.autoSwitch ?? null,
+            providerSubBizStatus: input.provider?.subBizStatus ?? null,
           },
           occurredAt: completedAt,
         }),

@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { downloadMenu } from '../integrations/auto-turn-off-api.util';
+import { storeEmergencyLiveWhere } from '../integrations/store-emergency-status';
 import {
   BATCH_SIZE,
   COOLDOWN_BATCH_MS,
@@ -135,13 +136,19 @@ export class CatalogSyncService {
     await ensureActive?.();
     const brand = await this.prisma.brand.findUnique({
       where: { id: brandId },
-      include: { application: { select: { appId: true, appSecret: true } } },
+      include: { application: { select: { id: true, appId: true, appSecret: true } } },
     });
     if (!brand || brand.deletedAt) throw new NotFoundException('Brand not found');
     if (!brand.application) throw new Error(`Brand ${brand.brandName} has no linked application`);
 
+    await this.assertApplicationHasNoLiveEmergency(brand.application.id);
     const appSecret = this.decryptSecret(brand.application.appSecret);
-    const applicationShops = await this.fetchApplicationShopDetails(brand.application.appId, appSecret, ensureActive);
+    const applicationShops = await this.fetchApplicationShopDetails(
+      brand.application.id,
+      brand.application.appId,
+      appSecret,
+      ensureActive,
+    );
     await ensureActive?.();
     if (applicationShops.totalMappings > 0 && applicationShops.details.length === 0) {
       throw new Error('Could not fetch details for any shop in the application');
@@ -464,6 +471,7 @@ export class CatalogSyncService {
   }
 
   private async fetchApplicationShopDetails(
+    applicationId: string,
     appId: string,
     appSecret: string,
     ensureActive?: ContinuationCheck,
@@ -479,8 +487,15 @@ export class CatalogSyncService {
 
     for (let offset = 0; offset < targets.length; offset += BATCH_SIZE) {
       await ensureActive?.();
+      await this.assertApplicationHasNoLiveEmergency(applicationId);
       const batch = targets.slice(offset, offset + BATCH_SIZE);
-      const results = await Promise.allSettled(batch.map(shop => this.fetchShopDetail(appId, appSecret, shop, ensureActive)));
+      const results = await Promise.allSettled(batch.map(shop => this.fetchShopDetail(
+        applicationId,
+        appId,
+        appSecret,
+        shop,
+        ensureActive,
+      )));
       await ensureActive?.();
       for (const result of results) {
         if (result.status === 'fulfilled') details.push(result.value);
@@ -500,6 +515,7 @@ export class CatalogSyncService {
   }
 
   private async fetchShopDetail(
+    applicationId: string,
     appId: string,
     appSecret: string,
     shop: { shopId: string; appShopId: string },
@@ -509,6 +525,7 @@ export class CatalogSyncService {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         await ensureActive?.();
+        await this.assertApplicationHasNoLiveEmergency(applicationId);
         const authToken = await getAuthToken(appId, appSecret, shop.appShopId);
         const endpoint = 'GET /v1/shop/shop/detail';
         const response = await fetchWithEndpointContext(
@@ -537,5 +554,21 @@ export class CatalogSyncService {
       }
     }
     throw new Error(`${shop.shopId}: ${lastError}`);
+  }
+
+  private async assertApplicationHasNoLiveEmergency(applicationId: string): Promise<void> {
+    const emergency = await this.prisma.storeEmergency.findFirst({
+      where: {
+        ...storeEmergencyLiveWhere(),
+        brand: { applicationId },
+      },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (emergency) {
+      throw new Error(
+        `Store-detail catalog sync deferred while application is protected by active emergency ${emergency.id}`,
+      );
+    }
   }
 }
