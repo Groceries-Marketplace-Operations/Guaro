@@ -925,6 +925,93 @@ test('production requires complete active local mappings assigned exactly to the
   assert.equal(calls, 0);
 });
 
+test('durable execution rejects an environment or app credential snapshot change before provider access', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let providerCalls = 0;
+  global.fetch = (async () => {
+    providerCalls += 1;
+    throw new Error('provider must not be called');
+  }) as typeof fetch;
+  const created = service({
+    localShops: [{ shopId: SHOP_1, appShopId: '001', applicationId: APPLICATION_ID }],
+  });
+  await assert.rejects(
+    created.value.assertDurableRuntimeAllowed(APPLICATION_ID, 'bind', 'production'),
+    /environment changed/,
+  );
+  await assert.rejects(
+    created.value.executeDurableBindBatch(
+      APPLICATION_ID,
+      [{ shopId: SHOP_1, appShopId: '001' }],
+      'test',
+      'stale-application-snapshot',
+    ),
+    /app_id or credential changed/,
+  );
+  assert.equal(providerCalls, 0);
+});
+
+test('durable production Unbind revalidates a changed local mapping immediately before auth and POST', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let providerCalls = 0;
+  global.fetch = (async () => {
+    providerCalls += 1;
+    throw new Error('provider must not be called');
+  }) as typeof fetch;
+  const localShops = [{ shopId: SHOP_1, appShopId: '001', applicationId: APPLICATION_ID }];
+  const created = service({
+    appName: 'MX_CircleK',
+    appId: PRODUCTION_APP_ID,
+    bindingEnvironment: 'PRODUCTION',
+    productionUnbindEnabled: true,
+    localShops,
+  });
+  localShops[0].applicationId = '99999999-9999-4999-8999-999999999999';
+  await assert.rejects(
+    created.value.executeDurableUnbindItem(
+      APPLICATION_ID,
+      { shopId: SHOP_1, appShopId: '001' },
+      'production',
+    ),
+    /belongs to another Application/,
+  );
+  assert.equal(providerCalls, 0);
+});
+
+test('durable Unbind revalidates mapping after auth and does not cross the submission boundary if it changed', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  const localShops = [{ shopId: SHOP_1, appShopId: '001', applicationId: APPLICATION_ID }];
+  let unbindPosts = 0;
+  let boundaries = 0;
+  global.fetch = (async (input) => {
+    const url = String(input);
+    if (url.includes('/v1/auth/authtoken/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh-secret' } }), { status: 200 });
+    }
+    if (url.includes('/v1/auth/authtoken/get')) {
+      localShops[0].applicationId = '99999999-9999-4999-8999-999999999999';
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'token-secret' } }), { status: 200 });
+    }
+    if (url.endsWith(DIDI_UNBIND_STORE_PATH)) unbindPosts += 1;
+    throw new Error(`Unexpected URL ${url}`);
+  }) as typeof fetch;
+  const created = service({ localShops });
+  const result = await created.value.executeDurableUnbindItem(
+    APPLICATION_ID,
+    { shopId: SHOP_1, appShopId: '001' },
+    'test',
+    undefined,
+    async () => { boundaries += 1; },
+  );
+  assert.equal(result.status, 'failed');
+  assert.match(result.reason ?? '', /belongs to another Application/);
+  assert.equal(boundaries, 0);
+  assert.equal(unbindPosts, 0);
+});
+
 test('production Bind confirmation rejects a different batch with the same item count', async (t) => {
   const originalFetch = global.fetch;
   t.after(() => { global.fetch = originalFetch; });
@@ -1227,6 +1314,37 @@ test('bind marks every store unconfirmed when the POST has no valid provider res
   assert.doesNotMatch(JSON.stringify(created.auditUpdates), new RegExp(token));
 });
 
+test('durable Bind retries explicit errno=10005 only three times and persists one submission boundary', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let providerCalls = 0;
+  let boundaries = 0;
+  global.fetch = (async (input) => {
+    if (!String(input).endsWith(DIDI_BIND_STORE_PATH)) throw new Error(`Unexpected URL ${String(input)}`);
+    providerCalls += 1;
+    if (providerCalls < 3) {
+      return new Response(JSON.stringify({ errno: 10005, errmsg: 'too frequent' }), { status: 429 });
+    }
+    return new Response(JSON.stringify({
+      success_list: [{ shop_id: SHOP_1, app_shop_id: '001' }],
+      failure_list: [],
+    }), { status: 200 });
+  }) as typeof fetch;
+  const created = service({
+    localShops: [{ shopId: SHOP_1, appShopId: '001', applicationId: APPLICATION_ID }],
+  });
+  const results = await created.value.executeDurableBindBatch(
+    APPLICATION_ID,
+    [{ shopId: SHOP_1, appShopId: '001' }],
+    'test',
+    undefined,
+    async () => { boundaries += 1; },
+  );
+  assert.equal(providerCalls, 3);
+  assert.equal(boundaries, 1);
+  assert.equal(results[0].status, 'success');
+});
+
 test('unbind distinguishes POST uncertainty from explicit provider failure', async (t) => {
   const originalFetch = global.fetch;
   t.after(() => { global.fetch = originalFetch; });
@@ -1395,6 +1513,54 @@ test('non-2xx responses after mutating POST stay unconfirmed even with success-l
   }, ACTOR_ID, ADMIN_ROLES);
   assert.equal(unbind.summary.unconfirmed, 1);
   assert.equal(unbind.summary.succeeded, 0);
+});
+
+test('non-2xx responses with an explicit non-zero errno are failed, not ambiguous', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let mode: 'bind' | 'unbind' = 'bind';
+  global.fetch = (async (input) => {
+    const url = String(input);
+    if (url.endsWith(DIDI_LIST_BOUND_STORES_PATH)) {
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: { page_no: 1, page_size: 100, total_cnt: 1, shops: [
+          { shop_id: SHOP_1, app_shop_id: '001', bound_flag: 1 },
+        ] },
+      }), { status: 200 });
+    }
+    if (url.includes('/v1/auth/authtoken/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh-secret' } }), { status: 200 });
+    }
+    if (url.includes('/v1/auth/authtoken/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'token-secret' } }), { status: 200 });
+    }
+    if (url.endsWith(DIDI_BIND_STORE_PATH) && mode === 'bind') {
+      return new Response(JSON.stringify({ errno: 12345, errmsg: 'explicit rejection' }), { status: 502 });
+    }
+    if (url.endsWith(DIDI_UNBIND_STORE_PATH) && mode === 'unbind') {
+      return new Response(JSON.stringify({ errno: 12345, errmsg: 'explicit rejection' }), { status: 502 });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  }) as typeof fetch;
+  const created = service();
+  const bind = await created.value.bind({
+    applicationId: APPLICATION_ID,
+    shops: [{ shopId: SHOP_1, appShopId: '001' }],
+    confirmation: 'VINCULAR 1 TIENDAS',
+  }, ACTOR_ID, ADMIN_ROLES);
+  assert.equal(bind.summary.failed, 1);
+  assert.equal(bind.summary.unconfirmed, 0);
+
+  mode = 'unbind';
+  const unbind = await created.value.unbind({
+    applicationId: APPLICATION_ID,
+    shops: [{ shopId: SHOP_1, appShopId: '001' }],
+    confirmation: 'DESVINCULAR 1 TIENDAS',
+    remotePageNo: 1,
+  }, ACTOR_ID, ADMIN_ROLES);
+  assert.equal(unbind.summary.failed, 1);
+  assert.equal(unbind.summary.unconfirmed, 0);
 });
 
 test('unbind keeps an auth failure before POST as failed', async (t) => {

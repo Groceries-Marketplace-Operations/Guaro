@@ -32,6 +32,21 @@ enum DidiBindingEnvironment {
   PRODUCTION
 }
 
+enum DidiStoreBindingAction {
+  bind
+  unbind
+}
+
+enum DidiStoreBindingItemStatus {
+  pending
+  processing
+  submitting
+  success
+  failed
+  unconfirmed
+  cancelled
+}
+
 enum AccountRole {
   user
   bpo
@@ -353,6 +368,7 @@ model Account {
   createdTargetedMenuRuns        TargetedMenuExecution[]      @relation("TargetedMenuExecutionCreator")
   createdMenuCopyRuns            MenuCopyExecution[]          @relation("MenuCopyExecutionCreator")
   createdMassiveRtboRuns         MassiveRtboExecution[]       @relation("MassiveRtboExecutionCreator")
+  createdDidiStoreBindingRuns    DidiStoreBindingExecution[]  @relation("DidiStoreBindingExecutionCreator")
   createdOfferMenuRules          OfferMenuUploadRule[]        @relation("OfferMenuRuleCreator")
   updatedOfferMenuRules          OfferMenuUploadRule[]        @relation("OfferMenuRuleUpdater")
   createdOfferMenuRuns           OfferMenuUploadExecution[]   @relation("OfferMenuExecutionCreator")
@@ -680,6 +696,7 @@ model Application {
   sourceMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopySourceApplication")
   targetMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopyTargetApplication")
   massiveRtboExecutions    MassiveRtboExecution[]
+  didiStoreBindingExecutions DidiStoreBindingExecution[]
   offerMenuUploadRules     OfferMenuUploadRule[]
 
   @@unique([id, country]) // target of composite FK (see constraints.sql)
@@ -1518,6 +1535,66 @@ model MassiveRtboExecution {
   @@index([applicationId, createdAt])
   @@index([status])
   @@map("massive_rtbo_execution")
+}
+
+model DidiStoreBindingExecution {
+  id                             String                 @id @default(uuid()) @db.Uuid
+  idempotencyKey                 String                 @unique @map("idempotency_key") @db.Uuid
+  requestFingerprint             String                 @map("request_fingerprint")
+  applicationSnapshotFingerprint String                 @map("application_snapshot_fingerprint")
+  applicationAppIdSnapshot       String                 @map("application_app_id_snapshot")
+  applicationId                  String                 @map("application_id") @db.Uuid
+  action                         DidiStoreBindingAction
+  status                         AutoOpenStatus         @default(pending)
+  environment                    DidiBindingEnvironment
+  totalShops                     Int                    @default(0) @map("total_shops")
+  processedShops                 Int                    @default(0) @map("processed_shops")
+  successfulShops                Int                    @default(0) @map("successful_shops")
+  failedShops                    Int                    @default(0) @map("failed_shops")
+  unconfirmedShops               Int                    @default(0) @map("unconfirmed_shops")
+  currentShopId                  String?                @map("current_shop_id")
+  currentBatch                   Int?                   @map("current_batch")
+  totalBatches                   Int                    @default(0) @map("total_batches")
+  cancelRequested                Boolean                @default(false) @map("cancel_requested")
+  reason                         String?                @db.Text
+  batchFingerprint               String?                @map("batch_fingerprint")
+  errorMessage                   String?                @map("error_message") @db.Text
+  startedAt                      DateTime?              @map("started_at") @db.Timestamptz
+  finishedAt                     DateTime?              @map("finished_at") @db.Timestamptz
+  createdById                    String?                @map("created_by") @db.Uuid
+  createdAt                      DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                      DateTime               @updatedAt @map("updated_at") @db.Timestamptz
+
+  application Application                     @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  createdBy   Account?                        @relation("DidiStoreBindingExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  items       DidiStoreBindingExecutionItem[]
+
+  @@index([applicationId, createdAt])
+  @@index([status])
+  @@map("didi_store_binding_execution")
+}
+
+model DidiStoreBindingExecutionItem {
+  id           String                     @id @default(uuid()) @db.Uuid
+  executionId  String                     @map("execution_id") @db.Uuid
+  ordinal      Int
+  shopId       String                     @map("shop_id")
+  appShopId    String                     @map("app_shop_id")
+  remotePageNo Int?                       @map("remote_page_no")
+  status       DidiStoreBindingItemStatus @default(pending)
+  message      String?                    @db.Text
+  startedAt    DateTime?                  @map("started_at") @db.Timestamptz
+  finishedAt   DateTime?                  @map("finished_at") @db.Timestamptz
+  createdAt    DateTime                   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime                   @updatedAt @map("updated_at") @db.Timestamptz
+
+  execution DidiStoreBindingExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, ordinal])
+  @@unique([executionId, shopId])
+  @@unique([executionId, appShopId])
+  @@index([executionId, status, ordinal])
+  @@map("didi_store_binding_execution_item")
 }
 
 model StorePromotion {

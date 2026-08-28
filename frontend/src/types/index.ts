@@ -213,6 +213,101 @@ export interface DidiStoreBindingRequest {
   remotePageNo?: number;
 }
 
+export type DidiStoreBindingAction = 'bind' | 'unbind';
+export type DidiStoreBindingExecutionStatus =
+  | 'pending'
+  | 'running'
+  | 'done'
+  | 'partial_success'
+  | 'failed'
+  | 'cancelled';
+export type DidiStoreBindingExecutionItemStatus =
+  | 'pending'
+  | 'processing'
+  | 'submitting'
+  | 'success'
+  | 'failed'
+  | 'unconfirmed'
+  | 'cancelled';
+
+export interface DidiStoreBindingExecutionApplication {
+  id: string;
+  appId: string;
+  appName: string;
+  country: Country;
+  environment: 'test' | 'production';
+}
+
+export interface DidiStoreBindingExecution {
+  id: string;
+  action: DidiStoreBindingAction;
+  status: DidiStoreBindingExecutionStatus;
+  application: DidiStoreBindingExecutionApplication;
+  totalShops: number;
+  processedShops: number;
+  successfulShops: number;
+  failedShops: number;
+  unconfirmedShops: number;
+  pendingShops: number;
+  currentShopId?: string | null;
+  currentBatch?: number | null;
+  totalBatches: number;
+  cancelRequested: boolean;
+  reason?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  createdBy?: { id?: string; name?: string | null; email?: string | null } | string | null;
+}
+
+export interface DidiStoreBindingExecutionItem {
+  id: string;
+  ordinal: number;
+  shopId: string;
+  appShopId: string;
+  remotePageNo?: number | null;
+  status: DidiStoreBindingExecutionItemStatus;
+  message?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}
+
+export interface DidiStoreBindingExecutionCreateRequest {
+  idempotencyKey: string;
+  applicationId: string;
+  action: DidiStoreBindingAction;
+  shops: Array<{ shopId: string; appShopId: string; remotePageNo?: number }>;
+  confirmation: string;
+  reason?: string;
+  productionAcknowledged?: boolean;
+}
+
+export interface DidiStoreBindingExecutionListResponse {
+  data: DidiStoreBindingExecution[];
+  total: number;
+}
+
+export interface DidiStoreBindingExecutionDetailResponse {
+  execution: DidiStoreBindingExecution;
+  items: {
+    data: DidiStoreBindingExecutionItem[];
+    total: number;
+    pageNo: number;
+    pageSize: number;
+    totalPages: number;
+  };
+}
+
+export interface DidiStoreBindingSelectionResponse {
+  application: DidiStoreBindingShopsResponse['application'];
+  guards: DidiStoreBindingShopsResponse['guards'];
+  total: number;
+  max: number;
+  truncated: boolean;
+  conflicts: number;
+  shops: DidiStoreBindingShop[];
+}
+
 export interface DidiStoreBindingResult {
   shopId?: string | null;
   appShopId?: string | null;

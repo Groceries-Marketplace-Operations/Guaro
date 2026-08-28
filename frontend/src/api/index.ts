@@ -260,6 +260,34 @@ export const didiStoreBindingsApi = {
     client.post<import('../types').DidiStoreBindingResponse>('/integrations/didi-store-bindings/bind', data),
   unbind: (data: import('../types').DidiStoreBindingRequest) =>
     client.post<import('../types').DidiStoreBindingResponse>('/integrations/didi-store-bindings/unbind', data),
+  selection: (applicationId: string, q = '') =>
+    client.get<import('../types').DidiStoreBindingSelectionResponse>(
+      '/integrations/didi-store-bindings/local-shops/selection',
+      { params: { applicationId, ...(q ? { q } : {}) } },
+    ),
+  createExecution: (data: import('../types').DidiStoreBindingExecutionCreateRequest) =>
+    client.post<{ execution: import('../types').DidiStoreBindingExecution }>(
+      '/integrations/didi-store-bindings/executions',
+      data,
+    ),
+  executions: (applicationId: string, take = 20) =>
+    client.get<import('../types').DidiStoreBindingExecutionListResponse>(
+      '/integrations/didi-store-bindings/executions',
+      { params: { applicationId, take } },
+    ),
+  execution: (
+    id: string,
+    itemPageNo = 1,
+    itemPageSize = 100,
+    itemStatus?: import('../types').DidiStoreBindingExecutionItemStatus,
+  ) => client.get<import('../types').DidiStoreBindingExecutionDetailResponse>(
+    `/integrations/didi-store-bindings/executions/${id}`,
+    { params: { itemPageNo, itemPageSize, ...(itemStatus ? { itemStatus } : {}) } },
+  ),
+  cancelExecution: (id: string) =>
+    client.post<{ cancelRequested: true; execution: import('../types').DidiStoreBindingExecution }>(
+      `/integrations/didi-store-bindings/executions/${id}/cancel`,
+    ),
 };
 
 export const promotionApi = {

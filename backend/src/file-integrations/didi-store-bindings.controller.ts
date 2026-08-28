@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { PermissionAccessService } from '../access-control/permission-access.service';
 import { Permissions } from '../access-control/permissions.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -7,10 +7,15 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { DidiStoreBindingsAdminGuard } from './didi-store-bindings-admin.guard';
 import { DidiStoreBindingsService } from './didi-store-bindings.service';
+import { DidiStoreBindingExecutionsService } from './didi-store-binding-executions.service';
 import {
   BindDidiStoresDto,
+  CreateDidiStoreBindingExecutionDto,
+  GetDidiStoreBindingExecutionDto,
   ListDidiBoundStoresDto,
   ListDidiLocalStoresDto,
+  ListDidiStoreBindingExecutionsDto,
+  SelectDidiLocalStoresDto,
   UnbindDidiStoresDto,
 } from './dto/didi-store-binding.dto';
 
@@ -20,6 +25,7 @@ import {
 export class DidiStoreBindingsController {
   constructor(
     private readonly service: DidiStoreBindingsService,
+    private readonly executions: DidiStoreBindingExecutionsService,
     private readonly permissionAccess: PermissionAccessService,
   ) {}
 
@@ -33,6 +39,37 @@ export class DidiStoreBindingsController {
   async localShops(@Query() dto: ListDidiLocalStoresDto, @CurrentUser() user: JwtUser) {
     const executePermissionAllowed = await this.permissionAccess.can(user, ['integrations.custom.execute']);
     return this.service.listLocalStores(dto, user.roles, executePermissionAllowed);
+  }
+
+  @Get('local-shops/selection')
+  async localShopSelection(@Query() dto: SelectDidiLocalStoresDto, @CurrentUser() user: JwtUser) {
+    const executePermissionAllowed = await this.permissionAccess.can(user, ['integrations.custom.execute']);
+    return this.service.selectLocalStores(dto.applicationId, dto.q, user.roles, executePermissionAllowed);
+  }
+
+  @Get('executions')
+  executionsList(@Query() dto: ListDidiStoreBindingExecutionsDto) {
+    return this.executions.list(dto);
+  }
+
+  @Get('executions/:id')
+  executionDetail(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Query() dto: GetDidiStoreBindingExecutionDto,
+  ) {
+    return this.executions.detail(id, dto);
+  }
+
+  @Post('executions')
+  @Permissions('integrations.custom.execute')
+  createExecution(@Body() dto: CreateDidiStoreBindingExecutionDto, @CurrentUser() user: JwtUser) {
+    return this.executions.create(dto, user.id, user.roles);
+  }
+
+  @Post('executions/:id/cancel')
+  @Permissions('integrations.custom.execute')
+  cancelExecution(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: JwtUser) {
+    return this.executions.cancel(id, user.id);
   }
 
   @Post('bind')

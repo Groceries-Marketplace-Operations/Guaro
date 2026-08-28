@@ -1,11 +1,10 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AccountRole, DidiBindingEnvironment, Prisma } from '@prisma/client';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  COOLDOWN_SHOPLIST_MS,
   DIDI_BASE,
   fetchWithEndpointContext,
   getAuthToken,
@@ -17,11 +16,14 @@ import {
   ListDidiBoundStoresDto,
   ListDidiLocalStoresDto,
   UnbindDidiStoresDto,
+  CreateDidiStoreBindingExecutionDto,
 } from './dto/didi-store-binding.dto';
+import { DidiStoreBindingCoordinator } from './didi-store-binding-coordinator.service';
 import {
   buildBindRequest,
   buildListBoundStoresRequest,
   DIDI_BIND_MAX_SHOPS,
+  DIDI_MASS_MAX_SHOPS,
   DIDI_BIND_STORE_ENDPOINT,
   DIDI_BIND_STORE_PATH,
   DIDI_LIST_BOUND_STORES_ENDPOINT,
@@ -95,7 +97,8 @@ export class DidiStoreBindingsService {
   private readonly requestTimeoutMs: number;
   private readonly boundPageCacheTtlMs: number;
   private readonly boundPageCacheMaxEntries: number;
-  private readonly activeApplications = new Set<string>();
+  private readonly providerThrottleRetryMs: number;
+  private readonly coordinator: DidiStoreBindingCoordinator;
   private readonly boundPageCache = new Map<string, CachedBoundPage>();
   private readonly boundPageRequests = new Map<string, Promise<CachedBoundPage>>();
   private readonly boundPageCacheGenerations = new Map<string, number>();
@@ -103,7 +106,19 @@ export class DidiStoreBindingsService {
   constructor(
     private readonly prisma: PrismaService,
     config: ConfigService,
+    @Optional() coordinator?: DidiStoreBindingCoordinator,
   ) {
+    // Unit tests historically constructed this service directly. Production
+    // always injects the shared coordinator from FileIntegrationsModule.
+    this.coordinator = coordinator ?? new DidiStoreBindingCoordinator({
+      // Direct construction is used only by isolated legacy unit tests. It
+      // retains serialization/rate semantics without adding 20 seconds to
+      // every mocked provider call; Nest production injects the real shared
+      // coordinator with the provider-required 20 second minimum.
+      get: (key: string, defaultValue: string) => key === 'DIDI_STORE_BINDINGS_SHOP_LIST_COOLDOWN_MS'
+        ? '1'
+        : config.get(key, defaultValue),
+    } as ConfigService);
     this.encryptionKey = config.getOrThrow('APP_SECRET_ENCRYPTION_KEY');
     this.writesEnabled = config.get('DIDI_STORE_BINDINGS_ENABLED', 'true') === 'true';
     // Code defaults stay fail-closed. docker-compose.prod.yml explicitly
@@ -126,6 +141,12 @@ export class DidiStoreBindingsService {
     this.boundPageCacheMaxEntries = Number.isInteger(configuredCacheEntries) && configuredCacheEntries >= 10
       ? Math.min(configuredCacheEntries, 2_000)
       : 250;
+    const configuredThrottleRetry = Number(config.get('DIDI_STORE_BINDINGS_PROVIDER_THROTTLE_RETRY_MS', '20000'));
+    this.providerThrottleRetryMs = config instanceof ConfigService
+      && Number.isFinite(configuredThrottleRetry)
+      && configuredThrottleRetry >= 20_000
+      ? Math.min(configuredThrottleRetry, 120_000)
+      : config instanceof ConfigService ? 20_000 : 1;
   }
 
   async listBoundStores(
@@ -234,6 +255,329 @@ export class DidiStoreBindingsService {
     };
   }
 
+  async selectLocalStores(
+    applicationId: string,
+    q: string | undefined,
+    actorRoles: AccountRole[] = [],
+    executePermissionAllowed = false,
+  ) {
+    const application = await this.application(applicationId);
+    const query = q?.trim();
+    const where: Prisma.ShopWhereInput = {
+      deletedAt: null,
+      brand: { is: { applicationId: application.id, deletedAt: null } },
+      ...(query ? {
+        OR: [
+          { shopId: { contains: query, mode: 'insensitive' } },
+          { appShopId: { contains: query, mode: 'insensitive' } },
+          { name: { contains: query, mode: 'insensitive' } },
+          { city: { contains: query, mode: 'insensitive' } },
+          { brand: { is: { brandName: { contains: query, mode: 'insensitive' } } } },
+        ],
+      } : {}),
+    };
+    const [shops, total] = await Promise.all([
+      this.prisma.shop.findMany({
+        where,
+        select: {
+          shopId: true,
+          appShopId: true,
+          name: true,
+          city: true,
+          brand: { select: { id: true, brandName: true } },
+        },
+        orderBy: [{ shopId: 'asc' }],
+        take: DIDI_MASS_MAX_SHOPS + 1,
+      }),
+      this.prisma.shop.count({ where }),
+    ]);
+    const selected = shops.slice(0, DIDI_MASS_MAX_SHOPS);
+    const appShopIds = [...new Set(selected.map(shop => shop.appShopId))];
+    const mappings = appShopIds.length ? await this.prisma.shop.findMany({
+      where: {
+        deletedAt: null,
+        appShopId: { in: appShopIds },
+        brand: { is: { applicationId: application.id, deletedAt: null } },
+      },
+      select: { shopId: true, appShopId: true },
+    }) : [];
+    const idsByAppShopId = new Map<string, Set<string>>();
+    for (const mapping of mappings) {
+      const ids = idsByAppShopId.get(mapping.appShopId) ?? new Set<string>();
+      ids.add(mapping.shopId);
+      idsByAppShopId.set(mapping.appShopId, ids);
+    }
+    const rows = selected.map(shop => ({
+      shopId: shop.shopId,
+      appShopId: shop.appShopId,
+      name: shop.name ?? '',
+      city: shop.city ?? '',
+      brandId: shop.brand.id,
+      brandName: shop.brand.brandName,
+      mappingConflict: (idsByAppShopId.get(shop.appShopId)?.size ?? 0) > 1,
+    }));
+    return {
+      application: this.publicApplication(application),
+      guards: this.guardStatus(application, actorRoles, executePermissionAllowed),
+      total,
+      max: DIDI_MASS_MAX_SHOPS,
+      truncated: total > DIDI_MASS_MAX_SHOPS,
+      conflicts: rows.filter(shop => shop.mappingConflict).length,
+      shops: rows,
+    };
+  }
+
+  async prepareMassExecution(dto: CreateDidiStoreBindingExecutionDto, actorRoles: AccountRole[]) {
+    this.assertUnique(dto.shops, true, DIDI_MASS_MAX_SHOPS);
+    if (dto.action === 'bind' && dto.shops.some(shop => shop.remotePageNo !== undefined)) {
+      throw new BadRequestException('remotePageNo is only allowed for Unbind');
+    }
+    if (dto.action === 'unbind' && dto.shops.some(shop => !shop.remotePageNo)) {
+      throw new BadRequestException('Every Unbind store requires remotePageNo from the DiDi shop-list page');
+    }
+    const application = await this.application(dto.applicationId);
+    this.assertWriteAllowed(
+      application,
+      dto.confirmation,
+      dto.action,
+      dto.shops,
+      dto.reason,
+      dto.productionAcknowledged,
+      actorRoles,
+    );
+    await this.assertLocalMappings(application, dto.shops);
+    return {
+      application: this.publicApplication(application),
+      environment: application.environment,
+      batchFingerprint: fingerprintBindingBatch(dto.shops),
+      applicationSnapshotFingerprint: createHash('sha256')
+        .update(`${application.appId}\u0000${application.encryptedSecret}`)
+        .digest('hex'),
+    };
+  }
+
+  async assertDurableRuntimeAllowed(
+    applicationId: string,
+    action: 'bind' | 'unbind',
+    expectedEnvironment: 'test' | 'production',
+    expectedApplicationSnapshotFingerprint?: string,
+  ) {
+    const application = await this.application(applicationId);
+    if (application.environment !== expectedEnvironment) {
+      throw new ConflictException('Application binding environment changed after this execution was queued');
+    }
+    const currentSnapshotFingerprint = createHash('sha256')
+      .update(`${application.appId}\u0000${application.encryptedSecret}`)
+      .digest('hex');
+    if (expectedApplicationSnapshotFingerprint
+      && currentSnapshotFingerprint !== expectedApplicationSnapshotFingerprint) {
+      throw new ConflictException('Application app_id or credential changed after this execution was queued');
+    }
+    if (!this.writesEnabled) {
+      throw new ForbiddenException('DiDi store binding writes are disabled by DIDI_STORE_BINDINGS_ENABLED');
+    }
+    if (application.environment === 'production') {
+      const enabled = action === 'bind' ? this.productionBindEnabled : this.productionUnbindEnabled;
+      if (!enabled) {
+        throw new ForbiddenException(
+          `Production DiDi ${action} is disabled by DIDI_STORE_BINDINGS_PRODUCTION_${action.toUpperCase()}_ENABLED`,
+        );
+      }
+    }
+    return application;
+  }
+
+  withDurableOperationLock<T>(applicationId: string, operation: () => Promise<T>) {
+    return this.withApplicationLock(applicationId, operation);
+  }
+
+  async executeDurableBindBatch(
+    applicationId: string,
+    shops: Array<{ shopId: string; appShopId: string }>,
+    expectedEnvironment: 'test' | 'production',
+    expectedApplicationSnapshotFingerprint?: string,
+    beforeSubmit?: () => Promise<void>,
+  ): Promise<DidiBindingResult[]> {
+    const application = await this.assertDurableRuntimeAllowed(
+      applicationId,
+      'bind',
+      expectedEnvironment,
+      expectedApplicationSnapshotFingerprint,
+    );
+    await this.assertLocalMappings(application, shops);
+    let secret = '';
+    let postStarted = false;
+    let explicitDecisionReceived = false;
+    try {
+      secret = decrypt(application.encryptedSecret, this.encryptionKey);
+      let submissionBoundaryPersisted = false;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        if (attempt > 1) {
+          const retryApplication = await this.assertDurableRuntimeAllowed(
+            applicationId,
+            'bind',
+            expectedEnvironment,
+            expectedApplicationSnapshotFingerprint,
+          );
+          await this.assertLocalMappings(retryApplication, shops);
+        }
+        const request = buildBindRequest(application.appId, secret, shops);
+        if (!submissionBoundaryPersisted && beforeSubmit) {
+          await beforeSubmit();
+          submissionBoundaryPersisted = true;
+        }
+        postStarted = true;
+        explicitDecisionReceived = false;
+        const response = await fetchWithEndpointContext(
+          DIDI_BIND_STORE_ENDPOINT,
+          `${DIDI_BASE}${DIDI_BIND_STORE_PATH}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: request.body,
+            signal: AbortSignal.timeout(this.requestTimeoutMs),
+          },
+        );
+        const body = parseJsonKeepingIds(await response.text());
+        const explicitProviderFailure = this.hasExplicitProviderErrno(body);
+        if (explicitProviderFailure) explicitDecisionReceived = true;
+        const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        if (Number(bodyRecord.errno) === 10005 && attempt < 3) {
+          await sleep(this.providerThrottleRetryMs);
+          continue;
+        }
+        if (!response.ok) {
+          if (explicitProviderFailure) return normalizeBindResults(shops, body);
+          throw new Error(`${DIDI_BIND_STORE_ENDPOINT} returned HTTP ${response.status} after submission`);
+        }
+        if (!isExplicitBindResponse(body)) {
+          throw new Error(`${DIDI_BIND_STORE_ENDPOINT} returned no explicit result (HTTP ${response.status})`);
+        }
+        explicitDecisionReceived = true;
+        return normalizeBindResults(shops, body);
+      }
+      throw new Error(`${DIDI_BIND_STORE_ENDPOINT} exhausted explicit throttle retries`);
+    } catch (error) {
+      const message = redactSensitiveText((error as Error).message, secret ? [secret] : []);
+      const unconfirmed = postStarted && !explicitDecisionReceived;
+      return shops.map(shop => ({
+        ...shop,
+        status: unconfirmed ? 'unconfirmed' : 'failed',
+        reason: unconfirmed ? `${message}. Verifica estado antes de reintentar.` : message,
+      }));
+    } finally {
+      this.invalidateBoundPageCache(application.id);
+    }
+  }
+
+  async verifyDurableUnbindPage(
+    applicationId: string,
+    shops: Array<{ shopId: string; appShopId: string }>,
+    pageNo: number,
+    expectedEnvironment: 'test' | 'production',
+    expectedApplicationSnapshotFingerprint?: string,
+  ) {
+    const application = await this.assertDurableRuntimeAllowed(
+      applicationId,
+      'unbind',
+      expectedEnvironment,
+      expectedApplicationSnapshotFingerprint,
+    );
+    const localMappings = await this.assertLocalMappings(application, shops);
+    const targets = application.environment === 'production' ? localMappings : shops;
+    const secret = decrypt(application.encryptedSecret, this.encryptionKey);
+    return this.verifyBoundMappingsOnPage(application, secret, targets, pageNo);
+  }
+
+  async executeDurableUnbindItem(
+    applicationId: string,
+    shop: { shopId: string; appShopId: string },
+    expectedEnvironment: 'test' | 'production',
+    expectedApplicationSnapshotFingerprint?: string,
+    beforeSubmit?: () => Promise<void>,
+  ): Promise<DidiBindingResult> {
+    const application = await this.assertDurableRuntimeAllowed(
+      applicationId,
+      'unbind',
+      expectedEnvironment,
+      expectedApplicationSnapshotFingerprint,
+    );
+    // Re-check each local mapping immediately before the token/submission
+    // boundary. A Brand or Application assignment can change while the other
+    // stores from the freshly verified remote page are being processed.
+    await this.assertLocalMappings(application, [shop]);
+    let secret = '';
+    let token = '';
+    let postStarted = false;
+    let explicitDecisionReceived = false;
+    try {
+      secret = decrypt(application.encryptedSecret, this.encryptionKey);
+      token = await getAuthToken(
+        application.appId,
+        secret,
+        shop.appShopId,
+        AbortSignal.timeout(this.requestTimeoutMs),
+      );
+      if (typeof token !== 'string' || !token.trim()) throw new Error('DiDi auth completed without an auth_token');
+      const submissionApplication = await this.assertDurableRuntimeAllowed(
+        applicationId,
+        'unbind',
+        expectedEnvironment,
+        expectedApplicationSnapshotFingerprint,
+      );
+      await this.assertLocalMappings(submissionApplication, [shop]);
+      if (beforeSubmit) await beforeSubmit();
+      postStarted = true;
+      const response = await fetchWithEndpointContext(
+        DIDI_UNBIND_STORE_ENDPOINT,
+        `${DIDI_BASE}${DIDI_UNBIND_STORE_PATH}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auth_token: token }),
+          signal: AbortSignal.timeout(this.requestTimeoutMs),
+        },
+      );
+      const parsed = parseJsonKeepingIds(await response.text());
+      const body = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null;
+      const rawErrno = body?.errno;
+      const errno = typeof rawErrno === 'number' && Number.isFinite(rawErrno)
+        ? rawErrno
+        : typeof rawErrno === 'string' && /^-?\d+$/.test(rawErrno)
+          ? Number(rawErrno)
+          : Number.NaN;
+      if (!Number.isFinite(errno)) {
+        throw new Error(`${DIDI_UNBIND_STORE_ENDPOINT} returned no explicit errno (HTTP ${response.status})`);
+      }
+      if (errno !== 0) {
+        explicitDecisionReceived = true;
+        throw new Error(
+          `${DIDI_UNBIND_STORE_ENDPOINT} failed: ${redactSensitiveText(body?.errmsg || `HTTP ${response.status}`, [token])}`
+          + ` (errno=${errno})`,
+        );
+      }
+      if (!response.ok) throw new Error(`${DIDI_UNBIND_STORE_ENDPOINT} returned HTTP ${response.status} after submission`);
+      if (body?.data !== true) throw new Error(`${DIDI_UNBIND_STORE_ENDPOINT} returned errno=0 without data=true`);
+      explicitDecisionReceived = true;
+      return { ...shop, status: 'success', submissionStarted: true };
+    } catch (error) {
+      const unconfirmed = postStarted && !explicitDecisionReceived;
+      const message = redactSensitiveText((error as Error).message, [token, secret].filter(Boolean));
+      return {
+        ...shop,
+        status: unconfirmed ? 'unconfirmed' : 'failed',
+        reason: unconfirmed ? `${message}. Verifica estado antes de reintentar.` : message,
+        submissionStarted: postStarted,
+      };
+    } finally {
+      this.invalidateBoundPageCache(application.id);
+    }
+  }
+
   async bind(dto: BindDidiStoresDto, actorId: string, actorRoles: AccountRole[]) {
     this.assertUnique(dto.shops, true, DIDI_BIND_MAX_SHOPS);
     const application = await this.application(dto.applicationId);
@@ -246,8 +590,11 @@ export class DidiStoreBindingsService {
       dto.productionAcknowledged,
       actorRoles,
     );
-    await this.assertLocalMappings(application, dto.shops);
-    return this.withApplicationLock(application.id, () => this.bindLocked(dto, actorId, application));
+    return this.withApplicationLock(application.id, async () => {
+      await this.assertNoDurableExecution(application.id);
+      await this.assertLocalMappings(application, dto.shops);
+      return this.bindLocked(dto, actorId, application);
+    });
   }
 
   private async bindLocked(dto: BindDidiStoresDto, actorId: string, application: BindingApplication) {
@@ -274,14 +621,21 @@ export class DidiStoreBindingsService {
         },
       );
       const body = parseJsonKeepingIds(await response.text());
+      const explicitProviderFailure = this.hasExplicitProviderErrno(body);
+      if (explicitProviderFailure) explicitDecisionReceived = true;
       if (!response.ok) {
-        throw new Error(`${DIDI_BIND_STORE_ENDPOINT} returned HTTP ${response.status} after submission`);
+        if (explicitProviderFailure) {
+          results = normalizeBindResults(dto.shops, body);
+        } else {
+          throw new Error(`${DIDI_BIND_STORE_ENDPOINT} returned HTTP ${response.status} after submission`);
+        }
+      } else {
+        if (!isExplicitBindResponse(body)) {
+          throw new Error(`${DIDI_BIND_STORE_ENDPOINT} returned no explicit result (HTTP ${response.status})`);
+        }
+        explicitDecisionReceived = true;
+        results = normalizeBindResults(dto.shops, body);
       }
-      if (!isExplicitBindResponse(body)) {
-        throw new Error(`${DIDI_BIND_STORE_ENDPOINT} returned no explicit result (HTTP ${response.status})`);
-      }
-      explicitDecisionReceived = true;
-      results = normalizeBindResults(dto.shops, body);
     } catch (error) {
       const message = redactSensitiveText((error as Error).message, secret ? [secret] : []);
       const unconfirmed = postStarted && !explicitDecisionReceived;
@@ -313,10 +667,13 @@ export class DidiStoreBindingsService {
         'Unbind requires remotePageNo from the DiDi shop-list page where the store was selected',
       );
     }
-    const localMappings = await this.assertLocalMappings(application, dto.shops);
     return this.withApplicationLock(
       application.id,
-      () => this.unbindLocked(dto, actorId, application, localMappings),
+      async () => {
+        await this.assertNoDurableExecution(application.id);
+        const localMappings = await this.assertLocalMappings(application, dto.shops);
+        return this.unbindLocked(dto, actorId, application, localMappings);
+      },
     );
   }
 
@@ -389,15 +746,15 @@ export class DidiStoreBindingsService {
           if (!Number.isFinite(errno)) {
             throw new Error(`${DIDI_UNBIND_STORE_ENDPOINT} returned no explicit errno (HTTP ${response.status})`);
           }
-          if (!response.ok) {
-            throw new Error(`${DIDI_UNBIND_STORE_ENDPOINT} returned HTTP ${response.status} after submission`);
-          }
           if (errno !== 0) {
             explicitDecisionReceived = true;
             throw new Error(
               `${DIDI_UNBIND_STORE_ENDPOINT} failed: ${redactSensitiveText(body?.errmsg || `HTTP ${response.status}`, [token])}`
               + ` (errno=${errno})`,
             );
+          }
+          if (!response.ok) {
+            throw new Error(`${DIDI_UNBIND_STORE_ENDPOINT} returned HTTP ${response.status} after submission`);
           }
           if (body?.data !== true) {
             throw new Error(`${DIDI_UNBIND_STORE_ENDPOINT} returned errno=0 without data=true`);
@@ -426,14 +783,36 @@ export class DidiStoreBindingsService {
   }
 
   private async withApplicationLock<T>(applicationId: string, operation: () => Promise<T>): Promise<T> {
-    if (this.activeApplications.has(applicationId)) {
-      throw new ConflictException('Another DiDi bind/unbind operation is already running for this application');
-    }
-    this.activeApplications.add(applicationId);
-    try {
-      return await operation();
-    } finally {
-      this.activeApplications.delete(applicationId);
+    return this.coordinator.withLock(applicationId, operation);
+  }
+
+  private hasExplicitProviderErrno(body: unknown) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+    const raw = (body as Record<string, unknown>).errno;
+    const errno = typeof raw === 'number' && Number.isFinite(raw)
+      ? raw
+      : typeof raw === 'string' && /^-?\d+$/.test(raw)
+        ? Number(raw)
+        : Number.NaN;
+    return Number.isFinite(errno) && errno !== 0;
+  }
+
+  private async assertNoDurableExecution(applicationId: string) {
+    // The optional check only exists to keep legacy isolated unit-test doubles
+    // compatible. PrismaService in the running application always has this
+    // delegate after the additive migration.
+    const delegate = (this.prisma as PrismaService & {
+      didiStoreBindingExecution?: {
+        findFirst(input: unknown): Promise<{ id: string } | null>;
+      };
+    }).didiStoreBindingExecution;
+    if (!delegate) return;
+    const active = await delegate.findFirst({
+      where: { applicationId, status: { in: ['pending', 'running'] } },
+      select: { id: true },
+    });
+    if (active) {
+      throw new ConflictException('A massive DiDi bind/unbind execution is active for this application');
     }
   }
 
@@ -675,7 +1054,7 @@ export class DidiStoreBindingsService {
     let responseOk = false;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const request = buildListBoundStoresRequest(application.appId, secret, pageNo, pageSize);
-      const response = await fetchWithEndpointContext(
+      const response = await this.coordinator.withShopListRateLimit(application.id, () => fetchWithEndpointContext(
         DIDI_LIST_BOUND_STORES_ENDPOINT,
         `${DIDI_BASE}${DIDI_LIST_BOUND_STORES_PATH}`,
         {
@@ -684,12 +1063,11 @@ export class DidiStoreBindingsService {
           body: request.body,
           signal: AbortSignal.timeout(this.requestTimeoutMs),
         },
-      );
+      ));
       responseStatus = response.status;
       responseOk = response.ok;
       body = parseJsonKeepingIds(await response.text()) as Record<string, unknown>;
       if (Number(body.errno) !== 10005 || attempt === 3) break;
-      await sleep(COOLDOWN_SHOPLIST_MS);
     }
     if (!responseOk || Number(body.errno) !== 0) {
       throw new Error(

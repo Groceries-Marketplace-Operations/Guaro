@@ -28,6 +28,9 @@ import { MassiveRtboService } from './massive-rtbo.service';
 import { DidiStoreBindingsController } from './didi-store-bindings.controller';
 import { DidiStoreBindingsAdminGuard } from './didi-store-bindings-admin.guard';
 import { DidiStoreBindingsService } from './didi-store-bindings.service';
+import { DidiStoreBindingCoordinator } from './didi-store-binding-coordinator.service';
+import { DidiStoreBindingExecutionsService } from './didi-store-binding-executions.service';
+import { DidiStoreBindingExecutionProcessor } from './didi-store-binding-execution.processor';
 
 @Module({
   imports: [
@@ -36,6 +39,7 @@ import { DidiStoreBindingsService } from './didi-store-bindings.service';
     BullModule.registerQueue({ name: 'menu-copy' }),
     BullModule.registerQueue({ name: 'offer-menu-upload' }),
     BullModule.registerQueue({ name: 'massive-rtbo' }),
+    BullModule.registerQueue({ name: 'didi-store-bindings' }),
   ],
   controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController, TargetedMenuController, MenuCopyController, OfferMenuUploadController, MassiveRtboController, DidiStoreBindingsController],
   providers: [
@@ -59,6 +63,9 @@ import { DidiStoreBindingsService } from './didi-store-bindings.service';
     MassiveRtboProcessor,
     DidiStoreBindingsAdminGuard,
     DidiStoreBindingsService,
+    DidiStoreBindingCoordinator,
+    DidiStoreBindingExecutionsService,
+    DidiStoreBindingExecutionProcessor,
   ],
   exports: [TargetedPromotionReaderService],
 })

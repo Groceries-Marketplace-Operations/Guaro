@@ -13,7 +13,14 @@ async function bootstrap() {
     console.log(`TLS: ${systemCertificateCount} system certificate authorities enabled`);
   }
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: false,
+  });
+
+  // A 7,000-store binding job is larger than Express' 100 KB default. Keep
+  // this bounded: DTO validation still enforces the exact 7,000-item limit.
+  app.useBodyParser('json', { limit: '8mb' });
+  app.useBodyParser('urlencoded', { extended: true, limit: '100kb' });
 
   // Static downloads need CORS when frontend and backend use different origins.
   app.enableCors();

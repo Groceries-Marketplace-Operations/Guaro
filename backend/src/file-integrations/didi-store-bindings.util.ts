@@ -8,6 +8,7 @@ export const DIDI_UNBIND_STORE_PATH = '/v1/shop/shop/unbind';
 export const DIDI_LIST_BOUND_STORES_ENDPOINT = 'POST /v1/shop/shop/list';
 export const DIDI_LIST_BOUND_STORES_PATH = '/v1/shop/shop/list';
 export const DIDI_BIND_MAX_SHOPS = 50;
+export const DIDI_MASS_MAX_SHOPS = 7000;
 // Unbind performs a token flow and a mutating request per store. Keep it
 // intentionally single-store until operations are durable and resumable.
 export const DIDI_UNBIND_MAX_SHOPS = 1;
@@ -22,6 +23,8 @@ export interface DidiBindingResult {
   appShopId: string;
   status: 'success' | 'failed' | 'unconfirmed';
   reason?: string;
+  /** Internal durability signal; never exposes credentials or tokens. */
+  submissionStarted?: boolean;
 }
 
 export interface DidiBindingSummary {
@@ -133,7 +136,10 @@ export function exactConfirmation(
     : `DESVINCULAR ${shops.length} TIENDAS`;
   if (environment === 'test') return operation;
   if (!/^\d+$/.test(appId)) throw new Error('A decimal app_id is required for production confirmation');
-  if (action === 'unbind') {
+  // Keep the original single-store Unbind phrase for backwards compatibility.
+  // A massive Unbind is pinned to the entire canonical batch, just like Bind,
+  // so changing any row invalidates the production confirmation.
+  if (action === 'unbind' && shops.length === 1) {
     const shopId = shops[0]?.shopId;
     if (!shopId || !/^\d+$/.test(shopId)) throw new Error('A decimal shop_id is required for production Unbind confirmation');
     return `PRODUCCION ${operation} APP_ID ${appId} SHOP_ID ${shopId}`;
@@ -219,7 +225,9 @@ export function normalizeBindResults(
   const outer = record(body) ?? {};
   const errno = didiErrno(outer);
   if (errno !== null && errno !== 0) {
-    const reason = redactSensitiveText(outer.errmsg || `DiDi errno=${text(outer.errno)}`);
+    const reason = redactSensitiveText(
+      `${outer.errmsg || 'DiDi rejected the binding'} (errno=${text(outer.errno)})`,
+    );
     return requested.map(shop => ({ ...shop, status: 'failed', reason }));
   }
 
