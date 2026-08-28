@@ -247,6 +247,17 @@ export const massiveRtboApi = {
   stop: (id: string) => client.post(`/integrations/massive-rtbo/executions/${id}/stop`),
 };
 
+export const didiStoreBindingsApi = {
+  shops: (applicationId: string) => client.get<import('../types').DidiStoreBindingShopsResponse>(
+    '/integrations/didi-store-bindings/shops',
+    { params: { applicationId, pageNo: 1, pageSize: 100 } },
+  ),
+  bind: (data: import('../types').DidiStoreBindingRequest) =>
+    client.post<import('../types').DidiStoreBindingResponse>('/integrations/didi-store-bindings/bind', data),
+  unbind: (data: import('../types').DidiStoreBindingRequest) =>
+    client.post<import('../types').DidiStoreBindingResponse>('/integrations/didi-store-bindings/unbind', data),
+};
+
 export const promotionApi = {
   contract: () => client.get('/integrations/promotion-api/contract'),
   execute: (data: object) => client.post('/integrations/promotion-api/execute', data),

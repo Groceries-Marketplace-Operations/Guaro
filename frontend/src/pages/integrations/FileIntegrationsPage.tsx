@@ -11,6 +11,7 @@ import OfferMenuUploadSection from './OfferMenuUploadSection';
 import StoreFileSplitterSection from './StoreFileSplitterSection';
 import DailyStatusActivationSection from './DailyStatusActivationSection';
 import MassiveRtboSection from './MassiveRtboSection';
+import DidiStoreBindingsSection from './DidiStoreBindingsSection';
 import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 
 interface RuleForm {
@@ -30,7 +31,7 @@ interface RuleForm {
   maxFilesPerRun: number;
 }
 
-type CustomIntegrationSection = 'sftp' | 'massive-rtbo' | 'daily-activation' | 'store-splitter' | 'offer-menu' | 'targeted-menu' | 'cross-app';
+type CustomIntegrationSection = 'sftp' | 'massive-rtbo' | 'didi-store-bindings' | 'daily-activation' | 'store-splitter' | 'offer-menu' | 'targeted-menu' | 'cross-app';
 
 const runningStatuses = new Set(['pending', 'running']);
 
@@ -152,6 +153,11 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           <span className="custom-integration-icon">RT</span>
           <span><strong>Massive RTBO</strong><small>Actualiza promise_produce_time por aplicación y tienda</small></span>
         </button>
+        <button type="button" className={customSection === 'didi-store-bindings' ? 'is-active' : ''} onClick={() => setCustomSection('didi-store-bindings')} aria-selected={customSection === 'didi-store-bindings'}>
+          <span className="custom-integration-icon">BU</span>
+          <span><strong>DiDi Bind / Unbind</strong><small>Vinculación masiva y controlada para integraciones de prueba</small></span>
+          <span className="badge">TEST</span>
+        </button>
         <button type="button" className={customSection === 'store-splitter' ? 'is-active' : ''} onClick={() => setCustomSection('store-splitter')} aria-selected={customSection === 'store-splitter'}>
           <span className="custom-integration-icon">ST</span>
           <span><strong>Split CSV por tienda</strong><small>Divide preciosdidi por sucursal y publica los archivos resultantes</small></span>
@@ -176,6 +182,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
       </div>}
       {isFilter && customSection === 'targeted-menu' && <TargetedMenuSection />}
       {isFilter && customSection === 'massive-rtbo' && <MassiveRtboSection />}
+      {isFilter && customSection === 'didi-store-bindings' && <DidiStoreBindingsSection />}
       {isFilter && customSection === 'store-splitter' && <StoreFileSplitterSection />}
       {isFilter && customSection === 'daily-activation' && <DailyStatusActivationSection />}
       {isFilter && customSection === 'offer-menu' && <OfferMenuUploadSection />}

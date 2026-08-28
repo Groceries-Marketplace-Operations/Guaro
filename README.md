@@ -1715,6 +1715,9 @@ function MiComponente() {
 | `GOOGLE_CALLBACK_URL` | URL de callback OAuth | Debe coincidir con Google Console |
 | `FRONTEND_URL` | URL base del frontend | — |
 | `APP_SECRET_ENCRYPTION_KEY` | Clave AES-256 (64 hex chars) | `openssl rand -hex 32` |
+| `DIDI_STORE_BINDINGS_ENABLED` | Kill switch de Bind/Unbind DiDi de prueba (default: `true`). Bind admite hasta 50 tiendas; Unbind, 1 por operación. | — |
+| `DIDI_STORE_BINDINGS_TEST_APP_IDS` | Allowlist CSV exacta de `app_id` de prueba | — |
+| `DIDI_STORE_BINDINGS_TIMEOUT_MS` | Timeout por request DiDi de Bind/Unbind (default: 30000) | — |
 | `ALERT_WEBHOOK_URL` | URL del webhook de alertas | — |
 | `NODE_ENV` | `production` o `development` | — |
 

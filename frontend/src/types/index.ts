@@ -156,6 +156,72 @@ export interface Application {
   createdAt: string;
 }
 
+export interface DidiStoreBindingShop {
+  shopId: string;
+  appShopId: string;
+  name?: string | null;
+  shopName?: string | null;
+  city?: string | null;
+  bound?: boolean | null;
+  bindingStatus?: string | null;
+}
+
+export interface DidiStoreBindingShopsResponse {
+  application?: {
+    id: string;
+    appId: string;
+    appName: string;
+    country: Country;
+    environment: string;
+  };
+  guards?: {
+    writesEnabled: boolean;
+    productionWritesEnabled: boolean;
+    canWrite: boolean;
+  };
+  confirmation?: { bind: string; unbind: string };
+  pageNo?: number;
+  pageSize?: number;
+  totalPages?: number;
+  total?: number;
+  shops?: DidiStoreBindingShop[];
+  data?: DidiStoreBindingShop[];
+}
+
+export interface DidiStoreBindingRequest {
+  applicationId: string;
+  shops: Array<{ shopId: string; appShopId: string }>;
+  confirmation: string;
+}
+
+export interface DidiStoreBindingResult {
+  shopId?: string | null;
+  appShopId?: string | null;
+  status?: string | null;
+  success?: boolean;
+  reason?: string | null;
+  error?: string | null;
+  message?: string | null;
+  errno?: string | number | null;
+}
+
+export interface DidiStoreBindingResponse {
+  operationId?: string;
+  action?: 'bind' | 'unbind';
+  summary?: {
+    total?: number;
+    requested?: number;
+    succeeded?: number;
+    failed?: number;
+    skipped?: number;
+    unconfirmed?: number;
+    status?: string;
+  };
+  results: DidiStoreBindingResult[];
+  auditPersisted?: boolean;
+  durationMs?: number;
+}
+
 export interface StepInstance {
   id: string;
   status: StepStatus;

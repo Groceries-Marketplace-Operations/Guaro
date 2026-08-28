@@ -8,6 +8,8 @@ interface ApplicationSearchFieldProps {
   displayValue: string;
   onChange: (applicationId: string, displayValue: string, application?: Application) => void;
   placeholder?: string;
+  applicationFilter?: (application: Application) => boolean;
+  emptyMessage?: string;
 }
 
 function applicationLabel(application: Application) {
@@ -19,6 +21,8 @@ export default function ApplicationSearchField({
   displayValue,
   onChange,
   placeholder = 'Escribe el nombre o App ID…',
+  applicationFilter,
+  emptyMessage = 'No se encontraron aplicaciones.',
 }: ApplicationSearchFieldProps) {
   const [query, setQuery] = useState(displayValue);
   const [debounced, setDebounced] = useState(displayValue);
@@ -34,7 +38,10 @@ export default function ApplicationSearchField({
     queryFn: () => applicationsApi.list({ q: debounced || undefined, page: 1, limit: 20 }).then(response => response.data),
     enabled: open,
   });
-  const applications = useMemo(() => data?.data ?? [], [data]);
+  const applications = useMemo(() => {
+    const values = data?.data ?? [];
+    return applicationFilter ? values.filter(applicationFilter) : values;
+  }, [applicationFilter, data]);
 
   return <div style={{ position: 'relative' }}>
     <input
@@ -54,7 +61,7 @@ export default function ApplicationSearchField({
     />
     {open && <div className="card" style={{ position: 'absolute', zIndex: 30, top: 'calc(100% + 4px)', left: 0, right: 0, maxHeight: 260, overflowY: 'auto', padding: 5, boxShadow: '0 12px 30px rgba(0,0,0,.14)' }}>
       {isFetching && <p className="text-muted" style={{ padding: 10, fontSize: 12 }}>Buscando aplicaciones…</p>}
-      {!isFetching && applications.length === 0 && <p className="text-muted" style={{ padding: 10, fontSize: 12 }}>No se encontraron aplicaciones.</p>}
+      {!isFetching && applications.length === 0 && <p className="text-muted" style={{ padding: 10, fontSize: 12 }}>{emptyMessage}</p>}
       {applications.map(application => <button
         key={application.id}
         type="button"
