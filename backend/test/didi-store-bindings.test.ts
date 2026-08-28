@@ -56,16 +56,23 @@ function service(options: {
   writesEnabled?: boolean;
   productionBindEnabled?: boolean;
   productionUnbindEnabled?: boolean;
+  localShopCount?: number;
   localShops?: Array<{
     shopId: string;
     appShopId: string;
     applicationId: string | null;
+    name?: string | null;
+    city?: string | null;
+    brandId?: string;
+    brandName?: string;
     deletedAt?: Date | null;
     brandDeletedAt?: Date | null;
   }>;
 } = {}) {
   const auditCreates: unknown[] = [];
   const auditUpdates: unknown[] = [];
+  const shopFindManyCalls: unknown[] = [];
+  const shopCountCalls: unknown[] = [];
   const prisma = {
     application: {
       findFirst: async () => ({
@@ -78,12 +85,26 @@ function service(options: {
       }),
     },
     shop: {
-      findMany: async () => (options.localShops ?? []).map(shop => ({
-        shopId: shop.shopId,
-        appShopId: shop.appShopId,
-        deletedAt: shop.deletedAt ?? null,
-        brand: { applicationId: shop.applicationId, deletedAt: shop.brandDeletedAt ?? null },
-      })),
+      findMany: async (input: unknown) => {
+        shopFindManyCalls.push(input);
+        return (options.localShops ?? []).map(shop => ({
+          shopId: shop.shopId,
+          appShopId: shop.appShopId,
+          name: shop.name ?? null,
+          city: shop.city ?? null,
+          deletedAt: shop.deletedAt ?? null,
+          brand: {
+            id: shop.brandId ?? '44444444-4444-4444-8444-444444444444',
+            brandName: shop.brandName ?? 'Circle K',
+            applicationId: shop.applicationId,
+            deletedAt: shop.brandDeletedAt ?? null,
+          },
+        }));
+      },
+      count: async (input: unknown) => {
+        shopCountCalls.push(input);
+        return options.localShopCount ?? options.localShops?.length ?? 0;
+      },
     },
     accessControlAudit: {
       create: async (input: unknown) => {
@@ -115,6 +136,8 @@ function service(options: {
     value: new DidiStoreBindingsService(prisma as never, config as never),
     auditCreates,
     auditUpdates,
+    shopFindManyCalls,
+    shopCountCalls,
   };
 }
 
@@ -190,11 +213,18 @@ test('DTOs enforce exact shop IDs, required unbind mappings and operation-specif
       { shopId: SHOP_2, appShopId: '002' },
     ],
     confirmation: 'DESVINCULAR 2 TIENDAS',
+    remotePageNo: 1,
+  });
+  const missingRemotePage = plainToInstance(UnbindDidiStoresDto, {
+    applicationId: APPLICATION_ID,
+    shops: [{ shopId: SHOP_1, appShopId: '001' }],
+    confirmation: 'DESVINCULAR 1 TIENDAS',
   });
 
   assert.ok((await validate(tooMany)).some(error => error.property === 'shops'));
   assert.ok((await validate(missingUnbindShopId)).some(error => error.property === 'shops'));
   assert.ok((await validate(tooManyUnbind)).some(error => error.property === 'shops'));
+  assert.ok((await validate(missingRemotePage)).some(error => error.property === 'remotePageNo'));
 });
 
 test('bind normalization keeps partial results and never returns auth tokens', () => {
@@ -368,6 +398,202 @@ test('shop-list capabilities reflect the effective execute permission', async (t
   assert.equal(allowed.guards.canUnbind, true);
 });
 
+test('local Bind catalog searches and paginates 7,000 shops without a DiDi request', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let providerCalls = 0;
+  global.fetch = (async () => {
+    providerCalls += 1;
+    throw new Error('local catalog must not call DiDi');
+  }) as typeof fetch;
+
+  const created = service({
+    localShopCount: 7_000,
+    localShops: [{
+      shopId: SHOP_1,
+      appShopId: '001',
+      applicationId: APPLICATION_ID,
+      name: 'Needle Store',
+      city: 'Monterrey',
+      brandName: 'Circle K Norte',
+    }],
+  });
+  const response = await created.value.listLocalStores({
+    applicationId: APPLICATION_ID,
+    q: '  needle  ',
+    pageNo: 70,
+    pageSize: 100,
+  }, ADMIN_ROLES, true);
+
+  assert.equal(providerCalls, 0);
+  assert.equal(response.source, 'local');
+  assert.equal(response.total, 7_000);
+  assert.equal(response.totalPages, 70);
+  assert.equal(response.pageNo, 70);
+  assert.equal(response.shops[0].shopId, SHOP_1);
+  assert.equal(response.shops[0].brandName, 'Circle K Norte');
+  assert.equal(response.guards.canBind, true);
+  assert.equal(created.shopFindManyCalls.length, 2);
+  assert.equal(created.shopCountCalls.length, 1);
+  const query = created.shopFindManyCalls[0] as {
+    where: { brand: { is: { applicationId: string; deletedAt: null } }; OR: unknown[] };
+    skip: number;
+    take: number;
+  };
+  assert.equal(query.where.brand.is.applicationId, APPLICATION_ID);
+  assert.equal(query.where.brand.is.deletedAt, null);
+  assert.equal(query.skip, 6_900);
+  assert.equal(query.take, 100);
+  assert.match(JSON.stringify(query.where.OR), /needle/);
+  assert.match(JSON.stringify(query.where.OR), /brandName/);
+  assert.doesNotMatch(JSON.stringify(response), new RegExp(SECRET));
+});
+
+test('duplicate active appShopId mappings are marked locally and block Bind and Unbind before DiDi', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let providerCalls = 0;
+  global.fetch = (async () => {
+    providerCalls += 1;
+    throw new Error('conflicted mappings must not call DiDi');
+  }) as typeof fetch;
+  const created = service({
+    localShops: [
+      {
+        shopId: SHOP_1,
+        appShopId: 'duplicate-001',
+        applicationId: APPLICATION_ID,
+        brandId: '44444444-4444-4444-8444-444444444444',
+        brandName: 'Brand One',
+      },
+      {
+        shopId: SHOP_2,
+        appShopId: 'duplicate-001',
+        applicationId: APPLICATION_ID,
+        brandId: '55555555-5555-4555-8555-555555555555',
+        brandName: 'Brand Two',
+      },
+    ],
+  });
+
+  const catalog = await created.value.listLocalStores({
+    applicationId: APPLICATION_ID,
+    pageNo: 1,
+    pageSize: 100,
+  }, ADMIN_ROLES, true);
+  assert.ok(catalog.shops.every(shop => shop.mappingConflict));
+
+  await assert.rejects(
+    () => created.value.bind({
+      applicationId: APPLICATION_ID,
+      shops: [{ shopId: SHOP_1, appShopId: 'duplicate-001' }],
+      confirmation: 'VINCULAR 1 TIENDAS',
+    }, ACTOR_ID, ADMIN_ROLES),
+    /maps to multiple active shopIds/,
+  );
+  await assert.rejects(
+    () => created.value.unbind({
+      applicationId: APPLICATION_ID,
+      shops: [{ shopId: SHOP_1, appShopId: 'duplicate-001' }],
+      confirmation: 'DESVINCULAR 1 TIENDAS',
+      remotePageNo: 1,
+    }, ACTOR_ID, ADMIN_ROLES),
+    /maps to multiple active shopIds/,
+  );
+  assert.equal(providerCalls, 0);
+});
+
+test('remote page browsing caches and deduplicates the same Application page', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let providerCalls = 0;
+  let notifyStarted!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>(resolve => { notifyStarted = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  global.fetch = (async (input) => {
+    if (!String(input).endsWith(DIDI_LIST_BOUND_STORES_PATH)) {
+      throw new Error(`Unexpected URL ${String(input)}`);
+    }
+    providerCalls += 1;
+    notifyStarted();
+    await gate;
+    return new Response(JSON.stringify({
+      errno: 0,
+      data: {
+        page_no: 37,
+        page_size: 100,
+        total_page: 70,
+        total_cnt: 7_000,
+        shops: [{ shop_id: SHOP_1, app_shop_id: '001', bound_flag: 1 }],
+      },
+    }), { status: 200 });
+  }) as typeof fetch;
+  const created = service();
+  const dto = { applicationId: APPLICATION_ID, pageNo: 37, pageSize: 100 };
+
+  const first = created.value.listBoundStores(dto, ADMIN_ROLES, true);
+  await started;
+  const second = created.value.listBoundStores(dto, ADMIN_ROLES, true);
+  release();
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+  const thirdResponse = await created.value.listBoundStores(dto, ADMIN_ROLES, true);
+
+  assert.equal(providerCalls, 1);
+  assert.equal(firstResponse.remoteSnapshot.cacheStatus, 'miss');
+  assert.equal(secondResponse.remoteSnapshot.cacheStatus, 'shared');
+  assert.equal(thirdResponse.remoteSnapshot.cacheStatus, 'hit');
+  assert.equal(firstResponse.remoteSnapshot.fetchedAt, thirdResponse.remoteSnapshot.fetchedAt);
+  assert.equal(thirdResponse.totalPages, 70);
+});
+
+test('a completed Bind invalidates cached remote pages for its Application', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let listCalls = 0;
+  let bindPosts = 0;
+  global.fetch = (async (input) => {
+    const url = String(input);
+    if (url.endsWith(DIDI_LIST_BOUND_STORES_PATH)) {
+      listCalls += 1;
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: {
+          page_no: 2,
+          page_size: 100,
+          total_page: 70,
+          total_cnt: 7_000,
+          shops: [{ shop_id: SHOP_1, app_shop_id: '001', bound_flag: 0 }],
+        },
+      }), { status: 200 });
+    }
+    if (url.endsWith(DIDI_BIND_STORE_PATH)) {
+      bindPosts += 1;
+      return new Response(JSON.stringify({
+        success_list: [{ shop_id: SHOP_1, app_shop_id: '001' }],
+        failure_list: [],
+      }), { status: 200 });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  }) as typeof fetch;
+  const created = service();
+  const listDto = { applicationId: APPLICATION_ID, pageNo: 2, pageSize: 100 };
+
+  await created.value.listBoundStores(listDto, ADMIN_ROLES, true);
+  const cached = await created.value.listBoundStores(listDto, ADMIN_ROLES, true);
+  assert.equal(cached.remoteSnapshot.cacheStatus, 'hit');
+  await created.value.bind({
+    applicationId: APPLICATION_ID,
+    shops: [{ shopId: SHOP_1, appShopId: '001' }],
+    confirmation: 'VINCULAR 1 TIENDAS',
+  }, ACTOR_ID, ADMIN_ROLES);
+  const refreshed = await created.value.listBoundStores(listDto, ADMIN_ROLES, true);
+
+  assert.equal(bindPosts, 1);
+  assert.equal(listCalls, 2);
+  assert.equal(refreshed.remoteSnapshot.cacheStatus, 'miss');
+});
+
 test('production writes fail closed for role, switch, reason, acknowledgement and confirmation', async (t) => {
   const originalFetch = global.fetch;
   t.after(() => { global.fetch = originalFetch; });
@@ -487,7 +713,9 @@ test('production Unbind revalidates the exact remote page mapping before auth or
       return new Response(JSON.stringify({
         errno: 0,
         data: { page_no: 7, page_size: 100, total_cnt: 1, shops: [
-          { shop_id: SHOP_2, app_shop_id: '001', bound_flag: 1 },
+          listCalls === 1
+            ? { shop_id: SHOP_1, app_shop_id: '001', bound_flag: 1 }
+            : { shop_id: SHOP_2, app_shop_id: '001', bound_flag: 1 },
         ] },
       }), { status: 200 });
     }
@@ -504,6 +732,12 @@ test('production Unbind revalidates the exact remote page mapping before auth or
     localShops: [{ shopId: SHOP_1, appShopId: '001', applicationId: APPLICATION_ID }],
   });
   const shops = [{ shopId: SHOP_1, appShopId: '001' }];
+  const cached = await created.value.listBoundStores({
+    applicationId: APPLICATION_ID,
+    pageNo: 7,
+    pageSize: 100,
+  }, SUPER_ADMIN_ROLES, true);
+  assert.equal(cached.remoteSnapshot.cacheStatus, 'miss');
   const response = await created.value.unbind({
     applicationId: APPLICATION_ID,
     shops,
@@ -513,7 +747,7 @@ test('production Unbind revalidates the exact remote page mapping before auth or
     remotePageNo: 7,
   }, ACTOR_ID, SUPER_ADMIN_ROLES);
 
-  assert.equal(listCalls, 1);
+  assert.equal(listCalls, 2);
   assert.equal(authCalls, 0);
   assert.equal(unbindPosts, 0);
   assert.equal(response.summary.failed, 1);
@@ -543,7 +777,7 @@ test('production Unbind requires a freshly loaded remote page before provider ac
       confirmation: exactConfirmation('unbind', shops, 'production', PRODUCTION_APP_ID),
       reason: 'INC-4098 approved production unlink',
       productionAcknowledged: true,
-    }, ACTOR_ID, SUPER_ADMIN_ROLES),
+    } as unknown as UnbindDidiStoresDto, ACTOR_ID, SUPER_ADMIN_ROLES),
     /requires remotePageNo/,
   );
   assert.equal(calls, 0);
@@ -747,6 +981,7 @@ test('master write kill switch blocks Bind and Unbind with zero provider calls',
       applicationId: APPLICATION_ID,
       shops: [{ shopId: SHOP_1, appShopId: '001' }],
       confirmation: 'DESVINCULAR 1 TIENDAS',
+      remotePageNo: 1,
     }, ACTOR_ID, ADMIN_ROLES),
     /writes are disabled/,
   );
@@ -801,6 +1036,7 @@ test('duplicates and a non-test application are rejected before any provider req
         { shopId: SHOP_2, appShopId: '002' },
       ],
       confirmation: 'DESVINCULAR 2 TIENDAS',
+      remotePageNo: 1,
     }, ACTOR_ID, ADMIN_ROLES),
     /At most 1 store is allowed/,
   );
@@ -861,18 +1097,20 @@ test('unbind verifies the exact remote mapping before auth and redacts provider 
   const originalFetch = global.fetch;
   t.after(() => { global.fetch = originalFetch; });
   const calls: string[] = [];
+  const listBodies: string[] = [];
   const token = 'unbind-auth-token-secret';
-  global.fetch = (async (input) => {
+  global.fetch = (async (input, init) => {
     const url = String(input);
     calls.push(url);
     if (url.endsWith(DIDI_LIST_BOUND_STORES_PATH)) {
+      listBodies.push(String(init?.body ?? ''));
       return new Response(JSON.stringify({
         errno: 0,
         data: {
-          page_no: 1,
+          page_no: 70,
           page_size: 100,
-          total_page: 1,
-          total_cnt: 2,
+          total_page: 70,
+          total_cnt: 7_000,
           shops: [
             { shop_id: SHOP_1, app_shop_id: '001', bound_flag: 1 },
             { shop_id: SHOP_2, app_shop_id: '002', bound_flag: 1 },
@@ -897,9 +1135,12 @@ test('unbind verifies the exact remote mapping before auth and redacts provider 
     applicationId: APPLICATION_ID,
     shops: [{ shopId: SHOP_1, appShopId: '001' }],
     confirmation: 'DESVINCULAR 1 TIENDAS',
+    remotePageNo: 70,
   }, ACTOR_ID, ADMIN_ROLES);
 
   assert.match(calls[0], new RegExp(`${DIDI_LIST_BOUND_STORES_PATH}$`));
+  assert.equal(listBodies.length, 1);
+  assert.match(listBodies[0], /"page_no":70/);
   assert.equal(calls.filter(url => url.includes('/authtoken/refresh')).length, 1);
   assert.equal(calls.filter(url => url.endsWith(DIDI_UNBIND_STORE_PATH)).length, 1);
   assert.deepEqual(response.summary, {
@@ -941,12 +1182,13 @@ test('single-store unbind rejects a mismatched remote mapping before requesting 
     applicationId: APPLICATION_ID,
     shops: [{ shopId: SHOP_3, appShopId: '002' }],
     confirmation: 'DESVINCULAR 1 TIENDAS',
+    remotePageNo: 1,
   }, ACTOR_ID, ADMIN_ROLES);
 
   assert.equal(calls.length, 1);
   assert.match(calls[0], new RegExp(`${DIDI_LIST_BOUND_STORES_PATH}$`));
   assert.equal(response.summary.failed, 1);
-  assert.match(response.results[0].message ?? '', /Mapping mismatch/);
+  assert.match(response.results[0].message ?? '', /mapping mismatch/i);
 });
 
 test('bind marks every store unconfirmed when the POST has no valid provider response', async (t) => {
@@ -1020,6 +1262,7 @@ test('unbind distinguishes POST uncertainty from explicit provider failure', asy
     applicationId: APPLICATION_ID,
     shops: [{ shopId: SHOP_1, appShopId: '001' }],
     confirmation: 'DESVINCULAR 1 TIENDAS',
+    remotePageNo: 1,
   }, ACTOR_ID, ADMIN_ROLES);
 
   assert.deepEqual(response.summary, {
@@ -1070,6 +1313,7 @@ test('unbind treats HTTP 200 errno=0 without data=true as unconfirmed', async (t
     applicationId: APPLICATION_ID,
     shops: [{ shopId: SHOP_1, appShopId: '001' }],
     confirmation: 'DESVINCULAR 1 TIENDAS',
+    remotePageNo: 1,
   }, ACTOR_ID, ADMIN_ROLES);
 
   assert.equal(response.summary.unconfirmed, 1);
@@ -1147,6 +1391,7 @@ test('non-2xx responses after mutating POST stay unconfirmed even with success-l
     applicationId: APPLICATION_ID,
     shops: [{ shopId: SHOP_1, appShopId: '001' }],
     confirmation: 'DESVINCULAR 1 TIENDAS',
+    remotePageNo: 1,
   }, ACTOR_ID, ADMIN_ROLES);
   assert.equal(unbind.summary.unconfirmed, 1);
   assert.equal(unbind.summary.succeeded, 0);
@@ -1182,6 +1427,7 @@ test('unbind keeps an auth failure before POST as failed', async (t) => {
     applicationId: APPLICATION_ID,
     shops: [{ shopId: SHOP_1, appShopId: '001' }],
     confirmation: 'DESVINCULAR 1 TIENDAS',
+    remotePageNo: 1,
   }, ACTOR_ID, ADMIN_ROLES);
 
   assert.equal(unbindPosts, 0);

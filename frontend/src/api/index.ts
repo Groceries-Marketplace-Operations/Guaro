@@ -252,6 +252,10 @@ export const didiStoreBindingsApi = {
     '/integrations/didi-store-bindings/shops',
     { params: { applicationId, pageNo, pageSize: 100 } },
   ),
+  localShops: (applicationId: string, q = '', pageNo = 1) => client.get<import('../types').DidiStoreBindingShopsResponse>(
+    '/integrations/didi-store-bindings/local-shops',
+    { params: { applicationId, ...(q ? { q } : {}), pageNo, pageSize: 100 } },
+  ),
   bind: (data: import('../types').DidiStoreBindingRequest) =>
     client.post<import('../types').DidiStoreBindingResponse>('/integrations/didi-store-bindings/bind', data),
   unbind: (data: import('../types').DidiStoreBindingRequest) =>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { type ChangeEvent, type FormEvent, useDeferredValue, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { didiStoreBindingsApi } from '../../api';
 import Modal from '../../components/ui/Modal';
@@ -27,8 +27,20 @@ interface MutationVariables {
   request: DidiStoreBindingRequest;
 }
 
+interface SelectedListShop extends DidiStoreBindingShop {
+  sourcePage: number;
+}
+
+interface CachedShopMatch {
+  pageNo: number;
+  shop: DidiStoreBindingShop;
+}
+
 const BIND_MAX_SHOPS = 50;
 const UNBIND_MAX_SHOPS = 1;
+const SHOP_PAGE_SIZE = 100;
+const MAX_IMPORT_BYTES = 256 * 1024;
+const MAX_IMPORT_CHARS = 32_000;
 const shopIdPattern = /^57\d{17}$/;
 const successfulStatuses = new Set(['success', 'succeeded', 'done', 'bound', 'unbound']);
 const failedStatuses = new Set(['error', 'failed', 'rejected']);
@@ -49,6 +61,7 @@ function bindingState(shop: DidiStoreBindingShop): 'bound' | 'unbound' | 'unknow
 }
 
 function isEligible(shop: DidiStoreBindingShop, operation: Operation) {
+  if (shop.mappingConflict) return false;
   const state = bindingState(shop);
   return state === 'unknown' || (operation === 'bind' ? state === 'unbound' : state === 'bound');
 }
@@ -194,8 +207,11 @@ export default function DidiStoreBindingsSection() {
   const [application, setApplication] = useState<Application | null>(null);
   const [shopsLoadRequested, setShopsLoadRequested] = useState(false);
   const [shopPage, setShopPage] = useState(1);
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [pageDraft, setPageDraft] = useState('1');
+  const [selectedListShops, setSelectedListShops] = useState<Map<string, SelectedListShop>>(() => new Map());
   const [manualInput, setManualInput] = useState('');
+  const [importMessage, setImportMessage] = useState('');
+  const [selectionNotice, setSelectionNotice] = useState('');
   const [shopSearch, setShopSearch] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmation, setConfirmation] = useState('');
@@ -206,13 +222,26 @@ export default function DidiStoreBindingsSection() {
   const [operationMeta, setOperationMeta] = useState<Pick<DidiStoreBindingResponse, 'operationId' | 'auditPersisted' | 'durationMs'>>();
   const [batchError, setBatchError] = useState('');
   const maxShops = operation === 'bind' ? BIND_MAX_SHOPS : UNBIND_MAX_SHOPS;
+  const listSource = operation === 'bind' ? 'local' : 'remote';
+  const deferredShopSearch = useDeferredValue(shopSearch.trim());
 
   const shopsQuery = useQuery<DidiStoreBindingShopsResponse>({
-    queryKey: ['didi-store-bindings', 'shops', applicationId, shopPage],
-    queryFn: () => didiStoreBindingsApi.shops(applicationId, shopPage).then(response => response.data),
+    queryKey: [
+      'didi-store-bindings',
+      'shops',
+      applicationId,
+      listSource,
+      shopPage,
+      listSource === 'local' ? deferredShopSearch : '',
+    ],
+    queryFn: () => (listSource === 'local'
+      ? didiStoreBindingsApi.localShops(applicationId, deferredShopSearch, shopPage).then(response => response.data)
+      : didiStoreBindingsApi.shops(applicationId, shopPage).then(response => response.data)),
     enabled: !!applicationId && shopsLoadRequested,
-    staleTime: 0,
-    refetchOnMount: 'always',
+    staleTime: listSource === 'remote' ? 5 * 60_000 : 0,
+    refetchOnMount: listSource === 'local' ? 'always' : false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: false,
   });
 
@@ -227,7 +256,9 @@ export default function DidiStoreBindingsSection() {
       unique.set(shopKey(shop), {
         ...shop,
         name: shop.name ?? shop.shopName,
-        bound: shop.bound ?? (shop.bindingStatus ? undefined : true),
+        bound: response?.source === 'local'
+          ? shop.bound
+          : shop.bound ?? (shop.bindingStatus ? undefined : true),
       });
     }
     return [...unique.values()];
@@ -236,32 +267,38 @@ export default function DidiStoreBindingsSection() {
   const visibleShops = useMemo(() => {
     const query = shopSearch.trim().toLowerCase();
     if (!query) return availableShops;
-    return availableShops.filter(shop => [shop.shopId, shop.appShopId, shop.name, shop.city]
+    return availableShops.filter(shop => [shop.shopId, shop.appShopId, shop.name, shop.brandName, shop.city]
       .some(value => value?.toLowerCase().includes(query)));
   }, [availableShops, shopSearch]);
 
   const manual = useMemo(() => parseManualShops(manualInput), [manualInput]);
   const selection = useMemo(() => {
-    const shops = availableShops.filter(shop => selectedKeys.has(shopKey(shop)));
-    const byShopId = new Map(shops.map(shop => [shop.shopId, shop]));
-    const byAppShopId = new Map(shops.map(shop => [shop.appShopId, shop]));
+    const shops: DidiStoreBindingShop[] = [];
+    const byShopId = new Map<string, DidiStoreBindingShop>();
+    const byAppShopId = new Map<string, DidiStoreBindingShop>();
     const errors = [...manual.errors];
 
-    for (const shop of manual.shops) {
+    const addShop = (shop: DidiStoreBindingShop, source: string) => {
       const existing = byShopId.get(shop.shopId);
       if (existing && existing.appShopId !== shop.appShopId) {
-        errors.push(`${shop.shopId}: el listado y la entrada manual tienen app_shop_id distintos.`);
+        errors.push(`${shop.shopId}: ${source} usa un app_shop_id distinto al ya seleccionado.`);
       } else if (byAppShopId.has(shop.appShopId) && byAppShopId.get(shop.appShopId)?.shopId !== shop.shopId) {
-        errors.push(`${shop.appShopId}: el listado y la entrada manual tienen shop_id distintos.`);
+        errors.push(`${shop.appShopId}: ${source} usa un shop_id distinto al ya seleccionado.`);
       } else if (!existing) {
         shops.push(shop);
         byShopId.set(shop.shopId, shop);
         byAppShopId.set(shop.appShopId, shop);
       }
+    };
+
+    for (const shop of selectedListShops.values()) addShop(shop, `la selección de página ${shop.sourcePage}`);
+    for (const shop of manual.shops) addShop(shop, 'la importación manual');
+
+    if (shops.length > maxShops) {
+      errors.push(`El máximo para ${operation === 'bind' ? 'Bind' : 'Unbind'} es de ${maxShops} tienda${maxShops === 1 ? '' : 's'} por solicitud.`);
     }
-    if (shops.length > maxShops) errors.push(`El máximo para ${operation === 'bind' ? 'Bind' : 'Unbind'} es de ${maxShops} tienda${maxShops === 1 ? '' : 's'} por solicitud.`);
     return { shops, errors };
-  }, [availableShops, manual, maxShops, operation, selectedKeys]);
+  }, [manual, maxShops, operation, selectedListShops]);
 
   const resetOutput = () => {
     setResultRows([]);
@@ -339,8 +376,11 @@ export default function DidiStoreBindingsSection() {
     setApplication(value ?? null);
     setShopsLoadRequested(false);
     setShopPage(1);
-    setSelectedKeys(new Set());
+    setPageDraft('1');
+    setSelectedListShops(new Map());
     setManualInput('');
+    setImportMessage('');
+    setSelectionNotice('');
     setShopSearch('');
     setConfirmOpen(false);
     setConfirmation('');
@@ -352,8 +392,13 @@ export default function DidiStoreBindingsSection() {
   const changeOperation = (value: Operation) => {
     if (confirmOpen || mutation.isPending) return;
     setOperation(value);
-    setSelectedKeys(new Set());
+    setShopPage(1);
+    setPageDraft('1');
+    setShopSearch('');
+    setSelectedListShops(new Map());
     setManualInput('');
+    setImportMessage('');
+    setSelectionNotice('');
     setConfirmOpen(false);
     setConfirmation('');
     setRiskAcknowledged(false);
@@ -364,33 +409,51 @@ export default function DidiStoreBindingsSection() {
   const toggleShop = (shop: DidiStoreBindingShop) => {
     if (confirmOpen || mutation.isPending) return;
     const key = shopKey(shop);
-    setSelectedKeys(current => {
-      if (operation === 'unbind') return new Set([key]);
-      const next = new Set(current);
+    if (operation === 'bind' && !selectedListShops.has(key) && selection.shops.length >= BIND_MAX_SHOPS) {
+      setSelectionNotice(`Ya alcanzaste el máximo de ${BIND_MAX_SHOPS} tiendas. Quita una selección o una fila importada para agregar otra.`);
+      return;
+    }
+    const sourcePage = authoritativeResponse?.pageNo ?? shopPage;
+    setSelectedListShops(current => {
+      if (operation === 'unbind') return new Map([[key, { ...shop, sourcePage }]]);
+      const next = new Map(current);
       if (next.has(key)) next.delete(key);
-      else next.add(key);
+      else next.set(key, { ...shop, sourcePage });
       return next;
     });
+    setSelectionNotice('');
     resetOutput();
   };
 
   const selectVisible = () => {
     if (confirmOpen || mutation.isPending) return;
-    setSelectedKeys(current => {
-      const next = new Set(current);
-      for (const shop of visibleShops) {
-        if (next.size >= BIND_MAX_SHOPS) break;
-        if (isEligible(shop, operation)) next.add(shopKey(shop));
+    const sourcePage = authoritativeResponse?.pageNo ?? shopPage;
+    let remaining = Math.max(0, BIND_MAX_SHOPS - selection.shops.length);
+    let eligibleNotAdded = 0;
+    const next = new Map(selectedListShops);
+    for (const shop of visibleShops) {
+      const key = shopKey(shop);
+      if (!isEligible(shop, operation) || next.has(key)) continue;
+      if (remaining <= 0) {
+        eligibleNotAdded += 1;
+        continue;
       }
-      return next;
-    });
+      next.set(key, { ...shop, sourcePage });
+      remaining -= 1;
+    }
+    setSelectedListShops(next);
+    setSelectionNotice(eligibleNotAdded > 0
+      ? `Se conservó el límite de ${BIND_MAX_SHOPS}; ${eligibleNotAdded} tienda(s) visibles no se agregaron.`
+      : '');
     resetOutput();
   };
 
   const clearSelection = () => {
     if (confirmOpen || mutation.isPending) return;
-    setSelectedKeys(new Set());
+    setSelectedListShops(new Map());
     setManualInput('');
+    setImportMessage('');
+    setSelectionNotice('');
     resetOutput();
   };
 
@@ -407,7 +470,45 @@ export default function DidiStoreBindingsSection() {
     ? authoritativeResponse?.guards?.canBind === true
     : authoritativeResponse?.guards?.canUnbind === true;
   const requiresRiskAcknowledgement = operation === 'unbind' || isProduction;
-  const productionUnbindRequiresListSelection = isProduction && operation === 'unbind';
+  const unbindRequiresListSelection = operation === 'unbind';
+  const selectedListEntries = useMemo(() => [...selectedListShops.values()], [selectedListShops]);
+  const unbindSourcePage = selectedListEntries[0]?.sourcePage;
+  const currentPageNo = authoritativeResponse?.pageNo ?? shopPage;
+  const remotePageSize = authoritativeResponse?.pageSize ?? SHOP_PAGE_SIZE;
+  const remoteTotal = authoritativeResponse?.total ?? availableShops.length;
+  const remoteTotalPages = Math.max(1, authoritativeResponse?.totalPages ?? 1);
+  const rangeStart = availableShops.length > 0 ? ((currentPageNo - 1) * remotePageSize) + 1 : 0;
+  const rangeEnd = availableShops.length > 0
+    ? Math.min(remoteTotal, rangeStart + availableShops.length - 1)
+    : 0;
+  const cachedPageMatches: CachedShopMatch[] = (() => {
+    const query = shopSearch.trim().toLowerCase();
+    if (!applicationId || listSource !== 'remote' || !query) return [];
+    const matches: CachedShopMatch[] = [];
+    const seen = new Set<string>();
+    const cachedPages = queryClient.getQueriesData<DidiStoreBindingShopsResponse>({
+      queryKey: ['didi-store-bindings', 'shops', applicationId],
+    });
+    for (const [key, response] of cachedPages) {
+      if (!response) continue;
+      const keyParts = key as readonly unknown[];
+      if (keyParts[3] !== 'remote') continue;
+      const pageNo = Number(response.pageNo ?? keyParts[4]);
+      if (!Number.isInteger(pageNo) || pageNo < 1 || pageNo === currentPageNo) continue;
+      const values = response.shops ?? response.data ?? [];
+      for (const shop of values) {
+        if (!shop.shopId || !shop.appShopId) continue;
+        const found = [shop.shopId, shop.appShopId, shop.name, shop.shopName, shop.brandName, shop.city]
+          .some(value => value?.toLowerCase().includes(query));
+        const keyForMatch = `${pageNo}:${shopKey(shop)}`;
+        if (!found || seen.has(keyForMatch)) continue;
+        seen.add(keyForMatch);
+        matches.push({ pageNo, shop });
+        if (matches.length >= 8) return matches;
+      }
+    }
+    return matches;
+  })();
   const canonicalProductionBatch = useMemo(
     () => operation === 'bind' && isProduction && selection.shops.length > 0
       ? canonicalBatch(selection.shops)
@@ -445,12 +546,76 @@ export default function DidiStoreBindingsSection() {
     && selection.shops.length > 0
     && selection.shops.length <= maxShops
     && selection.errors.length === 0
-    && (!productionUnbindRequiresListSelection || (manual.shops.length === 0 && selectedKeys.size === 1))
+    && (!unbindRequiresListSelection || (
+      manual.shops.length === 0
+      && selectedListShops.size === 1
+      && Number.isInteger(unbindSourcePage)
+    ))
     && !mutation.isPending;
   const canExecute = confirmation === expectedConfirmation
     && (!requiresRiskAcknowledgement || riskAcknowledged)
     && (!isProduction || productionReason.trim().length >= 10)
     && !mutation.isPending;
+
+  const navigateToPage = (requestedPage: number) => {
+    if (!shopsLoadRequested || shopsQuery.isFetching || confirmOpen || mutation.isPending) return;
+    const target = Math.min(remoteTotalPages, Math.max(1, Math.trunc(requestedPage)));
+    setPageDraft(String(target));
+    setSelectionNotice('');
+    if (target === shopPage) {
+      void shopsQuery.refetch();
+      return;
+    }
+    setShopPage(target);
+  };
+
+  const submitPageJump = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const requestedPage = Number(pageDraft);
+    if (!Number.isInteger(requestedPage)) {
+      setSelectionNotice('Escribe un número de página válido.');
+      return;
+    }
+    navigateToPage(requestedPage);
+  };
+
+  const removeSelectedListShop = (key: string) => {
+    if (confirmOpen || mutation.isPending) return;
+    setSelectedListShops(current => {
+      const next = new Map(current);
+      next.delete(key);
+      return next;
+    });
+    setSelectionNotice('');
+    resetOutput();
+  };
+
+  const importShopFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || unbindRequiresListSelection || confirmOpen || mutation.isPending) return;
+    if (file.size > MAX_IMPORT_BYTES) {
+      setImportMessage('Error: el archivo supera 256 KB. Importa sólo las filas necesarias para este lote.');
+      return;
+    }
+    try {
+      const contents = await file.text();
+      if (!contents.trim()) {
+        setImportMessage('Error: el archivo está vacío.');
+        return;
+      }
+      if (contents.length > MAX_IMPORT_CHARS) {
+        setImportMessage(`Error: el archivo supera ${MAX_IMPORT_CHARS.toLocaleString('es-MX')} caracteres. Importa sólo las filas necesarias para este lote.`);
+        return;
+      }
+      setManualInput(contents);
+      setImportMessage(`${file.name} cargado. Se validarán como máximo ${maxShops} tienda(s) para esta operación.`);
+      setSelectionNotice('');
+      resetOutput();
+    } catch {
+      setImportMessage('Error: no se pudo leer el archivo seleccionado.');
+    }
+  };
 
   const execute = () => {
     if (!canExecute || !canReview) return;
@@ -462,8 +627,8 @@ export default function DidiStoreBindingsSection() {
         reason: productionReason.trim(),
         productionAcknowledged: true,
       } : {}),
-      ...(isProduction && operation === 'unbind' ? {
-        remotePageNo: authoritativeResponse?.pageNo ?? shopPage,
+      ...(operation === 'unbind' ? {
+        remotePageNo: unbindSourcePage,
       } : {}),
     };
     setResultRows(request.shops.map(shop => ({ ...shop, status: 'processing' })));
@@ -503,8 +668,8 @@ export default function DidiStoreBindingsSection() {
 
     <div style={operationNoticeStyle(operation)}>
       {operation === 'bind'
-        ? 'Bind agrega la relación con DiDi. Las tiendas que el listado ya reconoce como vinculadas no pueden seleccionarse.'
-        : 'Unbind rompe la relación con DiDi y puede interrumpir menú, stock y pedidos. Por seguridad sólo se permite una tienda por operación.'}
+        ? 'Bind usa el catálogo local de Guaro: puedes buscar entre miles de tiendas, fijar selecciones entre páginas o importar hasta 50 pares shop_id/app_shop_id.'
+        : 'Unbind usa exclusivamente el listado remoto de DiDi. Sólo se permite una tienda y el backend vuelve a verificar su página antes de modificarla.'}
     </div>
 
     <div className="card" style={{ padding: 18, marginBottom: 14 }}>
@@ -527,10 +692,10 @@ export default function DidiStoreBindingsSection() {
         <span className="badge">{application.country}</span>
       </div>}
       {application && !shopsLoadRequested && <div style={{ ...operationNoticeStyle('unbind'), marginBottom: 14 }}>
-        <strong>ADVERTENCIA TEST / PROD:</strong> todavía no se ha consultado DiDi. Confirma el nombre y el App ID; esta aplicación podría pertenecer a PRODUCCIÓN.
+        <strong>ADVERTENCIA TEST / PROD:</strong> todavía no se ha verificado el entorno. Confirma el nombre y el App ID; esta aplicación podría pertenecer a PRODUCCIÓN.
         <div style={{ marginTop: 10 }}>
-          <button type="button" className="btn btn-primary btn-sm" disabled={confirmOpen || mutation.isPending} style={{ background: 'var(--red-text)', borderColor: 'var(--red-text)' }} onClick={() => { setShopPage(1); setShopsLoadRequested(true); }}>
-            Cargar tiendas y verificar entorno
+          <button type="button" className="btn btn-primary btn-sm" disabled={confirmOpen || mutation.isPending} style={{ background: 'var(--red-text)', borderColor: 'var(--red-text)' }} onClick={() => { setShopPage(1); setPageDraft('1'); setShopsLoadRequested(true); }}>
+            {operation === 'bind' ? 'Cargar catálogo local y verificar entorno' : 'Consultar DiDi y verificar entorno'}
           </button>
         </div>
       </div>}
@@ -548,60 +713,154 @@ export default function DidiStoreBindingsSection() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'end', flexWrap: 'wrap', marginBottom: 10 }}>
         <div className="form-group" style={{ marginBottom: 0, minWidth: 260, flex: '1 1 340px' }}>
-          <label className="form-label">Buscar en el listado</label>
-          <input className="form-input" value={shopSearch} disabled={!shopsLoadRequested || shopsQuery.isFetching || shopsQuery.isError || confirmOpen || mutation.isPending} placeholder="Nombre, ciudad, shop_id o app_shop_id" onChange={event => setShopSearch(event.target.value)} />
+          <label className="form-label">{operation === 'bind' ? 'Buscar en todo el catálogo local' : 'Filtrar la página remota actual'}</label>
+          <input
+            className="form-input"
+            value={shopSearch}
+            maxLength={128}
+            disabled={!shopsLoadRequested || confirmOpen || mutation.isPending || (operation === 'unbind' && shopsQuery.isFetching)}
+            placeholder="Nombre, marca, ciudad, shop_id o app_shop_id"
+            onChange={event => {
+              setShopSearch(event.target.value);
+              if (operation === 'bind') {
+                setShopPage(1);
+                setPageDraft('1');
+              }
+            }}
+          />
+          <p className="form-hint">{operation === 'bind'
+            ? 'La búsqueda se ejecuta en Guaro sobre todas las tiendas de la aplicación; no recorre páginas de DiDi.'
+            : 'DiDi no ofrece filtro por tienda y limita cada página a 100. Filtra la página/cache ya visitada o salta directamente a otra; tu selección permanece fijada.'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {operation === 'bind' && <button type="button" className="btn btn-ghost btn-sm" disabled={confirmOpen || mutation.isPending || !visibleShops.some(shop => isEligible(shop, operation))} onClick={selectVisible}>Seleccionar hasta {BIND_MAX_SHOPS}</button>}
-          <button type="button" className="btn btn-ghost btn-sm" disabled={confirmOpen || mutation.isPending || (selectedKeys.size === 0 && !manualInput)} onClick={clearSelection}>Limpiar</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={confirmOpen || mutation.isPending || (selectedListShops.size === 0 && !manualInput)} onClick={clearSelection}>Limpiar selección</button>
         </div>
       </div>
 
-      {shopsLoadRequested && shopsQuery.isFetching && <p className="text-muted" style={{ padding: 12 }}>Consultando tiendas disponibles…</p>}
+      {authoritativeResponse && <div role="status" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <span className="badge">{remoteTotal.toLocaleString('es-MX')} {shopSearch.trim() && operation === 'bind' ? 'coincidencias' : 'tiendas'}</span>
+        <span className="badge">{availableShops.length.toLocaleString('es-MX')} en esta página</span>
+        <span className="badge">{remotePageSize} por página</span>
+        <span className="badge">Página {currentPageNo.toLocaleString('es-MX')} / {remoteTotalPages.toLocaleString('es-MX')}</span>
+        <span className="badge" style={{ color: selection.shops.length >= maxShops ? 'var(--amber-text)' : undefined }}>{selection.shops.length} / {maxShops} seleccionadas</span>
+        {operation === 'unbind' && authoritativeResponse.remoteSnapshot && <span className="badge" title={`Estado de cache: ${authoritativeResponse.remoteSnapshot.cacheStatus}`}>
+          Snapshot DiDi {new Date(authoritativeResponse.remoteSnapshot.fetchedAt).toLocaleTimeString()}
+        </span>}
+        <button type="button" className="btn btn-ghost btn-sm" disabled={shopsQuery.isFetching || confirmOpen || mutation.isPending} onClick={() => void shopsQuery.refetch()}>Actualizar página</button>
+      </div>}
+      {operation === 'bind' && deferredShopSearch !== shopSearch.trim() && <p className="text-muted" style={{ padding: '5px 0' }}>Preparando búsqueda…</p>}
+      {shopsLoadRequested && shopsQuery.isFetching && <p className="text-muted" style={{ padding: 12 }}>{operation === 'bind' ? 'Consultando catálogo local…' : 'Consultando página remota en DiDi…'}</p>}
       {shopsLoadRequested && shopsQuery.isError && <div className="error-banner">
         {apiError(shopsQuery.error, 'No se pudo cargar el listado de tiendas.')}
         <div style={{ marginTop: 8 }}><button type="button" className="btn btn-ghost btn-sm" disabled={confirmOpen || mutation.isPending} onClick={() => void shopsQuery.refetch()}>Reintentar carga explícita</button></div>
       </div>}
       {!applicationId && <div className="empty-state"><p>Selecciona una aplicación TEST o de producción para consultar sus tiendas.</p></div>}
-      {shopsLoadRequested && applicationId && !shopsQuery.isFetching && !shopsQuery.isError && availableShops.length === 0 && <div className="empty-state"><p>La integración no devolvió tiendas. Puedes agregarlas manualmente abajo.</p></div>}
+      {shopsLoadRequested && applicationId && !shopsQuery.isFetching && !shopsQuery.isError && availableShops.length === 0 && <div className="empty-state"><p>{operation === 'bind'
+        ? shopSearch.trim() ? 'No hay tiendas locales que coincidan. Ajusta la búsqueda o importa el lote abajo.' : 'La aplicación no tiene tiendas locales. Puedes importar el lote abajo.'
+        : shopSearch.trim() ? 'No hay coincidencias en esta página remota. Conserva el filtro y salta a otra página.' : 'DiDi no devolvió tiendas vinculadas en esta página.'}</p></div>}
       {visibleShops.length > 0 && <div className="table-wrap" style={{ maxHeight: 340, overflowY: 'auto' }}>
         <table>
-          <thead><tr><th aria-label="Seleccionar" /><th>Tienda</th><th>Shop ID</th><th>App Shop ID</th><th>Vinculación</th></tr></thead>
+          <thead><tr><th aria-label="Seleccionar" /><th>Tienda</th><th>Shop ID</th><th>App Shop ID</th><th>{operation === 'bind' ? 'Fuente' : 'Vinculación'}</th></tr></thead>
           <tbody>{visibleShops.map(shop => {
             const eligible = isEligible(shop, operation);
             const key = shopKey(shop);
             return <tr key={key} style={!eligible ? { opacity: .58 } : undefined}>
-              <td><input type={operation === 'unbind' ? 'radio' : 'checkbox'} name={operation === 'unbind' ? 'didi-unbind-shop' : undefined} checked={selectedKeys.has(key)} disabled={!eligible || confirmOpen || mutation.isPending} aria-label={`${operation === 'unbind' ? 'Elegir para Unbind' : 'Seleccionar'} ${shop.name ?? shop.shopId}`} onChange={() => toggleShop(shop)} /></td>
-              <td>{shop.name ?? '—'}{shop.city && <div className="text-muted" style={{ fontSize: 11 }}>{shop.city}</div>}</td>
+              <td><input type={operation === 'unbind' ? 'radio' : 'checkbox'} name={operation === 'unbind' ? 'didi-unbind-shop' : undefined} checked={selectedListShops.has(key)} disabled={!eligible || confirmOpen || mutation.isPending} aria-label={`${operation === 'unbind' ? 'Elegir para Unbind' : 'Seleccionar'} ${shop.name ?? shop.shopId}`} onChange={() => toggleShop(shop)} /></td>
+              <td>{shop.name ?? '—'}{(shop.brandName || shop.city) && <div className="text-muted" style={{ fontSize: 11 }}>{[shop.brandName, shop.city].filter(Boolean).join(' · ')}</div>}</td>
               <td className="td-mono">{shop.shopId}</td>
               <td className="td-mono">{shop.appShopId}</td>
-              <td><span className={`status ${bindingState(shop) === 'bound' ? 's-done' : bindingState(shop) === 'unbound' ? 's-pending' : 's-blocked'}`}>{bindingLabel(shop)}</span></td>
+              <td>{operation === 'bind'
+                ? <span className="badge" style={shop.mappingConflict ? { color: 'var(--red-text)' } : undefined}>{shop.mappingConflict ? 'Mapping duplicado' : 'Guaro local'}</span>
+                : <span className={`status ${bindingState(shop) === 'bound' ? 's-done' : bindingState(shop) === 'unbound' ? 's-pending' : 's-blocked'}`}>{bindingLabel(shop)}</span>}</td>
             </tr>;
           })}</tbody>
         </table>
       </div>}
-      {(authoritativeResponse?.totalPages ?? 1) > 1 && <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, marginTop: 10 }}>
-        <button type="button" className="btn btn-ghost btn-sm" disabled={shopPage <= 1 || shopsQuery.isFetching || confirmOpen || mutation.isPending} onClick={() => { setSelectedKeys(new Set()); setShopSearch(''); setShopPage(page => Math.max(1, page - 1)); }}>Anterior</button>
-        <span className="text-muted" style={{ fontSize: 12 }}>Página {authoritativeResponse?.pageNo ?? shopPage} de {authoritativeResponse?.totalPages}</span>
-        <button type="button" className="btn btn-ghost btn-sm" disabled={shopPage >= (authoritativeResponse?.totalPages ?? 1) || shopsQuery.isFetching || confirmOpen || mutation.isPending} onClick={() => { setSelectedKeys(new Set()); setShopSearch(''); setShopPage(page => page + 1); }}>Siguiente</button>
+      {authoritativeResponse && <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
+        <span className="text-muted" style={{ fontSize: 12 }}>{rangeStart > 0 ? `Mostrando ${rangeStart.toLocaleString('es-MX')}–${rangeEnd.toLocaleString('es-MX')} de ${remoteTotal.toLocaleString('es-MX')}` : 'Página sin resultados'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={shopPage <= 1 || shopsQuery.isFetching || confirmOpen || mutation.isPending} onClick={() => navigateToPage(1)}>Primera</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={shopPage <= 1 || shopsQuery.isFetching || confirmOpen || mutation.isPending} onClick={() => navigateToPage(shopPage - 1)}>Anterior</button>
+          <form onSubmit={submitPageJump} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <label htmlFor="didi-shop-page" className="text-muted" style={{ fontSize: 12 }}>Ir a</label>
+            <input id="didi-shop-page" className="form-input td-mono" style={{ width: 76, padding: '5px 7px' }} type="number" min={1} max={remoteTotalPages} value={pageDraft} disabled={shopsQuery.isFetching || confirmOpen || mutation.isPending} onChange={event => setPageDraft(event.target.value)} />
+            <button type="submit" className="btn btn-ghost btn-sm" disabled={shopsQuery.isFetching || confirmOpen || mutation.isPending}>Ir</button>
+          </form>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={shopPage >= remoteTotalPages || shopsQuery.isFetching || confirmOpen || mutation.isPending} onClick={() => navigateToPage(shopPage + 1)}>Siguiente</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={shopPage >= remoteTotalPages || shopsQuery.isFetching || confirmOpen || mutation.isPending} onClick={() => navigateToPage(remoteTotalPages)}>Última</button>
+        </div>
       </div>}
+      {operation === 'unbind' && shopSearch.trim() && cachedPageMatches.length > 0 && <div style={{ marginTop: 12, padding: 10, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+        <strong style={{ fontSize: 12 }}>Coincidencias en páginas ya consultadas</strong>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 8 }}>
+          {cachedPageMatches.map(match => <button key={`${match.pageNo}:${shopKey(match.shop)}`} type="button" className="btn btn-ghost btn-sm" disabled={confirmOpen || mutation.isPending || shopsQuery.isFetching} onClick={() => navigateToPage(match.pageNo)}>
+            Pág. {match.pageNo} · {match.shop.name ?? match.shop.appShopId}
+          </button>)}
+        </div>
+      </div>}
+      {selectedListEntries.length > 0 && <div style={{ marginTop: 14, padding: 12, background: 'var(--surface-2)', borderRadius: 'var(--radius-md)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+          <strong style={{ fontSize: 12 }}>Selección fijada entre páginas ({selectedListEntries.length})</strong>
+          <span className="text-muted" style={{ fontSize: 11 }}>Cambiar de página no elimina estas tiendas.</span>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 9, maxHeight: 145, overflowY: 'auto' }}>
+          {selectedListEntries.map(shop => <span key={shopKey(shop)} className="badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className="td-mono">{shop.appShopId}</span>{operation === 'unbind' && <span>· pág. {shop.sourcePage}</span>}
+            <button type="button" aria-label={`Quitar ${shop.appShopId}`} disabled={confirmOpen || mutation.isPending} onClick={() => removeSelectedListShop(shopKey(shop))} style={{ border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', padding: 0 }}>×</button>
+          </span>)}
+        </div>
+      </div>}
+      {selectionNotice && <div className="error-banner" style={{ marginTop: 10 }}>{selectionNotice}</div>}
     </div>
 
     <div className="card" style={{ padding: 18, marginBottom: 14 }}>
-      <div className="form-group" style={{ marginBottom: 8 }}>
-        <label className="form-label">{operation === 'unbind' ? 'Agregar una tienda manualmente' : 'Agregar tiendas manualmente'}</label>
-        <textarea
-          className="form-input td-mono"
-          rows={6}
-          value={manualInput}
-          disabled={!shopsLoadRequested || shopsQuery.isFetching || shopsQuery.isError || productionUnbindRequiresListSelection || confirmOpen || mutation.isPending}
-          placeholder={'shop_id,app_shop_id\n5764012345678901234,SUCURSAL-001'}
-          onChange={event => { setManualInput(event.target.value); resetOutput(); }}
-        />
-        <p className="form-hint">{productionUnbindRequiresListSelection
-          ? 'En PRODUCCIÓN elige una tienda del listado: el backend volverá a verificar esa página remota justo antes de Unbind.'
-          : operation === 'unbind' ? 'Unbind admite exactamente una pareja shop_id,app_shop_id.' : 'Una tienda por línea. Usa shop_id,app_shop_id. Se eliminan duplicados exactos entre el listado y la entrada manual.'}</p>
-      </div>
+      {unbindRequiresListSelection ? <div style={{ ...operationNoticeStyle('unbind'), marginBottom: 10 }}>
+        <strong>Unbind sólo desde el listado remoto.</strong> Elige una tienda arriba. Guaro conserva la página de origen y el backend vuelve a consultar esa misma página antes de solicitar el token o ejecutar Unbind, tanto en TEST como en PRODUCCIÓN.
+      </div> : <>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 10 }}>
+          <div>
+            <strong>Importar o pegar lote para Bind</strong>
+            <p className="text-muted" style={{ marginTop: 4, fontSize: 12 }}>CSV, TSV o TXT; una pareja <span className="td-mono">shop_id,app_shop_id</span> por línea. El encabezado es opcional.</p>
+          </div>
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+            <span className="badge">{manual.shops.length} filas válidas</span>
+            <span className="badge">{Math.max(0, BIND_MAX_SHOPS - selection.shops.length)} espacios disponibles</span>
+          </div>
+        </div>
+        <div className="form-group" style={{ marginBottom: 8 }}>
+          <label className="form-label" htmlFor="didi-bind-file">Importar archivo</label>
+          <input
+            id="didi-bind-file"
+            className="form-input"
+            type="file"
+            accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
+            disabled={!shopsLoadRequested || shopsQuery.isError || confirmOpen || mutation.isPending}
+            onChange={event => void importShopFile(event)}
+          />
+          <p className="form-hint">Máximo 256 KB. El archivo reemplaza el texto pegado, pero conserva las tiendas fijadas desde el catálogo.</p>
+        </div>
+        {importMessage && <div className={importMessage.startsWith('Error:') ? 'error-banner' : 'text-muted'} style={{ marginBottom: 9, fontSize: 12 }}>{importMessage}</div>}
+        <div className="form-group" style={{ marginBottom: 8 }}>
+          <label className="form-label" htmlFor="didi-bind-paste">Pegar filas</label>
+          <textarea
+            id="didi-bind-paste"
+            className="form-input td-mono"
+            rows={8}
+            maxLength={MAX_IMPORT_CHARS}
+            value={manualInput}
+            disabled={!shopsLoadRequested || shopsQuery.isError || confirmOpen || mutation.isPending}
+            placeholder={'shop_id,app_shop_id\n5764012345678901234,SUCURSAL-001\n5764012345678901235,SUCURSAL-002'}
+            onChange={event => {
+              setManualInput(event.target.value);
+              setImportMessage('');
+              setSelectionNotice('');
+              resetOutput();
+            }}
+          />
+          <p className="form-hint">Máximo {MAX_IMPORT_CHARS.toLocaleString('es-MX')} caracteres. Se eliminan duplicados exactos entre catálogo e importación. Conflictos de shop_id o app_shop_id se bloquean antes de confirmar.</p>
+        </div>
+      </>}
       {canonicalProductionBatch && !batchFingerprint && !fingerprintError && <p className="text-muted" style={{ fontSize: 12 }}>Calculando fingerprint SHA-256 del lote de producción…</p>}
       {batchFingerprint && <p className="text-muted td-mono" style={{ fontSize: 12 }}>Fingerprint del lote: {batchFingerprint}</p>}
       {fingerprintError && <div className="error-banner">No es seguro continuar: {fingerprintError}</div>}

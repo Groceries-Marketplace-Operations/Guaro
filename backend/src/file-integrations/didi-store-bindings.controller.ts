@@ -7,7 +7,12 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { DidiStoreBindingsAdminGuard } from './didi-store-bindings-admin.guard';
 import { DidiStoreBindingsService } from './didi-store-bindings.service';
-import { BindDidiStoresDto, ListDidiBoundStoresDto, UnbindDidiStoresDto } from './dto/didi-store-binding.dto';
+import {
+  BindDidiStoresDto,
+  ListDidiBoundStoresDto,
+  ListDidiLocalStoresDto,
+  UnbindDidiStoresDto,
+} from './dto/didi-store-binding.dto';
 
 @Controller('integrations/didi-store-bindings')
 @Permissions('integrations.custom')
@@ -22,6 +27,12 @@ export class DidiStoreBindingsController {
   async shops(@Query() dto: ListDidiBoundStoresDto, @CurrentUser() user: JwtUser) {
     const executePermissionAllowed = await this.permissionAccess.can(user, ['integrations.custom.execute']);
     return this.service.listBoundStores(dto, user.roles, executePermissionAllowed);
+  }
+
+  @Get('local-shops')
+  async localShops(@Query() dto: ListDidiLocalStoresDto, @CurrentUser() user: JwtUser) {
+    const executePermissionAllowed = await this.permissionAccess.can(user, ['integrations.custom.execute']);
+    return this.service.listLocalStores(dto, user.roles, executePermissionAllowed);
   }
 
   @Post('bind')

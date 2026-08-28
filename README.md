@@ -1710,8 +1710,14 @@ el `app_id` además debe pertenecer a la allowlist exacta; en producción las
 mutaciones exigen Super Admin, mapeo local completo y una confirmación ligada
 al lote exacto. La migración inicial sólo habilita los `app_id` TEST/PRODUCCIÓN
 del inventario revisado; una Application nueva o restaurada inicia deshabilitada
-hasta asignar su entorno explícitamente. Antes de Unbind productivo, el backend
-vuelve a consultar la página remota seleccionada y exige el mapping exacto.
+hasta asignar su entorno explícitamente. Bind consulta el catálogo local con
+búsqueda y paginación server-side, por lo que una Application puede administrar
+miles de tiendas sin recorrer el listado remoto de DiDi; la selección persiste
+entre páginas, pero cada request conserva el máximo oficial de 50 tiendas.
+Unbind, tanto TEST como producción, sólo parte de una página remota seleccionada:
+el backend vuelve a consultar exactamente esa página y exige `shopId + appShopId`
+vinculados antes de solicitar un token. Nunca hace un barrido síncrono de todas
+las páginas. La API oficial admite como máximo 100 tiendas por página.
 
 | Variable | Descripción | Generar con |
 |---|---|---|
@@ -1730,6 +1736,8 @@ vuelve a consultar la página remota seleccionada y exige el mapping exacto.
 | `DIDI_STORE_BINDINGS_PRODUCTION_BIND_ENABLED` | Habilita Bind sólo para Applications con entorno persistido `PRODUCTION`; exige Super Admin, motivo, aceptación, mapeo local exacto y frase con fingerprint del lote (compose prod: `true`; código: fail-closed). | — |
 | `DIDI_STORE_BINDINGS_PRODUCTION_UNBIND_ENABLED` | Habilita Unbind productivo de una tienda; exige las mismas protecciones y evita barridos remotos largos usando el mapeo local validado (compose prod: `true`; código: fail-closed). | — |
 | `DIDI_STORE_BINDINGS_TIMEOUT_MS` | Timeout por request DiDi de Bind/Unbind (default: 30000) | — |
+| `DIDI_STORE_BINDINGS_PAGE_CACHE_TTL_MS` | TTL del caché acotado para navegar páginas remotas (default: 60000; mínimo: 20000; máximo: 300000). Unbind siempre omite este caché al reverificar. | — |
+| `DIDI_STORE_BINDINGS_PAGE_CACHE_MAX_ENTRIES` | Máximo de páginas remotas conservadas por instancia (default: 250; rango: 10–2000). | — |
 | `ALERT_WEBHOOK_URL` | URL del webhook de alertas | — |
 | `NODE_ENV` | `production` o `development` | — |
 

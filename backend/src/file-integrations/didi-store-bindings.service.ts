@@ -12,7 +12,12 @@ import {
   parseJsonKeepingIds,
   sleep,
 } from '../queue/handlers/didi-food.util';
-import { BindDidiStoresDto, ListDidiBoundStoresDto, UnbindDidiStoresDto } from './dto/didi-store-binding.dto';
+import {
+  BindDidiStoresDto,
+  ListDidiBoundStoresDto,
+  ListDidiLocalStoresDto,
+  UnbindDidiStoresDto,
+} from './dto/didi-store-binding.dto';
 import {
   buildBindRequest,
   buildListBoundStoresRequest,
@@ -67,6 +72,18 @@ interface BoundPage {
   shops: BoundShop[];
 }
 
+interface CachedBoundPage {
+  page: BoundPage;
+  fetchedAt: number;
+  expiresAt: number;
+}
+
+interface BoundPageSnapshot {
+  page: BoundPage;
+  fetchedAt: number;
+  cacheStatus: 'hit' | 'miss' | 'shared';
+}
+
 @Injectable()
 export class DidiStoreBindingsService {
   private readonly logger = new Logger(DidiStoreBindingsService.name);
@@ -76,7 +93,12 @@ export class DidiStoreBindingsService {
   private readonly productionUnbindEnabled: boolean;
   private readonly testAppIds: Set<string>;
   private readonly requestTimeoutMs: number;
+  private readonly boundPageCacheTtlMs: number;
+  private readonly boundPageCacheMaxEntries: number;
   private readonly activeApplications = new Set<string>();
+  private readonly boundPageCache = new Map<string, CachedBoundPage>();
+  private readonly boundPageRequests = new Map<string, Promise<CachedBoundPage>>();
+  private readonly boundPageCacheGenerations = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -96,6 +118,14 @@ export class DidiStoreBindingsService {
     this.requestTimeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout >= 1000
       ? Math.min(configuredTimeout, 120_000)
       : 30_000;
+    const configuredCacheTtl = Number(config.get('DIDI_STORE_BINDINGS_PAGE_CACHE_TTL_MS', '60000'));
+    this.boundPageCacheTtlMs = Number.isFinite(configuredCacheTtl) && configuredCacheTtl >= 20_000
+      ? Math.min(configuredCacheTtl, 300_000)
+      : 60_000;
+    const configuredCacheEntries = Number(config.get('DIDI_STORE_BINDINGS_PAGE_CACHE_MAX_ENTRIES', '250'));
+    this.boundPageCacheMaxEntries = Number.isInteger(configuredCacheEntries) && configuredCacheEntries >= 10
+      ? Math.min(configuredCacheEntries, 2_000)
+      : 250;
   }
 
   async listBoundStores(
@@ -105,7 +135,7 @@ export class DidiStoreBindingsService {
   ) {
     const application = await this.application(dto.applicationId);
     const secret = decrypt(application.encryptedSecret, this.encryptionKey);
-    const page = await this.fetchBoundPage(application, secret, dto.pageNo, dto.pageSize);
+    const snapshot = await this.fetchBoundPageCached(application, secret, dto.pageNo, dto.pageSize);
     return {
       application: this.publicApplication(application),
       guards: this.guardStatus(application, actorRoles, executePermissionAllowed),
@@ -117,7 +147,90 @@ export class DidiStoreBindingsService {
           ? `PRODUCCION DESVINCULAR 1 TIENDAS APP_ID ${application.appId} SHOP_ID N`
           : 'DESVINCULAR N TIENDAS',
       },
-      ...page,
+      remoteSnapshot: {
+        fetchedAt: new Date(snapshot.fetchedAt).toISOString(),
+        cacheStatus: snapshot.cacheStatus,
+      },
+      ...snapshot.page,
+    };
+  }
+
+  async listLocalStores(
+    dto: ListDidiLocalStoresDto,
+    actorRoles: AccountRole[] = [],
+    executePermissionAllowed = false,
+  ) {
+    const application = await this.application(dto.applicationId);
+    const query = dto.q?.trim();
+    const where: Prisma.ShopWhereInput = {
+      deletedAt: null,
+      brand: {
+        is: {
+          applicationId: application.id,
+          deletedAt: null,
+        },
+      },
+      ...(query ? {
+        OR: [
+          { shopId: { contains: query, mode: 'insensitive' } },
+          { appShopId: { contains: query, mode: 'insensitive' } },
+          { name: { contains: query, mode: 'insensitive' } },
+          { city: { contains: query, mode: 'insensitive' } },
+          { brand: { is: { brandName: { contains: query, mode: 'insensitive' } } } },
+        ],
+      } : {}),
+    };
+    const skip = (dto.pageNo - 1) * dto.pageSize;
+    const [localShops, total] = await Promise.all([
+      this.prisma.shop.findMany({
+        where,
+        select: {
+          shopId: true,
+          appShopId: true,
+          name: true,
+          city: true,
+          brand: { select: { id: true, brandName: true } },
+        },
+        orderBy: [{ shopId: 'asc' }],
+        skip,
+        take: dto.pageSize,
+      }),
+      this.prisma.shop.count({ where }),
+    ]);
+    const visibleAppShopIds = [...new Set(localShops.map(shop => shop.appShopId))];
+    const visibleMappings = visibleAppShopIds.length
+      ? await this.prisma.shop.findMany({
+        where: {
+          deletedAt: null,
+          appShopId: { in: visibleAppShopIds },
+          brand: { is: { applicationId: application.id, deletedAt: null } },
+        },
+        select: { shopId: true, appShopId: true },
+      })
+      : [];
+    const shopIdsByAppShopId = new Map<string, Set<string>>();
+    for (const mapping of visibleMappings) {
+      const shopIds = shopIdsByAppShopId.get(mapping.appShopId) ?? new Set<string>();
+      shopIds.add(mapping.shopId);
+      shopIdsByAppShopId.set(mapping.appShopId, shopIds);
+    }
+    return {
+      source: 'local' as const,
+      application: this.publicApplication(application),
+      guards: this.guardStatus(application, actorRoles, executePermissionAllowed),
+      pageNo: dto.pageNo,
+      pageSize: dto.pageSize,
+      totalPages: Math.max(1, Math.ceil(total / dto.pageSize)),
+      total,
+      shops: localShops.map(shop => ({
+        shopId: shop.shopId,
+        appShopId: shop.appShopId,
+        name: shop.name ?? '',
+        city: shop.city ?? '',
+        brandId: shop.brand.id,
+        brandName: shop.brand.brandName,
+        mappingConflict: (shopIdsByAppShopId.get(shop.appShopId)?.size ?? 0) > 1,
+      })),
     };
   }
 
@@ -179,6 +292,7 @@ export class DidiStoreBindingsService {
       }));
     }
 
+    this.invalidateBoundPageCache(application.id);
     return this.finish(operationId, audit.id, application, 'bind', results, Date.now() - started);
   }
 
@@ -194,9 +308,9 @@ export class DidiStoreBindingsService {
       dto.productionAcknowledged,
       actorRoles,
     );
-    if (application.environment === 'production' && !dto.remotePageNo) {
+    if (!dto.remotePageNo) {
       throw new BadRequestException(
-        'Production Unbind requires remotePageNo from a freshly loaded DiDi shop-list page',
+        'Unbind requires remotePageNo from the DiDi shop-list page where the store was selected',
       );
     }
     const localMappings = await this.assertLocalMappings(application, dto.shops);
@@ -220,17 +334,18 @@ export class DidiStoreBindingsService {
 
     try {
       secret = decrypt(application.encryptedSecret, this.encryptionKey);
-      // Production is anchored to both the exact local mapping and a freshly
-      // re-fetched provider page chosen in the UI. This is one bounded read,
-      // rather than an unbounded application-wide pagination scan.
-      const resolved = application.environment === 'production'
-        ? await this.verifyProductionBoundMappings(
-          application,
-          secret,
-          localMappings,
-          dto.remotePageNo as number,
-        )
-        : await this.resolveBoundMappings(application, secret, dto.shops);
+      // Unbind is anchored to a freshly re-fetched provider page chosen in the
+      // UI. This keeps verification O(1) even for Applications with thousands
+      // of shops and never trades away the exact production-local mapping.
+      const verificationTargets = application.environment === 'production'
+        ? localMappings
+        : dto.shops.map(shop => ({ shopId: shop.shopId, appShopId: shop.appShopId }));
+      const resolved = await this.verifyBoundMappingsOnPage(
+        application,
+        secret,
+        verificationTargets,
+        dto.remotePageNo,
+      );
       results = resolved.failures;
 
       // Deliberately sequential: every store has its own refresh/get token flow,
@@ -306,6 +421,7 @@ export class DidiStoreBindingsService {
 
     const order = new Map(dto.shops.map((shop, index) => [shop.appShopId, index]));
     results.sort((left, right) => (order.get(left.appShopId) ?? 0) - (order.get(right.appShopId) ?? 0));
+    this.invalidateBoundPageCache(application.id);
     return this.finish(operationId, audit.id, application, 'unbind', results, Date.now() - started);
   }
 
@@ -447,15 +563,41 @@ export class DidiStoreBindingsService {
   ): Promise<ValidatedLocalMapping[]> {
     const requestedByShopId = new Map(shops.filter(shop => shop.shopId).map(shop => [shop.shopId as string, shop]));
     if (!requestedByShopId.size) return [];
-    const localShops = await this.prisma.shop.findMany({
-      where: { shopId: { in: [...requestedByShopId.keys()] } },
-      select: {
-        shopId: true,
-        appShopId: true,
-        deletedAt: true,
-        brand: { select: { applicationId: true, deletedAt: true } },
-      },
-    });
+    const requestedAppShopIds = [...new Set(shops.map(shop => shop.appShopId))];
+    const [localShops, activeAppShopMappings] = await Promise.all([
+      this.prisma.shop.findMany({
+        where: { shopId: { in: [...requestedByShopId.keys()] } },
+        select: {
+          shopId: true,
+          appShopId: true,
+          deletedAt: true,
+          brand: { select: { applicationId: true, deletedAt: true } },
+        },
+      }),
+      this.prisma.shop.findMany({
+        where: {
+          deletedAt: null,
+          appShopId: { in: requestedAppShopIds },
+          brand: { is: { applicationId: application.id, deletedAt: null } },
+        },
+        select: { shopId: true, appShopId: true },
+      }),
+    ]);
+    const activeShopIdsByAppShopId = new Map<string, Set<string>>();
+    for (const mapping of activeAppShopMappings) {
+      const shopIds = activeShopIdsByAppShopId.get(mapping.appShopId) ?? new Set<string>();
+      shopIds.add(mapping.shopId);
+      activeShopIdsByAppShopId.set(mapping.appShopId, shopIds);
+    }
+    for (const requested of shops) {
+      const mappedShopIds = new Set(activeShopIdsByAppShopId.get(requested.appShopId) ?? []);
+      if (requested.shopId) mappedShopIds.add(requested.shopId);
+      if (mappedShopIds.size > 1) {
+        throw new BadRequestException(
+          `appShopId ${requested.appShopId} maps to multiple active shopIds in this Application`,
+        );
+      }
+    }
     const localByShopId = new Map<string, typeof localShops[number]>();
     for (const local of localShops) {
       if (localByShopId.has(local.shopId)) {
@@ -577,46 +719,74 @@ export class DidiStoreBindingsService {
     };
   }
 
-  private async resolveBoundMappings(
+  private async fetchBoundPageCached(
     application: BindingApplication,
     secret: string,
-    requested: DidiBindingShopInput[],
-  ): Promise<{ shops: Array<{ shopId: string; appShopId: string }>; failures: DidiBindingResult[] }> {
-    const pending = new Map(requested.map(shop => [shop.appShopId, shop]));
-    const resolved = new Map<string, BoundShop>();
-    let pageNo = 1;
-    let totalPages = 1;
-    do {
-      const page = await this.fetchBoundPage(application, secret, pageNo, 100);
-      totalPages = Math.max(1, page.totalPages);
-      for (const shop of page.shops) {
-        if (pending.has(shop.appShopId)) resolved.set(shop.appShopId, shop);
-      }
-      if (resolved.size === pending.size) break;
-      pageNo += 1;
-      if (pageNo <= totalPages) await sleep(COOLDOWN_SHOPLIST_MS);
-    } while (pageNo <= totalPages && pageNo <= 1000);
-
-    const shops: Array<{ shopId: string; appShopId: string }> = [];
-    const failures: DidiBindingResult[] = [];
-    for (const requestedShop of requested) {
-      const remote = resolved.get(requestedShop.appShopId);
-      if (!remote || !remote.bound) {
-        failures.push({ ...requestedShop, status: 'failed', reason: 'Store is not currently bound to this application' });
-      } else if (requestedShop.shopId && requestedShop.shopId !== remote.shopId) {
-        failures.push({
-          ...requestedShop,
-          status: 'failed',
-          reason: `Mapping mismatch: appShopId is bound to shopId ${remote.shopId}`,
-        });
-      } else {
-        shops.push({ shopId: remote.shopId, appShopId: remote.appShopId });
-      }
+    pageNo: number,
+    pageSize: number,
+  ): Promise<BoundPageSnapshot> {
+    const key = this.boundPageCacheKey(application.id, pageNo, pageSize);
+    const generation = this.boundPageCacheGenerations.get(application.id) ?? 0;
+    const requestKey = `${key}:${generation}`;
+    const now = Date.now();
+    const cached = this.boundPageCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      // Refresh insertion order so pruning behaves as a small LRU.
+      this.boundPageCache.delete(key);
+      this.boundPageCache.set(key, cached);
+      return { page: cached.page, fetchedAt: cached.fetchedAt, cacheStatus: 'hit' };
     }
-    return { shops, failures };
+    if (cached) this.boundPageCache.delete(key);
+
+    const shared = this.boundPageRequests.get(requestKey);
+    if (shared) {
+      const entry = await shared;
+      return { page: entry.page, fetchedAt: entry.fetchedAt, cacheStatus: 'shared' };
+    }
+
+    const request = this.fetchBoundPage(application, secret, pageNo, pageSize)
+      .then(page => {
+        const fetchedAt = Date.now();
+        const entry = { page, fetchedAt, expiresAt: fetchedAt + this.boundPageCacheTtlMs };
+        if ((this.boundPageCacheGenerations.get(application.id) ?? 0) === generation) {
+          this.boundPageCache.set(key, entry);
+          this.pruneBoundPageCache(fetchedAt);
+        }
+        return entry;
+      })
+      .finally(() => this.boundPageRequests.delete(requestKey));
+    this.boundPageRequests.set(requestKey, request);
+    const entry = await request;
+    return { page: entry.page, fetchedAt: entry.fetchedAt, cacheStatus: 'miss' };
   }
 
-  private async verifyProductionBoundMappings(
+  private boundPageCacheKey(applicationId: string, pageNo: number, pageSize: number) {
+    return `${applicationId}:${pageNo}:${pageSize}`;
+  }
+
+  private pruneBoundPageCache(now = Date.now()) {
+    for (const [key, entry] of this.boundPageCache) {
+      if (entry.expiresAt <= now) this.boundPageCache.delete(key);
+    }
+    while (this.boundPageCache.size > this.boundPageCacheMaxEntries) {
+      const oldest = this.boundPageCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.boundPageCache.delete(oldest);
+    }
+  }
+
+  private invalidateBoundPageCache(applicationId: string) {
+    this.boundPageCacheGenerations.set(
+      applicationId,
+      (this.boundPageCacheGenerations.get(applicationId) ?? 0) + 1,
+    );
+    const prefix = `${applicationId}:`;
+    for (const key of this.boundPageCache.keys()) {
+      if (key.startsWith(prefix)) this.boundPageCache.delete(key);
+    }
+  }
+
+  private async verifyBoundMappingsOnPage(
     application: BindingApplication,
     secret: string,
     requested: ValidatedLocalMapping[],

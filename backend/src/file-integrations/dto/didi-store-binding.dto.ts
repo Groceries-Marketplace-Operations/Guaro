@@ -83,12 +83,11 @@ export class UnbindDidiStoresDto {
   @IsBoolean()
   productionAcknowledged?: boolean;
 
-  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(10000)
-  remotePageNo?: number;
+  remotePageNo!: number;
 }
 
 export class ListDidiBoundStoresDto {
@@ -99,6 +98,31 @@ export class ListDidiBoundStoresDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(10000)
+  pageNo = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize = 100;
+}
+
+export class ListDidiLocalStoresDto {
+  @IsUUID()
+  applicationId!: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 128)
+  q?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10000)
   pageNo = 1;
 
   @IsOptional()

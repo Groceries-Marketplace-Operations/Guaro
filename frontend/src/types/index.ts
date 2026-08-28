@@ -166,9 +166,13 @@ export interface DidiStoreBindingShop {
   city?: string | null;
   bound?: boolean | null;
   bindingStatus?: string | null;
+  brandId?: string | null;
+  brandName?: string | null;
+  mappingConflict?: boolean;
 }
 
 export interface DidiStoreBindingShopsResponse {
+  source?: 'local' | 'remote';
   application?: {
     id: string;
     appId: string;
@@ -188,6 +192,10 @@ export interface DidiStoreBindingShopsResponse {
     canWrite: boolean;
   };
   confirmation?: { bind: string; unbind: string };
+  remoteSnapshot?: {
+    fetchedAt: string;
+    cacheStatus: 'hit' | 'miss' | 'shared';
+  };
   pageNo?: number;
   pageSize?: number;
   totalPages?: number;
