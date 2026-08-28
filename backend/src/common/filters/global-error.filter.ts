@@ -13,6 +13,23 @@ import { WebhookSenderService } from '../../webhooks/webhook-sender.service';
 
 const ERRORS_DIR = join(process.cwd(), 'uploads', 'errors');
 
+function getExceptionStatus(exception: unknown): number {
+  if (exception instanceof HttpException) return exception.getStatus();
+
+  // Express/body-parser errors (including entity.too.large) are created before
+  // Nest can wrap them in HttpException, but still expose a safe HTTP status.
+  if (exception && typeof exception === 'object') {
+    const error = exception as { status?: unknown; statusCode?: unknown };
+    for (const candidate of [error.status, error.statusCode]) {
+      if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate >= 400 && candidate <= 599) {
+        return candidate;
+      }
+    }
+  }
+
+  return 500;
+}
+
 @Catch()
 export class GlobalErrorFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalErrorFilter.name);
@@ -24,13 +41,16 @@ export class GlobalErrorFilter implements ExceptionFilter {
     const req    = ctx.getRequest<Request>();
     const res    = ctx.getResponse<Response>();
 
-    const status = exception instanceof HttpException ? exception.getStatus() : 500;
+    const status = getExceptionStatus(exception);
 
     // Let the default handler deal with 4xx — only alert on server errors
     if (status < 500) {
       const body = exception instanceof HttpException
         ? exception.getResponse()
-        : { statusCode: status, message: 'Error' };
+        : {
+            statusCode: status,
+            message: status === 413 ? 'Payload Too Large' : 'Bad Request',
+          };
       res.status(status).json(body);
       return;
     }
