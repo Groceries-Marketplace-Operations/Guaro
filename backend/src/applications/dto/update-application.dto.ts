@@ -1,4 +1,4 @@
-import { Country } from '@prisma/client';
+import { Country, DidiBindingEnvironment } from '@prisma/client';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 
 export class UpdateApplicationDto {
@@ -13,4 +13,8 @@ export class UpdateApplicationDto {
   @IsOptional()
   @IsEnum(Country)
   country?: Country;
+
+  @IsOptional()
+  @IsEnum(DidiBindingEnvironment)
+  didiBindingEnvironment?: DidiBindingEnvironment | null;
 }

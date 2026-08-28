@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import { AccountRole, DidiBindingEnvironment, Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -28,6 +28,7 @@ import {
   DidiBindingShopInput,
   exactConfirmation,
   fingerprintAppId,
+  fingerprintBindingBatch,
   isExplicitBindResponse,
   normalizeBindResults,
   redactSensitiveText,
@@ -43,6 +44,11 @@ interface BindingApplication {
   encryptedSecret: string;
   environment: 'test' | 'production';
   nameSignalsTest: boolean;
+}
+
+interface ValidatedLocalMapping {
+  shopId: string;
+  appShopId: string;
 }
 
 export interface BoundShop {
@@ -66,6 +72,8 @@ export class DidiStoreBindingsService {
   private readonly logger = new Logger(DidiStoreBindingsService.name);
   private readonly encryptionKey: string;
   private readonly writesEnabled: boolean;
+  private readonly productionBindEnabled: boolean;
+  private readonly productionUnbindEnabled: boolean;
   private readonly testAppIds: Set<string>;
   private readonly requestTimeoutMs: number;
   private readonly activeApplications = new Set<string>();
@@ -75,9 +83,11 @@ export class DidiStoreBindingsService {
     config: ConfigService,
   ) {
     this.encryptionKey = config.getOrThrow('APP_SECRET_ENCRYPTION_KEY');
-    // Only explicitly allowlisted test app IDs can reach DiDi. Production
-    // remains impossible in this first release regardless of client/UI input.
     this.writesEnabled = config.get('DIDI_STORE_BINDINGS_ENABLED', 'true') === 'true';
+    // Code defaults stay fail-closed. docker-compose.prod.yml explicitly
+    // enables both production actions for registered Applications.
+    this.productionBindEnabled = config.get('DIDI_STORE_BINDINGS_PRODUCTION_BIND_ENABLED', 'false') === 'true';
+    this.productionUnbindEnabled = config.get('DIDI_STORE_BINDINGS_PRODUCTION_UNBIND_ENABLED', 'false') === 'true';
     this.testAppIds = new Set(
       String(config.get('DIDI_STORE_BINDINGS_TEST_APP_IDS', '5764607654490537991'))
         .split(',').map((value: string) => value.trim()).filter(Boolean),
@@ -88,32 +98,48 @@ export class DidiStoreBindingsService {
       : 30_000;
   }
 
-  async listBoundStores(dto: ListDidiBoundStoresDto) {
+  async listBoundStores(
+    dto: ListDidiBoundStoresDto,
+    actorRoles: AccountRole[] = [],
+    executePermissionAllowed = false,
+  ) {
     const application = await this.application(dto.applicationId);
-    this.assertTestApplication(application);
     const secret = decrypt(application.encryptedSecret, this.encryptionKey);
     const page = await this.fetchBoundPage(application, secret, dto.pageNo, dto.pageSize);
     return {
       application: this.publicApplication(application),
-      guards: this.guardStatus(application),
+      guards: this.guardStatus(application, actorRoles, executePermissionAllowed),
       confirmation: {
-        bind: 'VINCULAR N TIENDAS',
-        unbind: 'DESVINCULAR N TIENDAS',
+        bind: application.environment === 'production'
+          ? `PRODUCCION VINCULAR N TIENDAS APP_ID ${application.appId} LOTE <12-HEX>`
+          : 'VINCULAR N TIENDAS',
+        unbind: application.environment === 'production'
+          ? `PRODUCCION DESVINCULAR 1 TIENDAS APP_ID ${application.appId} SHOP_ID N`
+          : 'DESVINCULAR N TIENDAS',
       },
       ...page,
     };
   }
 
-  async bind(dto: BindDidiStoresDto, actorId: string) {
+  async bind(dto: BindDidiStoresDto, actorId: string, actorRoles: AccountRole[]) {
     this.assertUnique(dto.shops, true, DIDI_BIND_MAX_SHOPS);
     const application = await this.application(dto.applicationId);
-    this.assertWriteAllowed(application, dto.confirmation, 'bind', dto.shops.length);
+    this.assertWriteAllowed(
+      application,
+      dto.confirmation,
+      'bind',
+      dto.shops,
+      dto.reason,
+      dto.productionAcknowledged,
+      actorRoles,
+    );
+    await this.assertLocalMappings(application, dto.shops);
     return this.withApplicationLock(application.id, () => this.bindLocked(dto, actorId, application));
   }
 
   private async bindLocked(dto: BindDidiStoresDto, actorId: string, application: BindingApplication) {
     const operationId = randomUUID();
-    const audit = await this.startAudit(operationId, actorId, application, 'bind', dto.shops);
+    const audit = await this.startAudit(operationId, actorId, application, 'bind', dto.shops, dto.reason);
     const started = Date.now();
     let results: DidiBindingResult[];
     let secret = '';
@@ -135,6 +161,9 @@ export class DidiStoreBindingsService {
         },
       );
       const body = parseJsonKeepingIds(await response.text());
+      if (!response.ok) {
+        throw new Error(`${DIDI_BIND_STORE_ENDPOINT} returned HTTP ${response.status} after submission`);
+      }
       if (!isExplicitBindResponse(body)) {
         throw new Error(`${DIDI_BIND_STORE_ENDPOINT} returned no explicit result (HTTP ${response.status})`);
       }
@@ -153,23 +182,55 @@ export class DidiStoreBindingsService {
     return this.finish(operationId, audit.id, application, 'bind', results, Date.now() - started);
   }
 
-  async unbind(dto: UnbindDidiStoresDto, actorId: string) {
+  async unbind(dto: UnbindDidiStoresDto, actorId: string, actorRoles: AccountRole[]) {
     this.assertUnique(dto.shops, true, DIDI_UNBIND_MAX_SHOPS);
     const application = await this.application(dto.applicationId);
-    this.assertWriteAllowed(application, dto.confirmation, 'unbind', dto.shops.length);
-    return this.withApplicationLock(application.id, () => this.unbindLocked(dto, actorId, application));
+    this.assertWriteAllowed(
+      application,
+      dto.confirmation,
+      'unbind',
+      dto.shops,
+      dto.reason,
+      dto.productionAcknowledged,
+      actorRoles,
+    );
+    if (application.environment === 'production' && !dto.remotePageNo) {
+      throw new BadRequestException(
+        'Production Unbind requires remotePageNo from a freshly loaded DiDi shop-list page',
+      );
+    }
+    const localMappings = await this.assertLocalMappings(application, dto.shops);
+    return this.withApplicationLock(
+      application.id,
+      () => this.unbindLocked(dto, actorId, application, localMappings),
+    );
   }
 
-  private async unbindLocked(dto: UnbindDidiStoresDto, actorId: string, application: BindingApplication) {
+  private async unbindLocked(
+    dto: UnbindDidiStoresDto,
+    actorId: string,
+    application: BindingApplication,
+    localMappings: ValidatedLocalMapping[],
+  ) {
     const operationId = randomUUID();
-    const audit = await this.startAudit(operationId, actorId, application, 'unbind', dto.shops);
+    const audit = await this.startAudit(operationId, actorId, application, 'unbind', dto.shops, dto.reason);
     const started = Date.now();
     let results: DidiBindingResult[] = [];
     let secret = '';
 
     try {
       secret = decrypt(application.encryptedSecret, this.encryptionKey);
-      const resolved = await this.resolveBoundMappings(application, secret, dto.shops);
+      // Production is anchored to both the exact local mapping and a freshly
+      // re-fetched provider page chosen in the UI. This is one bounded read,
+      // rather than an unbounded application-wide pagination scan.
+      const resolved = application.environment === 'production'
+        ? await this.verifyProductionBoundMappings(
+          application,
+          secret,
+          localMappings,
+          dto.remotePageNo as number,
+        )
+        : await this.resolveBoundMappings(application, secret, dto.shops);
       results = resolved.failures;
 
       // Deliberately sequential: every store has its own refresh/get token flow,
@@ -213,13 +274,20 @@ export class DidiStoreBindingsService {
           if (!Number.isFinite(errno)) {
             throw new Error(`${DIDI_UNBIND_STORE_ENDPOINT} returned no explicit errno (HTTP ${response.status})`);
           }
-          explicitDecisionReceived = true;
-          if (!response.ok || errno !== 0 || body?.data !== true) {
+          if (!response.ok) {
+            throw new Error(`${DIDI_UNBIND_STORE_ENDPOINT} returned HTTP ${response.status} after submission`);
+          }
+          if (errno !== 0) {
+            explicitDecisionReceived = true;
             throw new Error(
               `${DIDI_UNBIND_STORE_ENDPOINT} failed: ${redactSensitiveText(body?.errmsg || `HTTP ${response.status}`, [token])}`
               + ` (errno=${errno})`,
             );
           }
+          if (body?.data !== true) {
+            throw new Error(`${DIDI_UNBIND_STORE_ENDPOINT} returned errno=0 without data=true`);
+          }
+          explicitDecisionReceived = true;
           results.push({ ...shop, status: 'success' });
         } catch (error) {
           const unconfirmed = postStarted && !explicitDecisionReceived;
@@ -256,18 +324,40 @@ export class DidiStoreBindingsService {
   private async application(id: string): Promise<BindingApplication> {
     const application = await this.prisma.application.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, appId: true, appName: true, country: true, appSecret: true },
+      select: {
+        id: true,
+        appId: true,
+        appName: true,
+        country: true,
+        appSecret: true,
+        didiBindingEnvironment: true,
+      },
     });
     if (!application) throw new NotFoundException('Application not found');
+    if (typeof application.appId !== 'string' || !/^\d+$/.test(application.appId)) {
+      throw new BadRequestException('Application app_id must be a decimal string');
+    }
+    const rawEnvironment = application.didiBindingEnvironment;
+    if (rawEnvironment !== DidiBindingEnvironment.TEST
+      && rawEnvironment !== DidiBindingEnvironment.PRODUCTION) {
+      throw new BadRequestException('Application didiBindingEnvironment must be explicitly TEST or PRODUCTION');
+    }
     const namedTest = /(?:^|[_\s-])(?:t|test|sandbox)(?:[_\s-]|$)/i.test(application.appName);
     const allowlisted = this.testAppIds.has(application.appId);
+    const environment = rawEnvironment === DidiBindingEnvironment.TEST ? 'test' : 'production';
+    if (environment === 'test' && !allowlisted) {
+      throw new BadRequestException('Test application app_id is not in DIDI_STORE_BINDINGS_TEST_APP_IDS');
+    }
+    if (environment === 'production' && allowlisted) {
+      throw new BadRequestException('Production application app_id is present in DIDI_STORE_BINDINGS_TEST_APP_IDS');
+    }
     return {
       id: application.id,
       appId: application.appId,
       appName: application.appName,
       country: String(application.country),
       encryptedSecret: application.appSecret,
-      environment: allowlisted ? 'test' : 'production',
+      environment,
       nameSignalsTest: namedTest,
     };
   }
@@ -283,11 +373,31 @@ export class DidiStoreBindingsService {
     };
   }
 
-  private guardStatus(application: BindingApplication) {
+  private guardStatus(
+    application: BindingApplication,
+    actorRoles: AccountRole[],
+    executePermissionAllowed: boolean,
+  ) {
+    const productionRoleAllowed = application.environment === 'test'
+      || actorRoles.includes(AccountRole.super_admin);
+    const canBind = this.writesEnabled
+      && executePermissionAllowed
+      && productionRoleAllowed
+      && (application.environment === 'test' || this.productionBindEnabled);
+    const canUnbind = this.writesEnabled
+      && executePermissionAllowed
+      && productionRoleAllowed
+      && (application.environment === 'test' || this.productionUnbindEnabled);
     return {
       writesEnabled: this.writesEnabled,
-      productionWritesEnabled: false,
-      canWrite: this.writesEnabled && application.environment === 'test',
+      productionWritesEnabled: this.productionBindEnabled || this.productionUnbindEnabled,
+      productionBindEnabled: this.productionBindEnabled,
+      productionUnbindEnabled: this.productionUnbindEnabled,
+      productionRoleAllowed,
+      executePermissionAllowed,
+      canBind,
+      canUnbind,
+      canWrite: canBind || canUnbind,
     };
   }
 
@@ -295,22 +405,101 @@ export class DidiStoreBindingsService {
     application: BindingApplication,
     confirmation: string,
     action: 'bind' | 'unbind',
-    count: number,
+    shops: DidiBindingShopInput[],
+    reason?: string,
+    productionAcknowledged?: boolean,
+    actorRoles: AccountRole[] = [],
   ) {
-    this.assertTestApplication(application);
     if (!this.writesEnabled) {
       throw new ForbiddenException('DiDi store binding writes are disabled by DIDI_STORE_BINDINGS_ENABLED');
     }
-    const expected = exactConfirmation(action, count);
+    if (application.environment === 'production') {
+      if (!actorRoles.includes(AccountRole.super_admin)) {
+        throw new ForbiddenException('Production DiDi Bind/Unbind requires the super_admin role');
+      }
+      const actionEnabled = action === 'bind' ? this.productionBindEnabled : this.productionUnbindEnabled;
+      if (!actionEnabled) {
+        throw new ForbiddenException(
+          `Production DiDi ${action} is disabled by DIDI_STORE_BINDINGS_PRODUCTION_${action.toUpperCase()}_ENABLED`,
+        );
+      }
+      if (!reason || reason.trim().length < 10) {
+        throw new BadRequestException('A production reason or ticket of at least 10 characters is required');
+      }
+      if (productionAcknowledged !== true) {
+        throw new BadRequestException('productionAcknowledged must be true for production writes');
+      }
+    }
+    const expected = exactConfirmation(
+      action,
+      shops,
+      application.environment,
+      application.appId,
+    );
     if (confirmation !== expected) {
       throw new BadRequestException(`Confirmation must exactly match: ${expected}`);
     }
   }
 
-  private assertTestApplication(application: BindingApplication) {
-    if (application.environment !== 'test') {
-      throw new BadRequestException('Application app_id is not in DIDI_STORE_BINDINGS_TEST_APP_IDS');
+  private async assertLocalMappings(
+    application: BindingApplication,
+    shops: DidiBindingShopInput[],
+  ): Promise<ValidatedLocalMapping[]> {
+    const requestedByShopId = new Map(shops.filter(shop => shop.shopId).map(shop => [shop.shopId as string, shop]));
+    if (!requestedByShopId.size) return [];
+    const localShops = await this.prisma.shop.findMany({
+      where: { shopId: { in: [...requestedByShopId.keys()] } },
+      select: {
+        shopId: true,
+        appShopId: true,
+        deletedAt: true,
+        brand: { select: { applicationId: true, deletedAt: true } },
+      },
+    });
+    const localByShopId = new Map<string, typeof localShops[number]>();
+    for (const local of localShops) {
+      if (localByShopId.has(local.shopId)) {
+        throw new BadRequestException(`Duplicate local records found for shopId ${local.shopId}`);
+      }
+      localByShopId.set(local.shopId, local);
     }
+
+    const validated: ValidatedLocalMapping[] = [];
+    for (const requested of shops) {
+      const shopId = requested.shopId as string;
+      const local = localByShopId.get(shopId);
+      if (!local) {
+        if (application.environment === 'production') {
+          throw new BadRequestException(`shopId ${shopId} has no local mapping for this production Application`);
+        }
+        continue;
+      }
+      if (local.deletedAt) {
+        throw new BadRequestException(`shopId ${local.shopId} is soft-deleted locally and cannot be changed`);
+      }
+      if (local.brand.deletedAt) {
+        throw new BadRequestException(`shopId ${local.shopId} belongs to a soft-deleted local Brand`);
+      }
+      if (application.environment === 'production' && local.brand.applicationId !== application.id) {
+        throw new BadRequestException(
+          local.brand.applicationId === null
+            ? `shopId ${local.shopId} has no Application assigned locally`
+            : `shopId ${local.shopId} belongs to another Application`,
+        );
+      }
+      if (application.environment === 'test'
+        && local.brand.applicationId
+        && local.brand.applicationId !== application.id) {
+        throw new BadRequestException(`shopId ${local.shopId} belongs to another Application`);
+      }
+      if (local.appShopId !== requested.appShopId) {
+        throw new BadRequestException(
+          `Mapping mismatch for shopId ${local.shopId}: local appShopId is ${local.appShopId}`,
+        );
+      }
+      validated.push({ shopId: local.shopId, appShopId: local.appShopId });
+    }
+    return validated;
   }
 
   private assertUnique(shops: DidiBindingShopInput[], requireShopId: boolean, maxShops: number) {
@@ -427,12 +616,54 @@ export class DidiStoreBindingsService {
     return { shops, failures };
   }
 
+  private async verifyProductionBoundMappings(
+    application: BindingApplication,
+    secret: string,
+    requested: ValidatedLocalMapping[],
+    pageNo: number,
+  ): Promise<{ shops: ValidatedLocalMapping[]; failures: DidiBindingResult[] }> {
+    const page = await this.fetchBoundPage(application, secret, pageNo, 100);
+    const shops: ValidatedLocalMapping[] = [];
+    const failures: DidiBindingResult[] = [];
+
+    for (const requestedShop of requested) {
+      const exact = page.shops.find(remote => remote.shopId === requestedShop.shopId
+        && remote.appShopId === requestedShop.appShopId);
+      if (exact?.bound) {
+        shops.push(requestedShop);
+        continue;
+      }
+      if (exact && !exact.bound) {
+        failures.push({
+          ...requestedShop,
+          status: 'failed',
+          reason: 'Store is not currently bound on the freshly verified DiDi page',
+        });
+        continue;
+      }
+      const sameAppShopId = page.shops.find(remote => remote.appShopId === requestedShop.appShopId);
+      const sameShopId = page.shops.find(remote => remote.shopId === requestedShop.shopId);
+      const mismatch = sameAppShopId
+        ? `appShopId is currently bound to shopId ${sameAppShopId.shopId}`
+        : sameShopId
+          ? `shopId is currently bound to appShopId ${sameShopId.appShopId}`
+          : `mapping is not present on freshly verified DiDi page ${pageNo}`;
+      failures.push({
+        ...requestedShop,
+        status: 'failed',
+        reason: `Remote mapping mismatch: ${mismatch}. Reload the shop list before retrying.`,
+      });
+    }
+    return { shops, failures };
+  }
+
   private startAudit(
     operationId: string,
     actorId: string,
     application: BindingApplication,
     action: 'bind' | 'unbind',
     shops: DidiBindingShopInput[],
+    reason?: string,
   ) {
     return this.prisma.accessControlAudit.create({
       data: {
@@ -446,6 +677,11 @@ export class DidiStoreBindingsService {
           appIdFingerprint: fingerprintAppId(application.appId),
           environment: application.environment,
           shops,
+          batchFingerprint: action === 'bind' && application.environment === 'production'
+            ? fingerprintBindingBatch(shops)
+            : undefined,
+          reason: reason?.trim() || undefined,
+          productionAcknowledged: application.environment === 'production' ? true : undefined,
         } as unknown as Prisma.InputJsonValue,
         after: { status: 'running' },
       },

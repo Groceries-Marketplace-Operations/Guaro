@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { PermissionAccessService } from '../access-control/permission-access.service';
 import { Permissions } from '../access-control/permissions.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -12,22 +13,26 @@ import { BindDidiStoresDto, ListDidiBoundStoresDto, UnbindDidiStoresDto } from '
 @Permissions('integrations.custom')
 @UseGuards(JwtAuthGuard, RolesGuard, DidiStoreBindingsAdminGuard)
 export class DidiStoreBindingsController {
-  constructor(private readonly service: DidiStoreBindingsService) {}
+  constructor(
+    private readonly service: DidiStoreBindingsService,
+    private readonly permissionAccess: PermissionAccessService,
+  ) {}
 
   @Get('shops')
-  shops(@Query() dto: ListDidiBoundStoresDto) {
-    return this.service.listBoundStores(dto);
+  async shops(@Query() dto: ListDidiBoundStoresDto, @CurrentUser() user: JwtUser) {
+    const executePermissionAllowed = await this.permissionAccess.can(user, ['integrations.custom.execute']);
+    return this.service.listBoundStores(dto, user.roles, executePermissionAllowed);
   }
 
   @Post('bind')
   @Permissions('integrations.custom.execute')
   bind(@Body() dto: BindDidiStoresDto, @CurrentUser() user: JwtUser) {
-    return this.service.bind(dto, user.id);
+    return this.service.bind(dto, user.id, user.roles);
   }
 
   @Post('unbind')
   @Permissions('integrations.custom.execute')
   unbind(@Body() dto: UnbindDidiStoresDto, @CurrentUser() user: JwtUser) {
-    return this.service.unbind(dto, user.id);
+    return this.service.unbind(dto, user.id, user.roles);
   }
 }

@@ -1,5 +1,5 @@
-import { IsEnum, IsString } from 'class-validator';
-import { Country } from '@prisma/client';
+import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { Country, DidiBindingEnvironment } from '@prisma/client';
 
 export class CreateApplicationDto {
   @IsString()
@@ -13,4 +13,8 @@ export class CreateApplicationDto {
 
   @IsString()
   appSecret: string;
+
+  @IsOptional()
+  @IsEnum(DidiBindingEnvironment)
+  didiBindingEnvironment?: DidiBindingEnvironment | null;
 }

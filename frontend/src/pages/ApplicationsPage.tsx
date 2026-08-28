@@ -6,11 +6,12 @@ import Paginator from '../components/ui/Paginator';
 import { applicationsApi } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useT } from '../i18n';
-import type { Application, Country, Paginated } from '../types';
+import type { Application, Country, DidiBindingEnvironment, Paginated } from '../types';
 import { hasPermission } from '../auth/permissions';
 
 const COUNTRIES: Country[] = ['MX', 'CO', 'CR'];
 const COUNTRY_LABEL: Record<Country, string> = { MX: 'Mexico (MX)', CO: 'Colombia (CO)', CR: 'Costa Rica (CR)' };
+const BINDING_ENVIRONMENTS: DidiBindingEnvironment[] = ['TEST', 'PRODUCTION'];
 const LIMIT = 25;
 
 const PlusIcon = () => (
@@ -43,10 +44,16 @@ export default function ApplicationsPage() {
   const [page, setPage] = useState(1);
 
   const [openCreate, setOpenCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ appId: '', appName: '', country: 'MX' as Country, appSecret: '' });
+  const [createForm, setCreateForm] = useState({
+    appId: '', appName: '', country: 'MX' as Country, appSecret: '',
+    didiBindingEnvironment: '' as DidiBindingEnvironment | '',
+  });
 
   const [editApp, setEditApp] = useState<Application | null>(null);
-  const [editForm, setEditForm] = useState({ appName: '', country: 'MX' as Country, appSecret: '' });
+  const [editForm, setEditForm] = useState({
+    appName: '', country: 'MX' as Country, appSecret: '',
+    didiBindingEnvironment: '' as DidiBindingEnvironment | '',
+  });
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -66,10 +73,13 @@ export default function ApplicationsPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setErr('');
     try {
-      await applicationsApi.create(createForm);
+      await applicationsApi.create({
+        ...createForm,
+        didiBindingEnvironment: createForm.didiBindingEnvironment || null,
+      });
       qc.invalidateQueries({ queryKey: ['applications'] });
       setOpenCreate(false);
-      setCreateForm({ appId: '', appName: '', country: 'MX', appSecret: '' });
+      setCreateForm({ appId: '', appName: '', country: 'MX', appSecret: '', didiBindingEnvironment: '' });
     } catch (ex: unknown) {
       const e2 = ex as { response?: { data?: { message?: string | string[] } } };
       const msg = e2.response?.data?.message;
@@ -79,7 +89,12 @@ export default function ApplicationsPage() {
 
   const openEdit = (a: Application) => {
     setEditApp(a);
-    setEditForm({ appName: a.appName, country: a.country, appSecret: '' });
+    setEditForm({
+      appName: a.appName,
+      country: a.country,
+      appSecret: '',
+      didiBindingEnvironment: a.didiBindingEnvironment ?? '',
+    });
     setErr('');
   };
 
@@ -87,9 +102,10 @@ export default function ApplicationsPage() {
     e.preventDefault();
     if (!editApp) return;
     setSaving(true); setErr('');
-    const payload: Record<string, string> = {};
+    const payload: Record<string, string | null> = {};
     if (editForm.appName) payload.appName = editForm.appName;
     payload.country = editForm.country;
+    payload.didiBindingEnvironment = editForm.didiBindingEnvironment || null;
     if (editForm.appSecret) payload.appSecret = editForm.appSecret;
     try {
       await applicationsApi.update(editApp.id, payload);
@@ -161,14 +177,15 @@ export default function ApplicationsPage() {
                 <th>{t('pages.applications.colName')}</th>
                 <th>{t('pages.applications.colAppId')}</th>
                 <th>{t('pages.applications.colCountry')}</th>
+                <th>{t('pages.applications.colBindingEnvironment')}</th>
                 <th>{t('pages.applications.colCreated')}</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={5} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>}
+              {isLoading && <tr><td colSpan={6} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>}
               {!isLoading && apps.length === 0 && (
-                <tr><td colSpan={5}>
+                <tr><td colSpan={6}>
                   <div className="empty-state">
                     <h3>{t('pages.applications.noApplications')}</h3>
                     <p>{t('pages.applications.noApplicationsHint')}</p>
@@ -180,6 +197,9 @@ export default function ApplicationsPage() {
                   <td style={{ fontWeight: 600 }}>{a.appName}</td>
                   <td className="td-mono">{a.appId}</td>
                   <td>{COUNTRY_LABEL[a.country]}</td>
+                  <td><span className="badge" style={a.didiBindingEnvironment === 'PRODUCTION' ? { color: 'var(--red-text)' } : a.didiBindingEnvironment === 'TEST' ? { color: 'var(--amber-text)' } : undefined}>
+                    {a.didiBindingEnvironment ?? t('pages.applications.bindingEnvironmentDisabled')}
+                  </span></td>
                   <td className="text-muted text-sm">{new Date(a.createdAt).toLocaleDateString()}</td>
                   <td>
                     <div style={{ display: 'flex', gap: 4 }}>
@@ -241,6 +261,15 @@ export default function ApplicationsPage() {
               <p className="form-hint">{t('pages.applications.appSecretHint')}</p>
             </div>
           </div>
+          <div className="form-group">
+            <label className="form-label">{t('pages.applications.bindingEnvironmentLabel')}</label>
+            <select className="form-select" value={createForm.didiBindingEnvironment}
+              onChange={e => setCreateForm(f => ({ ...f, didiBindingEnvironment: e.target.value as DidiBindingEnvironment | '' }))}>
+              <option value="">{t('pages.applications.bindingEnvironmentDisabled')}</option>
+              {BINDING_ENVIRONMENTS.map(value => <option key={value} value={value}>{t(`pages.applications.bindingEnvironment${value === 'TEST' ? 'Test' : 'Production'}`)}</option>)}
+            </select>
+            <p className="form-hint">{t('pages.applications.bindingEnvironmentHint')}</p>
+          </div>
         </Modal>
       )}
 
@@ -268,6 +297,15 @@ export default function ApplicationsPage() {
               onChange={e => setEditForm(f => ({ ...f, country: e.target.value as Country }))}>
               {COUNTRIES.map(c => <option key={c} value={c}>{COUNTRY_LABEL[c]}</option>)}
             </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">{t('pages.applications.bindingEnvironmentLabel')}</label>
+            <select className="form-select" value={editForm.didiBindingEnvironment}
+              onChange={e => setEditForm(f => ({ ...f, didiBindingEnvironment: e.target.value as DidiBindingEnvironment | '' }))}>
+              <option value="">{t('pages.applications.bindingEnvironmentDisabled')}</option>
+              {BINDING_ENVIRONMENTS.map(value => <option key={value} value={value}>{t(`pages.applications.bindingEnvironment${value === 'TEST' ? 'Test' : 'Production'}`)}</option>)}
+            </select>
+            <p className="form-hint">{t('pages.applications.bindingEnvironmentHint')}</p>
           </div>
           <div className="form-group">
             <label className="form-label">{t('pages.applications.editSecretLabel')} <span className="text-muted">{t('pages.applications.editSecretNote')}</span></label>

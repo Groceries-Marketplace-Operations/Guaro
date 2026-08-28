@@ -7,7 +7,7 @@ import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 
 const SELECT_SAFE = {
-  id: true, appId: true, appName: true, country: true,
+  id: true, appId: true, appName: true, country: true, didiBindingEnvironment: true,
   createdById: true, createdAt: true, updatedAt: true, deletedAt: true,
   // appSecret excluido intencionalmente
 };
@@ -62,6 +62,9 @@ export class ApplicationsService {
           appSecret: encrypt(dto.appSecret, this.encKey),
           createdById,
           deletedAt: null,
+          // Restoring a soft-deleted credential is a new authorization
+          // boundary: legacy clients must not silently revive PROD access.
+          didiBindingEnvironment: dto.didiBindingEnvironment ?? null,
         },
         select: SELECT_SAFE,
       });
@@ -74,6 +77,7 @@ export class ApplicationsService {
           appName: dto.appName.trim(),
           country: dto.country,
           appSecret: encrypt(dto.appSecret, this.encKey),
+          didiBindingEnvironment: dto.didiBindingEnvironment ?? null,
           createdById,
         },
         select: SELECT_SAFE,
@@ -95,6 +99,9 @@ export class ApplicationsService {
     if (dto.appName) data.appName = dto.appName.trim();
     if (dto.appSecret) data.appSecret = encrypt(dto.appSecret, this.encKey);
     if (dto.country) data.country = dto.country;
+    if (dto.didiBindingEnvironment !== undefined) {
+      data.didiBindingEnvironment = dto.didiBindingEnvironment;
+    }
     return this.prisma.application.update({ where: { id }, data, select: SELECT_SAFE });
   }
 

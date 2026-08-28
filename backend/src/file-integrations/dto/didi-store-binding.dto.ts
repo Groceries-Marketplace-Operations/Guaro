@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsInt,
   IsOptional,
   IsString,
@@ -48,6 +49,15 @@ export class BindDidiStoresDto {
 
   @IsString()
   confirmation!: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(10, 500)
+  reason?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  productionAcknowledged?: boolean;
 }
 
 export class UnbindDidiStoresDto {
@@ -63,6 +73,22 @@ export class UnbindDidiStoresDto {
 
   @IsString()
   confirmation!: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(10, 500)
+  reason?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  productionAcknowledged?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10000)
+  remotePageNo?: number;
 }
 
 export class ListDidiBoundStoresDto {

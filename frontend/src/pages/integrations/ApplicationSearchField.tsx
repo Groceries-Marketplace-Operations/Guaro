@@ -10,6 +10,7 @@ interface ApplicationSearchFieldProps {
   placeholder?: string;
   applicationFilter?: (application: Application) => boolean;
   emptyMessage?: string;
+  disabled?: boolean;
 }
 
 function applicationLabel(application: Application) {
@@ -23,6 +24,7 @@ export default function ApplicationSearchField({
   placeholder = 'Escribe el nombre o App ID…',
   applicationFilter,
   emptyMessage = 'No se encontraron aplicaciones.',
+  disabled = false,
 }: ApplicationSearchFieldProps) {
   const [query, setQuery] = useState(displayValue);
   const [debounced, setDebounced] = useState(displayValue);
@@ -36,7 +38,7 @@ export default function ApplicationSearchField({
   const { data, isFetching } = useQuery<Paginated<Application>>({
     queryKey: ['applications', 'search-field', debounced],
     queryFn: () => applicationsApi.list({ q: debounced || undefined, page: 1, limit: 20 }).then(response => response.data),
-    enabled: open,
+    enabled: open && !disabled,
   });
   const applications = useMemo(() => {
     const values = data?.data ?? [];
@@ -50,16 +52,18 @@ export default function ApplicationSearchField({
       placeholder={placeholder}
       autoComplete="off"
       aria-invalid={!value && !!query.trim()}
-      onFocus={() => setOpen(true)}
+      disabled={disabled}
+      onFocus={() => { if (!disabled) setOpen(true); }}
       onBlur={() => window.setTimeout(() => setOpen(false), 150)}
       onChange={event => {
+        if (disabled) return;
         const next = event.target.value;
         setQuery(next);
         setOpen(true);
         onChange('', next);
       }}
     />
-    {open && <div className="card" style={{ position: 'absolute', zIndex: 30, top: 'calc(100% + 4px)', left: 0, right: 0, maxHeight: 260, overflowY: 'auto', padding: 5, boxShadow: '0 12px 30px rgba(0,0,0,.14)' }}>
+    {open && !disabled && <div className="card" style={{ position: 'absolute', zIndex: 30, top: 'calc(100% + 4px)', left: 0, right: 0, maxHeight: 260, overflowY: 'auto', padding: 5, boxShadow: '0 12px 30px rgba(0,0,0,.14)' }}>
       {isFetching && <p className="text-muted" style={{ padding: 10, fontSize: 12 }}>Buscando aplicaciones…</p>}
       {!isFetching && applications.length === 0 && <p className="text-muted" style={{ padding: 10, fontSize: 12 }}>{emptyMessage}</p>}
       {applications.map(application => <button

@@ -1107,6 +1107,16 @@ function MiComponente() {
 
 ### Backend (requeridas en producción)
 
+El alcance de Bind/Unbind no se infiere por ausencia de la palabra `TEST`: cada
+`Application` debe tener `didiBindingEnvironment=TEST` o `PRODUCTION`. Un valor
+nulo queda bloqueado antes de descifrar credenciales o llamar a DiDi. En TEST,
+el `app_id` además debe pertenecer a la allowlist exacta; en producción las
+mutaciones exigen Super Admin, mapeo local completo y una confirmación ligada
+al lote exacto. La migración inicial sólo habilita los `app_id` TEST/PRODUCCIÓN
+del inventario revisado; una Application nueva o restaurada inicia deshabilitada
+hasta asignar su entorno explícitamente. Antes de Unbind productivo, el backend
+vuelve a consultar la página remota seleccionada y exige el mapping exacto.
+
 | Variable | Descripción | Generar con |
 |---|---|---|
 | `DATABASE_URL` | URL completa de PostgreSQL | — |
@@ -1119,8 +1129,10 @@ function MiComponente() {
 | `GOOGLE_CALLBACK_URL` | URL de callback OAuth | Debe coincidir con Google Console |
 | `FRONTEND_URL` | URL base del frontend | — |
 | `APP_SECRET_ENCRYPTION_KEY` | Clave AES-256 (64 hex chars) | `openssl rand -hex 32` |
-| `DIDI_STORE_BINDINGS_ENABLED` | Kill switch de Bind/Unbind DiDi de prueba (default: `true`). Bind admite hasta 50 tiendas; Unbind, 1 por operación. | — |
-| `DIDI_STORE_BINDINGS_TEST_APP_IDS` | Allowlist CSV exacta de `app_id` de prueba | — |
+| `DIDI_STORE_BINDINGS_ENABLED` | Kill switch maestro de Bind/Unbind DiDi (default: `true`). Bind admite hasta 50 tiendas; Unbind, 1 por operación. | — |
+| `DIDI_STORE_BINDINGS_TEST_APP_IDS` | Allowlist CSV exacta de `app_id` cuyo entorno persistido es `TEST`; cualquier contradicción queda bloqueada. | — |
+| `DIDI_STORE_BINDINGS_PRODUCTION_BIND_ENABLED` | Habilita Bind sólo para Applications con entorno persistido `PRODUCTION`; exige Super Admin, motivo, aceptación, mapeo local exacto y frase con fingerprint del lote (compose prod: `true`; código: fail-closed). | — |
+| `DIDI_STORE_BINDINGS_PRODUCTION_UNBIND_ENABLED` | Habilita Unbind productivo de una tienda; exige las mismas protecciones y evita barridos remotos largos usando el mapeo local validado (compose prod: `true`; código: fail-closed). | — |
 | `DIDI_STORE_BINDINGS_TIMEOUT_MS` | Timeout por request DiDi de Bind/Unbind (default: 30000) | — |
 | `ALERT_WEBHOOK_URL` | URL del webhook de alertas | — |
 | `NODE_ENV` | `production` o `development` | — |

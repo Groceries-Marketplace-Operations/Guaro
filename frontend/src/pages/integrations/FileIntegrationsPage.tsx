@@ -155,8 +155,8 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
         </button>
         <button type="button" className={customSection === 'didi-store-bindings' ? 'is-active' : ''} onClick={() => setCustomSection('didi-store-bindings')} aria-selected={customSection === 'didi-store-bindings'}>
           <span className="custom-integration-icon">BU</span>
-          <span><strong>DiDi Bind / Unbind</strong><small>Vinculación masiva y controlada para integraciones de prueba</small></span>
-          <span className="badge">TEST</span>
+          <span><strong>DiDi Bind / Unbind</strong><small>Vinculación segura para aplicaciones TEST y producción</small></span>
+          <span className="badge">TEST / PROD</span>
         </button>
         <button type="button" className={customSection === 'store-splitter' ? 'is-active' : ''} onClick={() => setCustomSection('store-splitter')} aria-selected={customSection === 'store-splitter'}>
           <span className="custom-integration-icon">ST</span>

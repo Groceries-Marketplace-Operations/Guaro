@@ -96,6 +96,7 @@ export type MenuIntegration = 'api' | 'api_whitelist' | 'sftp' | 'spreadsheets' 
 export type PickingMode = 'merchant_picking_bapp' | 'merchant_picking_dapp' | 'dos_en_uno';
 export type PaymentMode = 'food_mode' | 'prepaid_card' | 'qr_code';
 export type ShopPickingModel = 'store_picking' | 'qr_code_2in1' | 'prepaid_card_2in1';
+export type DidiBindingEnvironment = 'TEST' | 'PRODUCTION';
 
 export interface Application {
   id: string;
@@ -153,6 +154,7 @@ export interface Application {
   appId: string;
   appName: string;
   country: Country;
+  didiBindingEnvironment?: DidiBindingEnvironment | null;
   createdAt: string;
 }
 
@@ -172,11 +174,17 @@ export interface DidiStoreBindingShopsResponse {
     appId: string;
     appName: string;
     country: Country;
-    environment: string;
+    environment: 'test' | 'production';
   };
   guards?: {
     writesEnabled: boolean;
     productionWritesEnabled: boolean;
+    productionBindEnabled?: boolean;
+    productionUnbindEnabled?: boolean;
+    productionRoleAllowed?: boolean;
+    executePermissionAllowed?: boolean;
+    canBind?: boolean;
+    canUnbind?: boolean;
     canWrite: boolean;
   };
   confirmation?: { bind: string; unbind: string };
@@ -192,6 +200,9 @@ export interface DidiStoreBindingRequest {
   applicationId: string;
   shops: Array<{ shopId: string; appShopId: string }>;
   confirmation: string;
+  reason?: string;
+  productionAcknowledged?: boolean;
+  remotePageNo?: number;
 }
 
 export interface DidiStoreBindingResult {

@@ -109,8 +109,36 @@ export function buildListBoundStoresRequest(
   return { payload, body: stringifyDidiJsonWithInt64(payload) };
 }
 
-export function exactConfirmation(action: 'bind' | 'unbind', count: number): string {
-  return action === 'bind' ? `VINCULAR ${count} TIENDAS` : `DESVINCULAR ${count} TIENDAS`;
+export function fingerprintBindingBatch(shops: DidiBindingShopInput[]): string {
+  const canonical = shops.map(shop => {
+    if (!shop.shopId || !/^\d+$/.test(shop.shopId)) {
+      throw new Error('A decimal shop_id is required for the production batch fingerprint');
+    }
+    if (typeof shop.appShopId !== 'string' || !shop.appShopId) {
+      throw new Error('A non-empty app_shop_id is required for the production batch fingerprint');
+    }
+    return `${shop.shopId}\u0000${shop.appShopId}`;
+  }).sort().join('\n');
+  return createHash('sha256').update(canonical, 'utf8').digest('hex').slice(0, 12).toUpperCase();
+}
+
+export function exactConfirmation(
+  action: 'bind' | 'unbind',
+  shops: DidiBindingShopInput[],
+  environment: 'test' | 'production' = 'test',
+  appId = '',
+): string {
+  const operation = action === 'bind'
+    ? `VINCULAR ${shops.length} TIENDAS`
+    : `DESVINCULAR ${shops.length} TIENDAS`;
+  if (environment === 'test') return operation;
+  if (!/^\d+$/.test(appId)) throw new Error('A decimal app_id is required for production confirmation');
+  if (action === 'unbind') {
+    const shopId = shops[0]?.shopId;
+    if (!shopId || !/^\d+$/.test(shopId)) throw new Error('A decimal shop_id is required for production Unbind confirmation');
+    return `PRODUCCION ${operation} APP_ID ${appId} SHOP_ID ${shopId}`;
+  }
+  return `PRODUCCION ${operation} APP_ID ${appId} LOTE ${fingerprintBindingBatch(shops)}`;
 }
 
 export function summarizeBindingResults(results: DidiBindingResult[]): DidiBindingSummary {

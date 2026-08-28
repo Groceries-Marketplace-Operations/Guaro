@@ -27,6 +27,11 @@ enum Country {
   CR
 }
 
+enum DidiBindingEnvironment {
+  TEST
+  PRODUCTION
+}
+
 enum AccountRole {
   user
   bpo
@@ -659,15 +664,16 @@ model StepWebhook {
 
 // ---------------------------- Catalog -------------------------------------
 model Application {
-  id          String    @id @default(uuid()) @db.Uuid
-  appId       String    @unique @map("app_id")
-  appName     String    @map("app_name")
-  country     Country
-  appSecret   String    @map("app_secret") // ENCRYPTED at rest; never expose
-  createdById String?   @map("created_by") @db.Uuid
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-  deletedAt   DateTime? @map("deleted_at")
+  id                     String                  @id @default(uuid()) @db.Uuid
+  appId                  String                  @unique @map("app_id")
+  appName                String                  @map("app_name")
+  country                Country
+  appSecret              String                  @map("app_secret") // ENCRYPTED at rest; never expose
+  didiBindingEnvironment DidiBindingEnvironment? @map("didi_binding_environment")
+  createdById            String?                 @map("created_by") @db.Uuid
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+  deletedAt              DateTime?               @map("deleted_at")
 
   createdBy                Account?            @relation("AppCreador", fields: [createdById], references: [id])
   brands                   Brand[]
