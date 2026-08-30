@@ -17,6 +17,8 @@ export interface MenuDownloadProgress {
 export interface DownloadMenuOptions {
   existingTaskId?: string;
   rateLimitKey?: string;
+  /** null keeps a known task authoritative until DiDi terminalizes it. */
+  timeoutMs?: number | null;
   onProgress?: (progress: MenuDownloadProgress) => Promise<void>;
 }
 
@@ -70,6 +72,16 @@ export class AutoTurnOffCancelledError extends Error {
   }
 }
 
+export class MenuExportTaskFailedError extends Error {
+  constructor(
+    readonly taskId: string,
+    readonly detail: string,
+  ) {
+    super(`Menu export task ${taskId} failed${detail ? `: ${detail}` : ''}`);
+    this.name = 'MenuExportTaskFailedError';
+  }
+}
+
 export function isMenuTaskPending(body: Record<string, unknown>) {
   return body.errno === 10005 || /task\s*\([^)]*\)\s*not found|task not found/i.test(String(body.errmsg ?? ''));
 }
@@ -88,7 +100,7 @@ export async function downloadMenu(
   pollAttempts: number;
 }> {
   const startedAt = Date.now();
-  const timeoutMs = 20 * 60_000;
+  const timeoutMs = options.timeoutMs === null ? null : options.timeoutMs ?? 20 * 60_000;
   const pollIntervalMs = 6000;
   await ensureActive();
   let taskId = options.existingTaskId ?? '';
@@ -112,10 +124,10 @@ export async function downloadMenu(
   let pollAttempts = 0;
   let lastStatus: number | undefined;
   let pollingToken = authToken;
-  while (Date.now() - startedAt < timeoutMs) {
+  while (timeoutMs === null || Date.now() - startedAt < timeoutMs) {
     await ensureActive();
     if (pollAttempts > 0) {
-      const remainingMs = timeoutMs - (Date.now() - startedAt);
+      const remainingMs = timeoutMs === null ? pollIntervalMs : timeoutMs - (Date.now() - startedAt);
       if (remainingMs <= 0) break;
       await sleep(Math.min(pollIntervalMs, remainingMs));
       await ensureActive();
@@ -166,8 +178,9 @@ export async function downloadMenu(
         .slice(0, 5)
         .map((failure: unknown) => typeof failure === 'string' ? failure : JSON.stringify(failure))
         .join('; ');
-      throw new Error(
-        `${taskEndpoint} reported a failed menu export${detail ? `: ${detail}` : `: ${taskBody.data?.message ?? 'DiDi returned failed status'}`}`,
+      throw new MenuExportTaskFailedError(
+        taskId,
+        detail || String(taskBody.data?.message ?? 'DiDi returned failed status'),
       );
     }
   }
@@ -184,7 +197,7 @@ export async function downloadMenu(
       ? 'unknown'
       : `${statusLabel[lastStatus] ?? 'unknown'} (${lastStatus})`;
     throw new Error(
-      `Menu export task ${taskId} timed out after 20 minutes; `
+      `Menu export task ${taskId} timed out after ${Math.round((timeoutMs ?? 0) / 60_000)} minutes; `
       + `last status: ${lastStatusText}; polls: ${pollAttempts}`,
     );
   }

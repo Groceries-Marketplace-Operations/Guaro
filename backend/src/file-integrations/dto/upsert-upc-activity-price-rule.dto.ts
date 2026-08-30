@@ -56,7 +56,7 @@ export class UpsertUpcActivityPriceRuleDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(5)
+  @Max(1)
   storeConcurrency?: number;
 
   @IsOptional()

@@ -17,7 +17,6 @@ interface FormState {
   dryRun: boolean;
   scheduleHours: string;
   timezone: string;
-  storeConcurrency: number;
 }
 
 const runningStatuses = new Set(['pending', 'running']);
@@ -33,7 +32,6 @@ function emptyForm(): FormState {
     dryRun: true,
     scheduleHours: '8,9,10,11,12,13',
     timezone: 'America/Mexico_City',
-    storeConcurrency: 2,
   };
 }
 
@@ -79,7 +77,7 @@ export default function UpcActivityPriceSection() {
         dryRun: form.dryRun,
         scheduleHours: hours(form.scheduleHours),
         timezone: form.timezone.trim(),
-        storeConcurrency: form.storeConcurrency,
+        storeConcurrency: 1,
       };
       return editing ? upcActivityPriceApi.update(editing.id, payload) : upcActivityPriceApi.create(payload);
     },
@@ -106,14 +104,13 @@ export default function UpcActivityPriceSection() {
       dryRun: rule.dryRun,
       scheduleHours: rule.scheduleHours.join(','),
       timezone: rule.timezone,
-      storeConcurrency: rule.storeConcurrency,
     });
     setError(''); setOpen(true);
   };
   const valid = form.name.trim() && form.applicationId && values(form.shopIds).length > 0
     && /^\d{6,20}$/.test(form.targetUpc.trim()) && hours(form.scheduleHours).length > 0 && form.timezone.trim();
   const submit = () => {
-    if (!form.dryRun && !window.confirm('Esta configuración hará cambios reales de activity_price. Confirma que revisaste primero un dry-run y el alcance de tiendas.')) return;
+    if (!form.dryRun && !window.confirm('Esta configuración hará cambios reales de activity_price. LIVE debe permanecer bloqueado hasta aprobar el dry-run, la coordinación exclusiva por tienda y la propiedad exclusiva del worker.')) return;
     save.mutate();
   };
 
@@ -121,13 +118,13 @@ export default function UpcActivityPriceSection() {
     <div className="card" style={{ padding: 18, marginBottom: 14 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
         <div><strong>UPC Activity Price</strong><p className="text-muted" style={{ marginTop: 5, fontSize: 12 }}>
-          Exporta el menú de cada tienda y actualiza únicamente el UPC objetivo mediante updateItemsync. No recrea menús ni categorías. Dry-run exporta y audita, pero no escribe cambios.
+          Usa únicamente los endpoints del flujo entregado: token, exportación, estado de tareas y uploadGrocery. Conserva la estructura exacta exportada y sólo cambia activity_price del UPC objetivo.
         </p></div>
         <button className="btn btn-primary" onClick={openCreate}>+ Nueva regla</button>
       </div>
     </div>
     <div className="alert alert-info" style={{ marginBottom: 14 }}>
-      Horario recomendado: 08:00, 09:00, 10:00, 11:00, 12:00 y 13:00 en America/Mexico_City. Las escrituras reales requieren además el gate del servidor.
+      Cada taskID se consulta hasta estado terminal y los cambios no confirmados se reintentan hasta 3 veces. LIVE permanece bloqueado hasta aprobar el gate del servidor, la coordinación exclusiva de escrituras de menú por tienda y la propiedad exclusiva del worker.
     </div>
     {isLoading && <p className="text-muted">Cargando reglas…</p>}
     {!isLoading && rules.length === 0 && <div className="empty-state"><p>No hay reglas configuradas.</p></div>}
@@ -159,7 +156,7 @@ export default function UpcActivityPriceSection() {
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}><span>{latest.processedShops}/{latest.totalShops} tiendas</span><span>{latest.successfulShops} correctas</span><span>{latest.skippedShops} sin UPC</span><span>{latest.failedShops} fallidas</span>{shops.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(expanded === latest.id ? null : latest.id)}>{expanded === latest.id ? 'Ocultar' : 'Ver detalle'}</button>}</div>
             <ExecutionTiming startedAt={latest.startedAt} finishedAt={latest.finishedAt} />
             {latest.errorMessage && <p style={{ color: 'var(--red)', marginTop: 8 }}>{latest.errorMessage}</p>}
-            {expanded === latest.id && <div className="table-wrap" style={{ marginTop: 12 }}><table><thead><tr><th>Shop ID</th><th>Resultado</th><th>Coincidencias</th><th>Cambios</th><th>Referencia / error</th></tr></thead><tbody>{shops.map(shop => <tr key={shop.shopId}><td className="td-mono">{shop.shopId}</td><td>{shop.outcome}</td><td>{shop.matchedItems}</td><td>{shop.changedItems}</td><td className="td-mono">{shop.error ?? shop.uploadReferenceId ?? shop.exportTaskId ?? '—'}</td></tr>)}</tbody></table></div>}
+            {expanded === latest.id && <div className="table-wrap" style={{ marginTop: 12 }}><table><thead><tr><th>App Shop ID</th><th>Resultado</th><th>Coincidencias</th><th>Confirmados</th><th>Task IDs / error</th></tr></thead><tbody>{shops.map(shop => <tr key={shop.shopId}><td className="td-mono">{shop.appShopId ?? shop.shopId}</td><td>{shop.outcome}</td><td>{shop.matchedItems}</td><td>{shop.changedItems}</td><td className="td-mono"><div>{shop.uploadTaskIds?.join(' → ') ?? shop.uploadReferenceId ?? shop.exportTaskId ?? '—'}</div>{shop.uploadAttempts?.map(attempt => <div className="text-muted" key={`${attempt.attempt}-${attempt.taskId ?? attempt.submissionState}`}>#{attempt.attempt} · {attempt.taskId ?? 'sin taskID'} · {attempt.submissionState}{attempt.taskStatus === undefined ? '' : ` · status ${attempt.taskStatus}`} · {attempt.polls} consulta(s)</div>)}{shop.error ? <div style={{ color: 'var(--red)', marginTop: 4 }}>{shop.error}</div> : null}</td></tr>)}</tbody></table></div>}
           </div>}
         </article>;
       })}
@@ -168,11 +165,11 @@ export default function UpcActivityPriceSection() {
       {error && <div className="error-banner">{error}</div>}
       <div className="form-group"><label className="form-label">Nombre *</label><input className="form-input" value={form.name} onChange={event => setForm(value => ({ ...value, name: event.target.value }))} /></div>
       <div className="form-group"><label className="form-label">Aplicación DiDi *</label><ApplicationSearchField value={form.applicationId} displayValue={form.applicationSearch} onChange={(applicationId, applicationSearch) => setForm(value => ({ ...value, applicationId, applicationSearch }))} /></div>
-      <div className="form-row"><div className="form-group"><label className="form-label">Shop IDs ({values(form.shopIds).length}) *</label><textarea className="form-input" rows={8} value={form.shopIds} onChange={event => setForm(value => ({ ...value, shopIds: event.target.value }))} placeholder={'576…\n576…'} /><p className="form-hint">Uno por línea o separados por coma. Nunca se toma “toda la aplicación” implícitamente.</p></div><div>
+      <div className="form-row"><div className="form-group"><label className="form-label">App Shop IDs ({values(form.shopIds).length}) *</label><textarea className="form-input" rows={8} value={form.shopIds} onChange={event => setForm(value => ({ ...value, shopIds: event.target.value }))} placeholder={'store-external-id-1\nstore-external-id-2'} /><p className="form-hint">Usa app_shop_id, uno por línea o separados por coma. También se aceptan Shop IDs ya vinculados localmente; esta integración no consulta /shop/list.</p></div><div>
         <div className="form-group"><label className="form-label">UPC objetivo *</label><input className="form-input" value={form.targetUpc} onChange={event => setForm(value => ({ ...value, targetUpc: event.target.value }))} /></div>
         <div className="form-group"><label className="form-label">Horas locales *</label><input className="form-input" value={form.scheduleHours} onChange={event => setForm(value => ({ ...value, scheduleHours: event.target.value }))} /><p className="form-hint">0–23, separadas por coma.</p></div>
         <div className="form-group"><label className="form-label">Zona horaria *</label><input className="form-input" value={form.timezone} onChange={event => setForm(value => ({ ...value, timezone: event.target.value }))} /></div>
-        <div className="form-group"><label className="form-label">Concurrencia (1–5)</label><input className="form-input" type="number" min={1} max={5} value={form.storeConcurrency} onChange={event => setForm(value => ({ ...value, storeConcurrency: Number(event.target.value) }))} /></div>
+        <div className="form-group"><label className="form-label">Ejecución por tienda</label><p className="form-hint">Secuencial, para persistir cada taskID antes de iniciar la siguiente tienda.</p></div>
       </div></div>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}><input type="checkbox" checked={form.dryRun} onChange={event => setForm(value => ({ ...value, dryRun: event.target.checked }))} /> Dry-run: exportar y auditar sin modificar precios</label>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="checkbox" checked={form.active} onChange={event => setForm(value => ({ ...value, active: event.target.checked }))} /> Activar programación automática</label>

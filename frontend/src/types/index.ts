@@ -892,7 +892,24 @@ export interface UpcActivityPriceShopResult {
   matchedItems: number;
   changedItems: number;
   exportTaskId?: string;
+  exportTaskIds?: string[];
+  verificationTaskIds?: string[];
   uploadReferenceId?: string;
+  uploadTaskIds?: string[];
+  uploadAttempts?: Array<{
+    attempt: number;
+    submittedItemIds: string[];
+    taskId?: string;
+    submissionState: 'prepared' | 'submitting' | 'submitted' | 'terminal' | 'verified' | 'unconfirmed';
+    taskStatus?: number;
+    polls: number;
+    failures: Array<{ appItemId: string; reason: string }>;
+    verificationTaskIds: string[];
+    confirmedItemIds: string[];
+    remainingItemIds: string[];
+    missingItemIds: string[];
+    error?: string;
+  }>;
   error?: string;
 }
 

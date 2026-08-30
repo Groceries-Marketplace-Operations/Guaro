@@ -14,31 +14,14 @@ export class UpcActivityPriceScheduler implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    const interrupted = await this.prisma.upcActivityPriceExecution.findMany({
-      where: { status: { in: ['pending', 'running'] } },
-      select: { id: true, ruleId: true, cancelRequested: true },
-    });
-    if (!interrupted.length) return;
-    const now = new Date();
-    await this.prisma.$transaction([
-      this.prisma.upcActivityPriceExecution.updateMany({
-        where: { id: { in: interrupted.map(value => value.id) } },
-        data: { status: 'cancelled', finishedAt: now, currentShopId: null, errorMessage: 'Interrupted by service restart' },
-      }),
-      this.prisma.upcActivityPriceRule.updateMany({
-        where: {
-          id: { in: [...new Set(interrupted.filter(value => !value.cancelRequested).map(value => value.ruleId))] },
-          active: true,
-          deletedAt: null,
-        },
-        data: { nextRunAt: now },
-      }),
-    ]);
-    this.logger.warn(`Recovered ${interrupted.length} interrupted UPC activity-price execution(s)`);
+    await this.recoverActiveExecutions();
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async scheduleDueRules() {
+    // Also reconcile during normal operation so a transient Redis enqueue
+    // failure does not require another application restart.
+    await this.recoverActiveExecutions();
     const now = new Date();
     const rules = await this.prisma.upcActivityPriceRule.findMany({
       where: { active: true, deletedAt: null, nextRunAt: { lte: now } },
@@ -61,6 +44,27 @@ export class UpcActivityPriceScheduler implements OnModuleInit {
       } catch (error) {
         this.logger.error(`Could not queue UPC activity-price rule ${rule.name}: ${(error as Error).message}`);
       }
+    }
+  }
+
+  private async recoverActiveExecutions() {
+    const active = await this.prisma.upcActivityPriceExecution.findMany({
+      where: { status: { in: ['pending', 'running'] } },
+      select: { id: true },
+      take: 1000,
+    });
+    let recovered = 0;
+    for (const execution of active) {
+      try {
+        if (await this.service.ensureExecutionQueued(execution.id) === 'queued') recovered += 1;
+      } catch (error) {
+        this.logger.error(
+          `Could not reconcile UPC activity-price execution ${execution.id}: ${(error as Error).message}`,
+        );
+      }
+    }
+    if (recovered) {
+      this.logger.warn(`Requeued ${recovered} existing UPC activity-price execution(s) for recovery`);
     }
   }
 }
