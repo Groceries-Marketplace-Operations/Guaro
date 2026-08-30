@@ -31,6 +31,10 @@ import { DidiStoreBindingsService } from './didi-store-bindings.service';
 import { DidiStoreBindingCoordinator } from './didi-store-binding-coordinator.service';
 import { DidiStoreBindingExecutionsService } from './didi-store-binding-executions.service';
 import { DidiStoreBindingExecutionProcessor } from './didi-store-binding-execution.processor';
+import { UpcActivityPriceController } from './upc-activity-price.controller';
+import { UpcActivityPriceProcessor } from './upc-activity-price.processor';
+import { UpcActivityPriceScheduler } from './upc-activity-price.scheduler';
+import { UpcActivityPriceService } from './upc-activity-price.service';
 
 @Module({
   imports: [
@@ -40,8 +44,9 @@ import { DidiStoreBindingExecutionProcessor } from './didi-store-binding-executi
     BullModule.registerQueue({ name: 'offer-menu-upload' }),
     BullModule.registerQueue({ name: 'massive-rtbo' }),
     BullModule.registerQueue({ name: 'didi-store-bindings' }),
+    BullModule.registerQueue({ name: 'upc-activity-price' }),
   ],
-  controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController, TargetedMenuController, MenuCopyController, OfferMenuUploadController, MassiveRtboController, DidiStoreBindingsController],
+  controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController, TargetedMenuController, MenuCopyController, OfferMenuUploadController, MassiveRtboController, DidiStoreBindingsController, UpcActivityPriceController],
   providers: [
     FileIntegrationsService,
     FileIntegrationProcessor,
@@ -66,6 +71,9 @@ import { DidiStoreBindingExecutionProcessor } from './didi-store-binding-executi
     DidiStoreBindingCoordinator,
     DidiStoreBindingExecutionsService,
     DidiStoreBindingExecutionProcessor,
+    UpcActivityPriceService,
+    UpcActivityPriceProcessor,
+    UpcActivityPriceScheduler,
   ],
   exports: [TargetedPromotionReaderService],
 })

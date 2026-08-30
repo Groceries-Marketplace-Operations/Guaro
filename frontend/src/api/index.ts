@@ -223,6 +223,16 @@ export const targetedMenuApi = {
   stop: (id: string) => client.post(`/integrations/targeted-menu/rules/${id}/stop`),
 };
 
+export const upcActivityPriceApi = {
+  list: () => client.get('/integrations/upc-activity-price/rules'),
+  execution: (id: string) => client.get(`/integrations/upc-activity-price/executions/${id}`),
+  create: (data: object) => client.post('/integrations/upc-activity-price/rules', data),
+  update: (id: string, data: object) => client.patch(`/integrations/upc-activity-price/rules/${id}`, data),
+  delete: (id: string) => client.delete(`/integrations/upc-activity-price/rules/${id}`),
+  run: (id: string) => client.post(`/integrations/upc-activity-price/rules/${id}/run`),
+  stop: (id: string) => client.post(`/integrations/upc-activity-price/rules/${id}/stop`),
+};
+
 export const offerMenuUploadApi = {
   list: () => client.get('/integrations/offer-menu-upload/rules'),
   execution: (id: string) => client.get(`/integrations/offer-menu-upload/executions/${id}`),

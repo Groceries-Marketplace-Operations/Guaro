@@ -12,6 +12,7 @@ import StoreFileSplitterSection from './StoreFileSplitterSection';
 import DailyStatusActivationSection from './DailyStatusActivationSection';
 import MassiveRtboSection from './MassiveRtboSection';
 import DidiStoreBindingsSection from './DidiStoreBindingsSection';
+import UpcActivityPriceSection from './UpcActivityPriceSection';
 import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 
 interface RuleForm {
@@ -31,7 +32,7 @@ interface RuleForm {
   maxFilesPerRun: number;
 }
 
-type CustomIntegrationSection = 'sftp' | 'massive-rtbo' | 'didi-store-bindings' | 'daily-activation' | 'store-splitter' | 'offer-menu' | 'targeted-menu' | 'cross-app';
+type CustomIntegrationSection = 'sftp' | 'massive-rtbo' | 'didi-store-bindings' | 'daily-activation' | 'store-splitter' | 'offer-menu' | 'targeted-menu' | 'upc-activity-price' | 'cross-app';
 
 const runningStatuses = new Set(['pending', 'running']);
 
@@ -149,6 +150,11 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           <span className="custom-integration-icon">TM</span>
           <span><strong>Targeted Menu Upload</strong><small>Carga UPC seleccionados en tiendas específicas</small></span>
         </button>
+        <button type="button" className={customSection === 'upc-activity-price' ? 'is-active' : ''} onClick={() => setCustomSection('upc-activity-price')} aria-selected={customSection === 'upc-activity-price'}>
+          <span className="custom-integration-icon">AP</span>
+          <span><strong>UPC Activity Price</strong><small>Iguala activity_price al precio base en un horario controlado</small></span>
+          <span className="badge">08:00–13:00</span>
+        </button>
         <button type="button" className={customSection === 'massive-rtbo' ? 'is-active' : ''} onClick={() => setCustomSection('massive-rtbo')} aria-selected={customSection === 'massive-rtbo'}>
           <span className="custom-integration-icon">RT</span>
           <span><strong>Massive RTBO</strong><small>Actualiza promise_produce_time por aplicación y tienda</small></span>
@@ -181,6 +187,7 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           : 'Funciona como Auto Menu Fetch para promociones: conserva una instantánea local por App Shop ID. Las credenciales permanecen cifradas.'}
       </div>}
       {isFilter && customSection === 'targeted-menu' && <TargetedMenuSection />}
+      {isFilter && customSection === 'upc-activity-price' && <UpcActivityPriceSection />}
       {isFilter && customSection === 'massive-rtbo' && <MassiveRtboSection />}
       {isFilter && customSection === 'didi-store-bindings' && <DidiStoreBindingsSection />}
       {isFilter && customSection === 'store-splitter' && <StoreFileSplitterSection />}

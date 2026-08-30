@@ -885,6 +885,57 @@ export interface TargetedMenuRule {
   executions: TargetedMenuExecution[];
 }
 
+export interface UpcActivityPriceShopResult {
+  shopId: string;
+  appShopId?: string;
+  outcome: 'updated' | 'partial_success' | 'would_update' | 'already_current' | 'upc_not_found' | 'failed';
+  matchedItems: number;
+  changedItems: number;
+  exportTaskId?: string;
+  uploadReferenceId?: string;
+  error?: string;
+}
+
+export interface UpcActivityPriceExecution {
+  id: string;
+  status: AutoOpenStatus;
+  trigger: string;
+  dryRun: boolean;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  totalShops: number;
+  processedShops: number;
+  successfulShops: number;
+  skippedShops: number;
+  failedShops: number;
+  currentShopId?: string;
+  errorMessage?: string;
+  result?: { targetUpc?: string; dryRun?: boolean; shops?: UpcActivityPriceShopResult[] };
+  createdAt: string;
+}
+
+export interface UpcActivityPriceRule {
+  id: string;
+  name: string;
+  applicationId: string;
+  shopIds: string[];
+  targetUpc: string;
+  active: boolean;
+  dryRun: boolean;
+  scheduleHours: number[];
+  timezone: string;
+  storeConcurrency: number;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  application: Pick<Application, 'id' | 'appId' | 'appName' | 'country'>;
+  createdBy?: Pick<Account, 'id' | 'name' | 'email'>;
+  updatedBy?: Pick<Account, 'id' | 'name' | 'email'>;
+  executions: UpcActivityPriceExecution[];
+}
+
 export interface OfferMenuStoreResult {
   storeId: string;
   appShopId: string;
