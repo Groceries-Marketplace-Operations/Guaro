@@ -49,7 +49,10 @@ export class UpcActivityPriceScheduler implements OnModuleInit {
 
   private async recoverActiveExecutions() {
     const active = await this.prisma.upcActivityPriceExecution.findMany({
-      where: { status: { in: ['pending', 'running'] } },
+      where: {
+        status: { in: ['pending', 'running'] },
+        manualReviewRequired: false,
+      },
       select: { id: true },
       take: 1000,
     });

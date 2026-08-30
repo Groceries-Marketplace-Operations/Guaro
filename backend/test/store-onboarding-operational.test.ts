@@ -604,6 +604,7 @@ test('a stale or disabled Bull handler job never builds context or calls the reg
     { get: () => '' } as never,
     {} as never,
     {} as never,
+    {} as never,
   );
 
   await processor.process({
@@ -714,6 +715,7 @@ test('Bull handler keeps legacy unknown/retry semantics and rejects after persis
       },
     } as never,
     { get: () => '' } as never,
+    {} as never,
     {} as never,
     {} as never,
   );

@@ -5,6 +5,7 @@ import { AutoOpenStatus, Prisma } from '@prisma/client';
 import { Job } from 'bullmq';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { catalogMutationResourceKey, OperationalLeaseService } from '../prisma/operational-lease.service';
 import { downloadMenu, MenuDownloadProgress } from '../integrations/auto-turn-off-api.util';
 import {
   fetchShopIdMap,
@@ -70,6 +71,7 @@ export class TargetedMenuProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly leases: OperationalLeaseService,
   ) { super(); }
 
   async process(job: Job<{ executionId: string }>) {
@@ -137,7 +139,22 @@ export class TargetedMenuProcessor extends WorkerHost {
           continue;
         }
         try {
-          const authToken = await getAuthToken(application.appId, appSecret, target.appShopId);
+          await this.leases.runExclusive({
+            resourceKey: catalogMutationResourceKey(application.id, target.appShopId),
+            ownerKind: 'targeted-menu',
+            ownerId: `${executionId}:${target.appShopId}`,
+            ttlMs: 5 * 60_000,
+            heartbeatIntervalMs: 30_000,
+            wait: true,
+            waitTimeoutMs: 15 * 60_000,
+            retryDelayMs: 1_000,
+            ensureActive: () => this.ensureActive(executionId),
+          }, async catalogLease => {
+          const ensureTargetActive = async () => {
+            await this.ensureActive(executionId);
+            await catalogLease.ensureActive();
+          };
+          const authToken = await getAuthToken(application.appId, appSecret, target.appShopId!);
           activeProgress = {
             ...activeProgress,
             shopId: target.shopId,
@@ -147,7 +164,7 @@ export class TargetedMenuProcessor extends WorkerHost {
           await this.progress(executionId, results, activeProgress);
           const downloaded = await downloadMenu(
             authToken,
-            () => this.ensureActive(executionId),
+            ensureTargetActive,
             () => getAuthToken(application.appId, appSecret, target.appShopId!),
             {
               existingTaskId: activeProgress.exportTaskId,
@@ -187,7 +204,7 @@ export class TargetedMenuProcessor extends WorkerHost {
           const uploads = buildFlatGroceryUploads(sourceMenu, selected.items);
           const savedBatches = activeProgress.uploadBatches ?? [];
           for (let index = 0; index < uploads.length; index++) {
-            await this.ensureActive(executionId);
+            await ensureTargetActive();
             const mergePolicy = groceryMergePolicyForBatch(rule.mergePolicy, index);
             let batchProgress = savedBatches[index];
             let upload: GroceryBatchUploadResult;
@@ -209,6 +226,7 @@ export class TargetedMenuProcessor extends WorkerHost {
                   uploadBatches: savedBatches,
                 };
                 await this.progress(executionId, results, activeProgress);
+                await catalogLease.ensureActive();
                 const submission = await submitGroceryBatch(authToken, uploads[index], rule.uploadEndpoint, mergePolicy);
                 if ('acceptedCount' in submission) {
                   upload = submission;
@@ -239,7 +257,7 @@ export class TargetedMenuProcessor extends WorkerHost {
                     authToken,
                     submission.referenceId,
                     uploads[index].items.length,
-                    () => this.ensureActive(executionId),
+                    ensureTargetActive,
                     () => getAuthToken(application.appId, appSecret, target.appShopId!),
                     undefined,
                     application.appId,
@@ -259,7 +277,7 @@ export class TargetedMenuProcessor extends WorkerHost {
                   authToken,
                   batchProgress.referenceId,
                   uploads[index].items.length,
-                  () => this.ensureActive(executionId),
+                  ensureTargetActive,
                   () => getAuthToken(application.appId, appSecret, target.appShopId!),
                   undefined,
                   application.appId,
@@ -293,6 +311,7 @@ export class TargetedMenuProcessor extends WorkerHost {
             uploadTaskIds,
             failedItems,
             error: uploadFailed ? `${failedItems.length} item update(s) failed` : undefined,
+          });
           });
         } catch (error) {
           results.push({

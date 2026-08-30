@@ -70,6 +70,7 @@ export class UpcActivityPriceService {
       const rule = await tx.upcActivityPriceRule.findFirst({ where: { id, deletedAt: null } });
       if (!rule) throw new NotFoundException('UPC activity-price rule not found');
       this.assertLiveAllowed(rule.dryRun);
+      this.assertLiveScope(rule.dryRun, rule.shopIds);
       const running = await tx.upcActivityPriceExecution.count({
         where: { ruleId: id, status: { in: [...ACTIVE_STATUSES] } },
       });
@@ -104,15 +105,20 @@ export class UpcActivityPriceService {
       // Multiple application replicas may run startup/minute recovery. The
       // database lock makes inspection + replacement of the stable recovery
       // job ID a single-writer operation across replicas.
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${'upc-activity-price-recovery:' + id}))`;
+      // pg_advisory_xact_lock returns PostgreSQL void. Prisma cannot
+      // deserialize that pseudo-type through $queryRaw, so execute it as a
+      // statement just like the creation-path lock above.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'upc-activity-price-recovery:' + id}))`;
       const execution = await tx.upcActivityPriceExecution.findUnique({
         where: { id },
-        select: { status: true, result: true },
+        select: { status: true, result: true, manualReviewRequired: true },
       });
       if (!execution || !ACTIVE_STATUSES.includes(execution.status as (typeof ACTIVE_STATUSES)[number])) {
         return 'inactive' as const;
       }
-      if (this.requiresManualReview(execution.result)) return 'manual_review' as const;
+      if (execution.manualReviewRequired || this.requiresManualReview(execution.result)) {
+        return 'manual_review' as const;
+      }
 
       const recoveryJobId = `${id}-recovery`;
       const [primary, recovery] = await Promise.all([
@@ -137,11 +143,12 @@ export class UpcActivityPriceService {
     await this.findRule(id);
     const executions = await this.prisma.upcActivityPriceExecution.findMany({
       where: { ruleId: id, status: { in: [...ACTIVE_STATUSES] } },
-      select: { id: true, status: true, result: true },
+      select: { id: true, status: true, result: true, manualReviewRequired: true },
     });
     if (!executions.length) throw new BadRequestException('This rule has no active execution');
     const manualReviewIds = executions
-      .filter(value => value.status === 'running' && this.requiresManualReview(value.result))
+      .filter(value => value.status === 'running'
+        && (value.manualReviewRequired || this.requiresManualReview(value.result)))
       .map(value => value.id);
     const cooperativeRunningIds = executions
       .filter(value => value.status === 'running' && !manualReviewIds.includes(value.id))
@@ -154,6 +161,7 @@ export class UpcActivityPriceService {
           status: 'cancelled',
           finishedAt: new Date(),
           currentShopId: null,
+          manualReviewRequired: false,
           errorMessage: 'Stopped manually before remote submission',
         },
       }),
@@ -164,6 +172,7 @@ export class UpcActivityPriceService {
           status: 'cancelled',
           finishedAt: new Date(),
           currentShopId: null,
+          manualReviewRequired: false,
           errorMessage: 'Manual review acknowledged; the ambiguous upload was not resubmitted',
         },
       }),
@@ -224,6 +233,7 @@ export class UpcActivityPriceService {
     const dryRun = dto.dryRun ?? true;
     const active = dto.active ?? false;
     this.assertLiveAllowed(dryRun);
+    this.assertLiveScope(dryRun, shopIds);
     return {
       name: dto.name.trim(),
       applicationId: dto.applicationId,
@@ -245,7 +255,23 @@ export class UpcActivityPriceService {
     if (!dryRun && !enabled) {
       throw new BadRequestException(
         'Live UPC activity-price writes are disabled on this server. Keep UPC_ACTIVITY_PRICE_REMOTE_WRITE_ENABLED=false '
-        + 'until a dry-run is reviewed and exclusive per-store menu-write coordination plus worker ownership are approved.',
+        + 'until a dry-run is reviewed and the one-store production pilot is explicitly enabled.',
+      );
+    }
+  }
+
+  private assertLiveScope(dryRun: boolean, shopIds: string[]) {
+    if (dryRun) return;
+    const allowlist = new Set(
+      this.config.get<string>('UPC_ACTIVITY_PRICE_LIVE_SHOP_ALLOWLIST', '')
+        .split(',')
+        .map(value => value.trim())
+        .filter(Boolean),
+    );
+    if (shopIds.length !== 1 || !allowlist.has(shopIds[0]?.trim())) {
+      throw new BadRequestException(
+        'Live UPC activity-price is restricted to exactly one reviewed app_shop_id from '
+        + 'UPC_ACTIVITY_PRICE_LIVE_SHOP_ALLOWLIST; keep the hourly multi-store rule in dry-run mode',
       );
     }
   }

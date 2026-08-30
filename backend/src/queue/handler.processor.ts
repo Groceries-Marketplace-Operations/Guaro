@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { DayOfWeek, ShopPickingModel, StepFailureReason } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { catalogMutationResourceKey, OperationalLeaseService } from '../prisma/operational-lease.service';
 import { TaskEngineService } from '../tasks/task-engine.service';
 import { WebhookSenderService, WebhookPayload } from '../webhooks/webhook-sender.service';
 import { ConfigService } from '@nestjs/config';
@@ -92,6 +93,7 @@ export interface HandlerContext {
     kaType: string | null;
     category: string | null;
     application: {
+      id: string;
       appId: string;
       appName: string;
       /** Decrypted app secret — never log this */
@@ -128,6 +130,12 @@ export interface HandlerContext {
   ): Promise<number>;
   /** Refresh one selected store directly from its brand SFTP account. */
   refreshSelectedStorePromotions(shopExternalId: string): Promise<TargetedPromotionRefreshResult>;
+  /** Serialize a mutating DiDi catalog operation for one Application/store. */
+  runWithCatalogLease<T>(
+    appShopId: string,
+    operation: string,
+    action: (ensureActive: () => Promise<void>) => Promise<T>,
+  ): Promise<T>;
   /** Read every current promotion linked to the task brand in bounded batches. */
   forEachBrandPromotionBatch(
     callback: (promotions: StorePromotionExportRow[]) => Promise<void> | void,
@@ -160,6 +168,7 @@ export class HandlerProcessor extends WorkerHost {
     private config: ConfigService,
     private webhooks: WebhookSenderService,
     private targetedPromotionReader: TargetedPromotionReaderService,
+    private operationalLeases: OperationalLeaseService,
   ) {
     super();
   }
@@ -219,7 +228,7 @@ export class HandlerProcessor extends WorkerHost {
         brand: {
           include: {
             application: {
-              select: { appId: true, appName: true, appSecret: true },
+              select: { id: true, appId: true, appName: true, appSecret: true },
             },
           },
         },
@@ -264,6 +273,7 @@ export class HandlerProcessor extends WorkerHost {
           category: rawBrand.category,
           application: rawBrand.application
             ? {
+                id: rawBrand.application.id,
                 appId: rawBrand.application.appId,
                 appName: rawBrand.application.appName,
                 // Decrypt only when a remote integration actually reads the secret.
@@ -526,6 +536,23 @@ export class HandlerProcessor extends WorkerHost {
           if (promotions.length < batchSize) break;
         }
         return total;
+      },
+      runWithCatalogLease: async (appShopId, operation, action) => {
+        if (!brand?.application) throw new Error('Task brand has no linked application');
+        const normalizedShopId = appShopId.trim();
+        if (!normalizedShopId) throw new Error('app_shop_id is required for catalog coordination');
+        return this.operationalLeases.runExclusive({
+          resourceKey: catalogMutationResourceKey(brand.application.id, normalizedShopId),
+          ownerKind: `task-handler:${operation.trim() || 'catalog-write'}`,
+          ownerId: `${stepInstanceId}:${normalizedShopId}`,
+          ttlMs: 5 * 60_000,
+          heartbeatIntervalMs: 30_000,
+          wait: true,
+          waitTimeoutMs: 15 * 60_000,
+          retryDelayMs: 1_000,
+        }, async lease => action(async () => {
+          await lease.ensureActive();
+        }));
       },
       isLastAttempt,
     };

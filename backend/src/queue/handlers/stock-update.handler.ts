@@ -54,11 +54,16 @@ async function readExcel(filePath: string): Promise<ShopStock[]> {
 
 // ── DiDi API call ─────────────────────────────────────────────────────────────
 
-async function updateStockForShop(token: string, items: StockItem[]): Promise<void> {
+async function updateStockForShop(
+  token: string,
+  items: StockItem[],
+  ensureActive: () => Promise<void>,
+): Promise<void> {
   const payload = {
     auth_token: token,
     stock_list: items.map(it => ({ app_item_id: it.upc, stock: it.stock })),
   };
+  await ensureActive();
   const res = await fetch(`${DIDI_BASE}/v1/item/item/setStock`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -124,8 +129,10 @@ async function stockUpdate(ctx: HandlerContext): Promise<unknown> {
 
     for (const shop of batch) {
       try {
-        const token = await getAuthToken(appId, appSecret, shop.appShopId);
-        await updateStockForShop(token, shop.items);
+        await ctx.runWithCatalogLease(shop.appShopId, 'stock-update', async ensureActive => {
+          const token = await getAuthToken(appId, appSecret, shop.appShopId);
+          await updateStockForShop(token, shop.items, ensureActive);
+        });
         successful.push({ appShopId: shop.appShopId, items: shop.items.length });
         ctx.addNote(`✓ ${shop.appShopId}: ${shop.items.length} items updated`);
         logger.log(`✓ ${shop.appShopId}: ${shop.items.length} items`);

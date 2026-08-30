@@ -4,6 +4,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { catalogMutationResourceKey, OperationalLeaseService } from '../prisma/operational-lease.service';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { decrypt } from '../common/crypto.util';
 import { fetchShopIdMap, getAuthToken } from '../queue/handlers/didi-food.util';
@@ -31,7 +32,7 @@ type ShopTarget = Prisma.AutoTurnOffShopExecutionGetPayload<{
           include: {
             brand: {
               include: {
-                application: { select: { appId: true; appSecret: true } };
+                application: { select: { id: true; appId: true; appSecret: true } };
               };
             };
           };
@@ -53,6 +54,7 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly webhooks: WebhookSenderService,
+    private readonly operationalLeases: OperationalLeaseService,
     @InjectQueue('auto-turn-off-shop') private readonly shopQueue: Queue,
   ) {
     super();
@@ -84,7 +86,7 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
             pool: true,
             rule: {
               include: {
-                brand: { include: { application: { select: { appId: true, appSecret: true } } } },
+                brand: { include: { application: { select: { id: true, appId: true, appSecret: true } } } },
               },
             },
           },
@@ -116,7 +118,21 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
         const encryptionKey = this.config.get<string>('APP_SECRET_ENCRYPTION_KEY') ?? '';
         const appSecret = encryptionKey ? decrypt(application.appSecret, encryptionKey) : application.appSecret;
         const authToken = await getAuthToken(application.appId, appSecret, target.appShopId!);
-        await this.processLocalPhase(target, authToken);
+        await this.operationalLeases.runExclusive({
+          resourceKey: catalogMutationResourceKey(application.id, target.appShopId!),
+          ownerKind: 'auto-turn-off',
+          ownerId: target.id,
+          ttlMs: 5 * 60_000,
+          heartbeatIntervalMs: 30_000,
+          wait: true,
+          waitTimeoutMs: 15 * 60_000,
+          retryDelayMs: 1_000,
+          ensureActive: () => this.ensureActive(target.id, execution.id),
+        }, async catalogLease => {
+          await this.processLocalPhase(target, authToken, async () => {
+            await catalogLease.ensureActive();
+          });
+        });
       } catch (error) {
         if (error instanceof AutoTurnOffCancelledError) {
           await this.prisma.autoTurnOffShopExecution.updateMany({
@@ -144,6 +160,7 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
   private async processLocalPhase(
     target: ShopTarget,
     authToken: string,
+    ensureCatalogActive: () => Promise<void>,
   ) {
     const { execution } = target;
     const { rule } = execution;
@@ -190,6 +207,7 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     if (cached.candidates.length > 0) {
       await this.ensureActive(target.id, execution.id);
       try {
+        await ensureCatalogActive();
         localResult = await callStockApi(
           endpoint,
           authToken,

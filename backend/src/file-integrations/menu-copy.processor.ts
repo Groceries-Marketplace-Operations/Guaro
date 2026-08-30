@@ -5,6 +5,7 @@ import { Job } from 'bullmq';
 import { decrypt } from '../common/crypto.util';
 import { downloadMenu } from '../integrations/auto-turn-off-api.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { catalogMutationResourceKey, OperationalLeaseService } from '../prisma/operational-lease.service';
 import {
   fetchShopIdMap,
   getAuthToken,
@@ -32,6 +33,7 @@ export class MenuCopyProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly leases: OperationalLeaseService,
   ) {
     super();
   }
@@ -80,11 +82,26 @@ export class MenuCopyProcessor extends WorkerHost {
         targetSecret,
       );
 
+      await this.leases.runExclusive({
+        resourceKey: catalogMutationResourceKey(execution.targetApplicationId, targetAppShopId),
+        ownerKind: 'menu-copy',
+        ownerId: executionId,
+        ttlMs: 5 * 60_000,
+        heartbeatIntervalMs: 30_000,
+        wait: true,
+        waitTimeoutMs: 15 * 60_000,
+        retryDelayMs: 1_000,
+        ensureActive: () => this.ensureActive(executionId),
+      }, async catalogLease => {
+      const ensureTargetActive = async () => {
+        await this.ensureActive(executionId);
+        await catalogLease.ensureActive();
+      };
       await this.step(executionId, 'downloading_source_menu', { targetAppShopId });
       const sourceToken = await getAuthToken(sourceApplication.appId, sourceSecret, sourceAppShopId);
       const downloaded = await downloadMenu(
         sourceToken,
-        () => this.ensureActive(executionId),
+        ensureTargetActive,
         () => getAuthToken(sourceApplication.appId, sourceSecret, sourceAppShopId),
       );
       const menu = parseJsonKeepingIds(downloaded.rawJson) as Record<string, unknown>;
@@ -111,7 +128,7 @@ export class MenuCopyProcessor extends WorkerHost {
       const pendingUploadTaskIds: string[] = [];
       let acceptedCount = 0;
       for (let index = 0; index < uploads.length; index++) {
-        await this.ensureActive(executionId);
+        await ensureTargetActive();
         const mergePolicy = groceryMergePolicyForBatch(execution.mergePolicy, index);
         try {
           const upload = await uploadGroceryBatch(
@@ -119,7 +136,7 @@ export class MenuCopyProcessor extends WorkerHost {
             uploads[index],
             execution.uploadEndpoint,
             mergePolicy,
-            () => this.ensureActive(executionId),
+            ensureTargetActive,
             () => getAuthToken(targetApplication.appId, targetSecret, targetAppShopId),
           );
           uploadTaskIds.push(upload.referenceId);
@@ -133,7 +150,7 @@ export class MenuCopyProcessor extends WorkerHost {
         }
       }
       const uploadTaskId = uploadTaskIds.join(', ');
-      await this.ensureActive(executionId);
+      await ensureTargetActive();
       let pendingMessage = '';
       if (pendingUploadTaskIds.length) {
         await this.step(executionId, 'verifying_target_menu', { uploadTaskId });
@@ -186,6 +203,7 @@ export class MenuCopyProcessor extends WorkerHost {
         `Copied ${acceptedCount}/${items.length} eligible items (${skippedItems} skipped) from ${execution.sourceShopId} (${sourceApplication.appName}) `
         + `to ${execution.targetShopId} (${targetApplication.appName}) using ${execution.uploadEndpoint}; upload reference=${uploadTaskId}`,
       );
+      });
     } catch (error) {
       if (error instanceof MenuCopyCancelledError) return;
       await this.prisma.menuCopyExecution.updateMany({

@@ -12,12 +12,14 @@ import { once } from 'events';
 import { finished } from 'stream/promises';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { catalogMutationResourceKey, OperationalLeaseService } from '../prisma/operational-lease.service';
 import { getAuthToken } from '../queue/handlers/didi-food.util';
 import { wildcardToRegExp } from './file-integration.util';
 import {
   checkGroceryUploadTaskOnce,
   GROCERY_TASK_STATUS_MIN_INTERVAL_MS,
   GroceryItemFailure,
+  resolveGroceryBatchSubmission,
   submitGroceryBatch,
 } from './grocery-menu-upload.util';
 import { buildOfferMenuRequest, OfferMenuItem, streamOfferMenuCsv } from './offer-menu-upload.util';
@@ -75,6 +77,7 @@ export class OfferMenuUploadProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly sftp: SftpConnectionService,
     private readonly config: ConfigService,
+    private readonly leases: OperationalLeaseService,
   ) { super(); }
 
   async process(job: Job<{ executionId: string }>) {
@@ -323,9 +326,24 @@ export class OfferMenuUploadProcessor extends WorkerHost {
       return { result: { storeId, appShopId, status: 'done', itemCount: items.length, uploadedItems: 0, taskIds, failedItems, failedItemCount: 0, dryRun: true } };
     }
     try {
+      return await this.leases.runExclusive({
+        resourceKey: catalogMutationResourceKey(rule.applicationId, appShopId),
+        ownerKind: 'offer-menu',
+        ownerId: `${executionId}:${appShopId}`,
+        ttlMs: 5 * 60_000,
+        heartbeatIntervalMs: 30_000,
+        wait: true,
+        waitTimeoutMs: 15 * 60_000,
+        retryDelayMs: 1_000,
+        ensureActive: () => this.ensureActive(executionId),
+      }, async catalogLease => {
+      const ensureStoreActive = async () => {
+        await this.ensureActive(executionId);
+        await catalogLease.ensureActive();
+      };
       const authToken = await getAuthToken(rule.application.appId, appSecret, appShopId);
       const request = buildOfferMenuRequest(rule, appShopId, items);
-      await this.ensureActive(executionId);
+      await ensureStoreActive();
       const submission = await submitGroceryBatch(
         authToken,
         request,
@@ -333,13 +351,30 @@ export class OfferMenuUploadProcessor extends WorkerHost {
         rule.mergePolicy,
       );
       if ('acceptedCount' in submission) throw new Error('uploadGrocery unexpectedly returned a synchronous result');
-      return { pending: {
+      const completed = await resolveGroceryBatchSubmission(
+        authToken,
+        submission.referenceId,
+        items.length,
+        ensureStoreActive,
+        () => getAuthToken(rule.application.appId, appSecret, appShopId),
+        4 * 60 * 60_000,
+        rule.application.appId,
+      );
+      const failedItemCount = completed.failedItems.length;
+      const uploadedItems = Math.max(0, items.length - failedItemCount);
+      return { result: {
         storeId,
         appShopId,
         itemCount: items.length,
-        taskId: submission.referenceId,
-        authToken,
+        status: uploadedItems === 0 ? 'failed' : failedItemCount ? 'partial_success' : 'done',
+        uploadedItems,
+        taskIds: [submission.referenceId],
+        failedItems: completed.failedItems.slice(0, MAX_STORED_FAILED_ITEM_SAMPLES),
+        failedItemCount,
+        dryRun: false,
+        error: uploadedItems === 0 ? 'No item was accepted by the menu endpoint' : undefined,
       } };
+      });
     } catch (error) {
       if (error instanceof OfferMenuCancelledError) throw error;
       return { result: {

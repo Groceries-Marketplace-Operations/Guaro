@@ -170,16 +170,18 @@ export function buildGroceryUploadRequest(
       payload: { auth_token: authToken, item_list: batch.items },
     };
   }
+  const payload: Record<string, unknown> = {
+    auth_token: authToken,
+    menus: batch.menus,
+    categories: batch.categories,
+    items: batch.items,
+    merge_policy: mergePolicy,
+  };
+  if (batch.modifierGroups?.length) payload.modifier_groups = batch.modifierGroups;
   return {
     endpoint: 'POST /v3/item/item/uploadGrocery',
     url: `${DIDI_BASE}/v3/item/item/uploadGrocery`,
-    payload: {
-      auth_token: authToken,
-      menus: batch.menus,
-      categories: batch.categories,
-      items: batch.items,
-      merge_policy: mergePolicy,
-    },
+    payload,
   };
 }
 

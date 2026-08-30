@@ -85,7 +85,7 @@ type Harness = {
 const TARGET_UPC = '7707430870113';
 
 function harness() {
-  const processor = new UpcActivityPriceProcessor({} as never, {} as never);
+  const processor = new UpcActivityPriceProcessor({} as never, {} as never, {} as never);
   const value = processor as unknown as Harness;
   value.ensureCanSubmit = async () => undefined;
   value.ensureMonitorable = async () => undefined;

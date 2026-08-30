@@ -4,6 +4,8 @@ import * as ExcelJS from 'exceljs';
 import { join } from 'path';
 import { registerHandler, HandlerContext } from '../handler.processor';
 import { downloadMenu } from '../../integrations/auto-turn-off-api.util';
+import { FlatGroceryUpload } from '../../file-integrations/grocery-destination-menu.util';
+import { uploadGroceryBatch } from '../../file-integrations/grocery-menu-upload.util';
 import {
   BATCH_SIZE,
   COOLDOWN_BATCH_MS,
@@ -141,26 +143,33 @@ async function updateShopHeadImage(ctx: HandlerContext) {
   return { imageUrl, total: requested.length, success: successful.length, failed: failed.length, successful, failures: failed };
 }
 
-async function uploadMenu(authToken: string, menu: Record<string, unknown>, mergePolicy: number) {
-  const endpoint = 'POST /v3/item/item/uploadGrocery';
-  const payload: Record<string, unknown> = {
-    auth_token: authToken,
+async function uploadMenu(
+  authToken: string,
+  menu: Record<string, unknown>,
+  mergePolicy: number,
+  ensureActive: () => Promise<void>,
+  refreshAuthToken: () => Promise<string>,
+) {
+  const categories = Array.isArray(menu.categories) ? menu.categories as Record<string, unknown>[] : [];
+  const upload: FlatGroceryUpload = {
     menus: Array.isArray(menu.menus) ? menu.menus : [],
-    categories: Array.isArray(menu.categories) ? menu.categories : [],
+    categories,
     items: Array.isArray(menu.items) ? menu.items : [],
-    merge_policy: mergePolicy,
+    categoryIds: categories.map(category => String(category.app_category_id ?? '')).filter(Boolean),
+    modifierGroups: Array.isArray(menu.modifier_groups)
+      ? menu.modifier_groups as Record<string, unknown>[]
+      : undefined,
   };
-  if (Array.isArray(menu.modifier_groups) && menu.modifier_groups.length) {
-    payload.modifier_groups = menu.modifier_groups;
-  }
-  const response = await fetchWithEndpointContext(endpoint, `${DIDI_BASE}/v3/item/item/uploadGrocery`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  });
-  const body = parseJsonKeepingIds(await response.text());
-  if (!response.ok || body.errno !== 0) {
-    throw new Error(`${endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
-  }
-  return String(body.data?.taskID ?? body.data?.taskId ?? '');
+  await ensureActive();
+  const result = await uploadGroceryBatch(
+    authToken,
+    upload,
+    'uploadGrocery',
+    mergePolicy,
+    ensureActive,
+    refreshAuthToken,
+  );
+  return result.referenceId;
 }
 
 async function replicateStoreMenu(ctx: HandlerContext) {
@@ -189,8 +198,20 @@ async function replicateStoreMenu(ctx: HandlerContext) {
         continue;
       }
       try {
-        const token = await getAuthToken(application.appId, application.appSecret, target.appShopId);
-        const taskId = await uploadMenu(token, menu, mergePolicy);
+        const taskId = await ctx.runWithCatalogLease(
+          target.appShopId,
+          'replicate-store-menu',
+          async ensureActive => {
+            const token = await getAuthToken(application.appId, application.appSecret, target.appShopId);
+            return uploadMenu(
+              token,
+              menu,
+              mergePolicy,
+              ensureActive,
+              () => getAuthToken(application.appId, application.appSecret, target.appShopId),
+            );
+          },
+        );
         successful.push({ shopId: target.shopId, taskId });
         ctx.addNote(`✓ ${target.shopId}: upload taskID=${taskId || 'accepted'}`);
       } catch (error) {

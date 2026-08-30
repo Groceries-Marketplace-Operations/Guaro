@@ -1498,6 +1498,8 @@ model UpcActivityPriceExecution {
   failedShops     Int            @default(0) @map("failed_shops")
   currentShopId   String?        @map("current_shop_id")
   cancelRequested Boolean        @default(false) @map("cancel_requested")
+  manualReviewRequired Boolean   @default(false) @map("manual_review_required")
+  manualReviewReason String?     @map("manual_review_reason") @db.Text
   errorMessage    String?        @map("error_message") @db.Text
   result          Json?
   createdById     String?        @map("created_by") @db.Uuid
@@ -1509,6 +1511,23 @@ model UpcActivityPriceExecution {
   @@index([ruleId, createdAt])
   @@index([status])
   @@map("upc_activity_price_execution")
+}
+
+model OperationalLease {
+  resourceKey   String    @id @map("resource_key") @db.Text
+  ownerToken    String?   @map("owner_token") @db.Uuid
+  ownerKind     String?   @map("owner_kind")
+  ownerId       String?   @map("owner_id")
+  fencingToken  BigInt    @default(0) @map("fencing_token")
+  acquiredAt    DateTime? @map("acquired_at") @db.Timestamptz
+  heartbeatAt   DateTime? @map("heartbeat_at") @db.Timestamptz
+  expiresAt     DateTime? @map("expires_at") @db.Timestamptz
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([expiresAt])
+  @@index([ownerKind, ownerId])
+  @@map("operational_lease")
 }
 
 model TargetedMenuExecution {

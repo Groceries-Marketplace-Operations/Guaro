@@ -162,14 +162,21 @@ async function commercialMenuUpload(ctx: HandlerContext) {
 
   const results = await mapWithConcurrency(ctx.targetShops, SHOP_CONCURRENCY, async shop => {
     try {
-      const authToken = await getAuthToken(appId, appSecret, shop.appShopId);
-      const response = await uploadGroceryBatch(
-        authToken,
-        upload,
-        'uploadGrocery',
-        mergePolicy,
-        async () => undefined,
-        () => getAuthToken(appId, appSecret, shop.appShopId),
+      const response = await ctx.runWithCatalogLease(
+        shop.appShopId,
+        'commercial-menu-upload',
+        async ensureActive => {
+          const authToken = await getAuthToken(appId, appSecret, shop.appShopId);
+          await ensureActive();
+          return uploadGroceryBatch(
+            authToken,
+            upload,
+            'uploadGrocery',
+            mergePolicy,
+            ensureActive,
+            () => getAuthToken(appId, appSecret, shop.appShopId),
+          );
+        },
       );
       const result = { shopId: shop.shopId, appShopId: shop.appShopId, status: 'accepted', taskId: response.referenceId, items: items.length };
       ctx.addNote(`OK ${shop.shopId} (${shop.appShopId}): accepted ${items.length} items, DiDi task ${response.referenceId}`);

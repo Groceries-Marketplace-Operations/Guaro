@@ -84,6 +84,7 @@ export interface FlatGroceryUpload {
   categories: JsonObject[];
   items: JsonObject[];
   categoryIds: string[];
+  modifierGroups?: JsonObject[];
 }
 
 export function groceryMergePolicyForBatch(mergePolicy: number, batchIndex: number) {

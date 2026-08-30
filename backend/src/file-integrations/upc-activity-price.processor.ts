@@ -10,6 +10,14 @@ import {
   MenuExportTaskFailedError,
 } from '../integrations/auto-turn-off-api.util';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  catalogMutationResourceKey,
+  OperationalLeaseExclusiveContext,
+  OperationalLeaseLostError,
+  OperationalLeaseService,
+  OperationalLeaseUnavailableError,
+  upcExecutionResourceKey,
+} from '../prisma/operational-lease.service';
 import { getAuthToken, parseJsonKeepingIds, sleep } from '../queue/handlers/didi-food.util';
 import {
   checkGroceryUploadTaskOnce,
@@ -91,18 +99,55 @@ interface ActiveShopProgress {
 @Processor('upc-activity-price', { concurrency: 1 })
 export class UpcActivityPriceProcessor extends WorkerHost {
   private readonly logger = new Logger(UpcActivityPriceProcessor.name);
+  private readonly executionLeases = new Map<string, OperationalLeaseExclusiveContext>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly leases: OperationalLeaseService,
   ) { super(); }
 
   async process(job: Job<{ executionId: string }>) {
     const executionId = job.data.executionId;
-    const claimed = await this.prisma.upcActivityPriceExecution.updateMany({
-      where: { id: executionId, status: { in: ['pending', 'running'] } },
+    try {
+      await this.leases.runExclusive({
+        resourceKey: upcExecutionResourceKey(executionId),
+        ownerKind: 'upc-activity-price-worker',
+        ownerId: `${executionId}:${String(job.id ?? 'unknown')}:${job.attemptsMade}`,
+        ttlMs: 5 * 60_000,
+        heartbeatIntervalMs: 30_000,
+        wait: false,
+      }, async executionLease => {
+        this.executionLeases.set(executionId, executionLease);
+        try {
+          await this.processOwned(job);
+        } finally {
+          this.executionLeases.delete(executionId);
+        }
+      });
+    } catch (error) {
+      if (error instanceof OperationalLeaseUnavailableError) {
+        this.logger.warn(`Skipped duplicate UPC worker delivery for ${executionId}; another fenced worker owns it`);
+        return;
+      }
+      if (error instanceof OperationalLeaseLostError) {
+        this.logger.warn(`UPC worker ${executionId} lost its DB lease; a recovery worker will continue`);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private async processOwned(job: Job<{ executionId: string }>) {
+    const executionId = job.data.executionId;
+    const claimed = await this.withExecutionFence(executionId, tx => tx.upcActivityPriceExecution.updateMany({
+      where: {
+        id: executionId,
+        status: { in: ['pending', 'running'] },
+        manualReviewRequired: false,
+      },
       data: { status: 'running' },
-    });
+    }));
     if (!claimed.count) return;
 
     const execution = await this.prisma.upcActivityPriceExecution.findUnique({
@@ -112,10 +157,10 @@ export class UpcActivityPriceProcessor extends WorkerHost {
     if (!execution) return;
     const started = execution.startedAt?.getTime() ?? Date.now();
     if (!execution.startedAt) {
-      await this.prisma.upcActivityPriceExecution.update({
+      await this.withExecutionFence(executionId, tx => tx.upcActivityPriceExecution.update({
         where: { id: executionId },
         data: { startedAt: new Date(started), errorMessage: null },
-      });
+      }));
     }
     const { rule } = execution;
     const restored = this.restoreProgress(execution.result);
@@ -133,10 +178,10 @@ export class UpcActivityPriceProcessor extends WorkerHost {
       // durable source of truth for remote task IDs, so concurrent whole-object
       // writes must never be able to overwrite one another.
       await this.mapWithConcurrency(targets, 1, async target => {
-        await this.prisma.upcActivityPriceExecution.update({
+        await this.withExecutionFence(executionId, tx => tx.upcActivityPriceExecution.update({
           where: { id: executionId },
           data: { currentShopId: target.shopId },
-        });
+        }));
         const progress: ActiveShopProgress = activeShops.get(target.shopId) ?? {
           shopId: target.shopId,
           appShopId: target.appShopId,
@@ -153,8 +198,12 @@ export class UpcActivityPriceProcessor extends WorkerHost {
         activeShops.set(target.shopId, progress);
         const freshToken = () => getAuthToken(rule.application.appId, appSecret, progress.appShopId);
         let preserveProgress = false;
-
-        try {
+        const runTarget = async (catalogLease?: OperationalLeaseExclusiveContext) => {
+          const ensureTargetActive = async () => {
+            await this.ensureCanSubmit(executionId);
+            if (catalogLease) await catalogLease.ensureActive();
+          };
+          try {
           const restoredExpectedItemIds = this.expectedItemIds(progress);
           if (!execution.dryRun && progress.uploadAttempts.length && restoredExpectedItemIds.length) {
             progress.expectedItemIds = restoredExpectedItemIds;
@@ -165,6 +214,9 @@ export class UpcActivityPriceProcessor extends WorkerHost {
               expectedItemIds: restoredExpectedItemIds,
               freshToken,
               progress,
+              ensureCatalogActive: catalogLease
+                ? () => catalogLease.ensureActive().then(() => undefined)
+                : undefined,
               persist: () => this.saveProgress(executionId, results, activeShops),
             });
             results.push(this.buildLiveResult({
@@ -175,10 +227,10 @@ export class UpcActivityPriceProcessor extends WorkerHost {
               exportTaskIds: [...progress.exportTaskIds],
             }, progress, lifecycle));
           } else {
-            await this.ensureCanSubmit(executionId);
+            await ensureTargetActive();
             const downloaded = await this.downloadMenuWithRetries(
               freshToken,
-              () => this.ensureCanSubmit(executionId),
+              ensureTargetActive,
               rule.application.appId,
               async value => {
                 progress.phase = 'exporting_menu';
@@ -220,13 +272,22 @@ export class UpcActivityPriceProcessor extends WorkerHost {
                 latestMenu,
                 freshToken,
                 progress,
+                ensureCatalogActive: catalogLease
+                  ? () => catalogLease.ensureActive().then(() => undefined)
+                  : undefined,
                 persist: () => this.saveProgress(executionId, results, activeShops),
               });
               results.push(this.buildLiveResult(common, progress, lifecycle));
             }
           }
-        } catch (error) {
+          } catch (error) {
           if (error instanceof UpcActivityPriceCancelledError) throw error;
+          if (error instanceof OperationalLeaseLostError) {
+            preserveProgress = true;
+            progress.message = this.safeError(error);
+            await this.saveProgress(executionId, results, activeShops);
+            throw error;
+          }
           if (error instanceof UpcActivityPriceSubmissionAmbiguousError || this.hasRecoverableRemoteWork(progress)) {
             preserveProgress = true;
             progress.message = this.safeError(error);
@@ -247,10 +308,30 @@ export class UpcActivityPriceProcessor extends WorkerHost {
             uploadAttempts: progress.uploadAttempts,
             error: this.safeError(error),
           });
-        } finally {
+          } finally {
           if (!preserveProgress) activeShops.delete(target.shopId);
+          }
+          await this.saveProgress(executionId, results, activeShops);
+        };
+
+        if (execution.dryRun) {
+          await runTarget();
+          return;
         }
-        await this.saveProgress(executionId, results, activeShops);
+        this.assertLiveShopAllowed(target.appShopId);
+        await this.leases.runExclusive({
+          resourceKey: catalogMutationResourceKey(rule.applicationId, target.appShopId),
+          ownerKind: 'upc-activity-price',
+          ownerId: `${executionId}:${target.appShopId}`,
+          ttlMs: 5 * 60_000,
+          heartbeatIntervalMs: 30_000,
+          wait: true,
+          waitTimeoutMs: 15 * 60_000,
+          retryDelayMs: 1_000,
+          ensureActive: async () => {
+            await this.ensureCanSubmit(executionId);
+          },
+        }, runTarget);
       });
 
       if (await this.isCancellationRequested(executionId)) {
@@ -270,8 +351,8 @@ export class UpcActivityPriceProcessor extends WorkerHost {
       const errorMessage = status === AutoOpenStatus.done
         ? null
         : `${failedShops} store(s) failed; ${partialShops} store(s) were partially updated; ${skippedShops} store(s) did not contain UPC ${rule.targetUpc}`;
-      await this.prisma.$transaction([
-        this.prisma.upcActivityPriceExecution.update({
+      await this.withExecutionFence(executionId, async tx => {
+        await tx.upcActivityPriceExecution.update({
           where: { id: executionId },
           data: {
             status,
@@ -282,12 +363,14 @@ export class UpcActivityPriceProcessor extends WorkerHost {
             successfulShops,
             skippedShops,
             failedShops,
+            manualReviewRequired: false,
+            manualReviewReason: null,
             errorMessage,
             result: { targetUpc: rule.targetUpc, dryRun: execution.dryRun, shops: results } as unknown as Prisma.InputJsonValue,
           },
-        }),
-        this.prisma.upcActivityPriceRule.update({ where: { id: rule.id }, data: { lastRunAt: now } }),
-      ]);
+        });
+        await tx.upcActivityPriceRule.update({ where: { id: rule.id }, data: { lastRunAt: now } });
+      });
       this.logger.log(`UPC activity-price ${rule.name}: ${status}; ${successfulShops}/${results.length}; dryRun=${execution.dryRun}`);
     } catch (error) {
       if (error instanceof UpcActivityPriceCancelledError) {
@@ -297,6 +380,15 @@ export class UpcActivityPriceProcessor extends WorkerHost {
       if (error instanceof UpcActivityPriceSubmissionAmbiguousError) {
         await this.blockForManualReview(executionId, this.safeError(error), results, activeShops);
         return;
+      }
+      if (error instanceof OperationalLeaseLostError
+        && error.resourceKey === upcExecutionResourceKey(executionId)) {
+        throw error;
+      }
+      if (error instanceof OperationalLeaseUnavailableError
+        || error instanceof OperationalLeaseLostError) {
+        await this.markRecoveryPending(executionId, this.safeError(error), results, activeShops);
+        throw error;
       }
       if ([...activeShops.values()].some(progress => this.hasRecoverableRemoteWork(progress))) {
         await this.markRecoveryPending(executionId, this.safeError(error), results, activeShops);
@@ -309,35 +401,37 @@ export class UpcActivityPriceProcessor extends WorkerHost {
 
   @OnWorkerEvent('failed')
   async onFailed(job: Job<{ executionId: string }> | undefined, error: Error) {
-    if (!job?.data.executionId) return;
-    const execution = await this.prisma.upcActivityPriceExecution.findUnique({
-      where: { id: job.data.executionId },
-      select: { status: true, result: true },
-    });
-    if (execution && ['pending', 'running'].includes(execution.status)) {
-      const restored = this.restoreProgress(execution.result);
-      if ([...restored.activeShops.values()].some(progress => this.hasRecoverableRemoteWork(progress))) {
-        await this.prisma.upcActivityPriceExecution.updateMany({
-          where: { id: job.data.executionId, status: { in: ['pending', 'running'] } },
-          data: {
-            errorMessage: `Worker stopped; same execution/taskID recovery pending: ${this.safeError(error)}`,
-          },
-        });
-        return;
-      }
-    }
-    await this.prisma.upcActivityPriceExecution.updateMany({
-      where: { id: job.data.executionId, status: { in: ['pending', 'running'] } },
-      data: { status: 'failed', finishedAt: new Date(), currentShopId: null, errorMessage: this.safeError(error) },
-    });
+    // Bull failed events are diagnostic only. A delayed event may belong to a
+    // stale worker after a newer fenced owner has already resumed the same
+    // execution. All durable transitions happen inside processOwned while the
+    // DB lease is held.
+    this.logger.error(
+      `UPC Bull job ${job?.id ?? 'unknown'} failed; fenced recovery will reconcile it: ${this.safeError(error)}`,
+    );
   }
 
-  private assertRemoteWriteGate(dryRun: boolean) {
+  private assertRemoteWriteGate(dryRun: boolean, appShopId?: string) {
     const enabled = this.config.get('UPC_ACTIVITY_PRICE_REMOTE_WRITE_ENABLED', 'false').trim().toLowerCase() === 'true';
     if (!dryRun && !enabled) {
       throw new Error(
         'Live UPC activity-price writes are disabled by the server safety gate; '
         + 'keep them disabled until exclusive per-store menu-write coordination and worker ownership are approved',
+      );
+    }
+    if (!dryRun && appShopId) this.assertLiveShopAllowed(appShopId);
+  }
+
+  private assertLiveShopAllowed(appShopId: string) {
+    const allowed = new Set(
+      this.config.get<string>('UPC_ACTIVITY_PRICE_LIVE_SHOP_ALLOWLIST', '')
+        .split(',')
+        .map(value => value.trim())
+        .filter(Boolean),
+    );
+    if (!allowed.has(appShopId.trim())) {
+      throw new Error(
+        `Live UPC activity-price is not allowlisted for app_shop_id ${appShopId}; `
+        + 'add exactly the reviewed pilot store before enabling remote writes',
       );
     }
   }
@@ -474,12 +568,18 @@ export class UpcActivityPriceProcessor extends WorkerHost {
     latestMenu?: Record<string, unknown>;
     freshToken: () => Promise<string>;
     progress: ActiveShopProgress;
+    ensureCatalogActive?: () => Promise<void>;
     persist: () => Promise<void>;
   }): Promise<UploadLifecycleResult> {
     const expectedItemIds = [...new Set(input.expectedItemIds.map(String).filter(Boolean))];
     input.progress.expectedItemIds = expectedItemIds;
     let latestMenu = input.latestMenu;
     let lastTaskStatus: number | undefined;
+    const ensureLifecycleActive = async (monitorOnly = false) => {
+      if (monitorOnly) await this.ensureMonitorable(input.executionId);
+      else await this.ensureCanSubmit(input.executionId);
+      if (input.ensureCatalogActive) await input.ensureCatalogActive();
+    };
 
     const verificationTruth = () => {
       const last = input.progress.uploadAttempts.at(-1);
@@ -490,10 +590,10 @@ export class UpcActivityPriceProcessor extends WorkerHost {
     };
 
     const downloadLatestMenu = async (attempt: UploadAttemptAudit | undefined, resumeKnownTask: boolean) => {
-      await this.ensureCanSubmit(input.executionId);
+      await ensureLifecycleActive();
       const downloaded = await this.downloadMenuWithRetries(
         input.freshToken,
-        () => this.ensureCanSubmit(input.executionId),
+        () => ensureLifecycleActive(),
         input.applicationId,
         async value => {
           input.progress.phase = 'verifying_items';
@@ -553,7 +653,7 @@ export class UpcActivityPriceProcessor extends WorkerHost {
           authToken,
           attempt.taskId,
           input.freshToken,
-          () => this.ensureMonitorable(input.executionId),
+          () => ensureLifecycleActive(true),
           input.applicationId,
           async value => {
             attempt!.polls = value.polls;
@@ -634,8 +734,8 @@ export class UpcActivityPriceProcessor extends WorkerHost {
       const built = buildActivityPriceMenuUpload(latestMenu, input.targetUpc, retryIds);
       const submittedItemIds = built.updates.map(item => String(item.app_item_id));
       if (!submittedItemIds.length) return { ...verificationTruth(), lastTaskStatus };
-      await this.ensureCanSubmit(input.executionId);
-      this.assertRemoteWriteGate(false);
+      await ensureLifecycleActive();
+      this.assertRemoteWriteGate(false, input.progress.appShopId);
 
       attempt = input.progress.uploadAttempts.at(-1);
       if (attempt?.submissionState !== 'prepared') {
@@ -660,12 +760,12 @@ export class UpcActivityPriceProcessor extends WorkerHost {
       await this.persistUntilSaved(input.persist, 'prepared upload checkpoint');
 
       const authToken = await input.freshToken();
-      await this.ensureCanSubmit(input.executionId);
+      await ensureLifecycleActive();
       attempt.submissionState = 'submitting';
       input.progress.message = `Submitting upload attempt ${attempt.attempt}/${MAX_UPLOAD_ATTEMPTS}`;
       await this.persistUntilSaved(input.persist, 'pre-submission checkpoint');
       try {
-        await this.ensureCanSubmit(input.executionId);
+        await ensureLifecycleActive();
       } catch (error) {
         // The POST has not been called yet, so this boundary is safe to resume.
         attempt.submissionState = 'prepared';
@@ -756,6 +856,7 @@ export class UpcActivityPriceProcessor extends WorkerHost {
         await persist();
         return;
       } catch (error) {
+        if (error instanceof OperationalLeaseLostError) throw error;
         failures += 1;
         if (failures === 1 || failures % 12 === 0) {
           this.logger.error(`Could not persist ${label}; retrying without resubmission: ${this.safeError(error)}`);
@@ -906,29 +1007,51 @@ export class UpcActivityPriceProcessor extends WorkerHost {
     if (failure) throw failure.reason;
   }
 
+  private executionLease(executionId: string) {
+    const lease = this.executionLeases.get(executionId);
+    if (!lease) {
+      throw new OperationalLeaseLostError(
+        upcExecutionResourceKey(executionId),
+        'UPC execution has no active fenced worker context',
+      );
+    }
+    return lease;
+  }
+
+  private withExecutionFence<T>(
+    executionId: string,
+    work: (transaction: Prisma.TransactionClient) => Promise<T>,
+  ) {
+    return this.executionLease(executionId).withFencedTransaction(work);
+  }
+
   private async ensureCanSubmit(executionId: string) {
-    const execution = await this.prisma.upcActivityPriceExecution.findUnique({
+    const lease = this.executionLease(executionId);
+    await lease.ensureActive();
+    const execution = await lease.withFencedTransaction(tx => tx.upcActivityPriceExecution.findUnique({
       where: { id: executionId }, select: { status: true, cancelRequested: true },
-    });
+    }));
     if (!execution || execution.status !== 'running' || execution.cancelRequested) throw new UpcActivityPriceCancelledError();
   }
 
   private async ensureMonitorable(executionId: string) {
-    const execution = await this.prisma.upcActivityPriceExecution.findUnique({
+    const lease = this.executionLease(executionId);
+    await lease.ensureActive();
+    const execution = await lease.withFencedTransaction(tx => tx.upcActivityPriceExecution.findUnique({
       where: { id: executionId }, select: { status: true },
-    });
+    }));
     if (!execution || execution.status !== 'running') throw new UpcActivityPriceCancelledError();
   }
 
   private async isCancellationRequested(executionId: string) {
-    const execution = await this.prisma.upcActivityPriceExecution.findUnique({
+    const execution = await this.withExecutionFence(executionId, tx => tx.upcActivityPriceExecution.findUnique({
       where: { id: executionId }, select: { cancelRequested: true },
-    });
+    }));
     return !execution || execution.cancelRequested;
   }
 
   private async finishCancelled(executionId: string, results: ShopResult[], started: number) {
-    await this.prisma.upcActivityPriceExecution.updateMany({
+    await this.withExecutionFence(executionId, tx => tx.upcActivityPriceExecution.updateMany({
       where: { id: executionId, status: 'running', cancelRequested: true },
       data: {
         status: 'cancelled',
@@ -942,7 +1065,7 @@ export class UpcActivityPriceProcessor extends WorkerHost {
         errorMessage: 'Stopped manually after every accepted remote task reached a terminal state',
         result: { shops: results } as unknown as Prisma.InputJsonValue,
       },
-    });
+    }));
   }
 
   private async saveProgress(
@@ -950,7 +1073,7 @@ export class UpcActivityPriceProcessor extends WorkerHost {
     results: ShopResult[],
     activeShops: Map<string, ActiveShopProgress> = new Map(),
   ) {
-    await this.prisma.upcActivityPriceExecution.update({
+    await this.withExecutionFence(executionId, tx => tx.upcActivityPriceExecution.update({
       where: { id: executionId },
       data: {
         processedShops: results.length,
@@ -959,7 +1082,7 @@ export class UpcActivityPriceProcessor extends WorkerHost {
         failedShops: results.filter(value => value.outcome === 'failed').length,
         result: { shops: results, activeShops: [...activeShops.values()] } as unknown as Prisma.InputJsonValue,
       },
-    });
+    }));
   }
 
   private async blockForManualReview(
@@ -968,10 +1091,12 @@ export class UpcActivityPriceProcessor extends WorkerHost {
     results: ShopResult[],
     activeShops: Map<string, ActiveShopProgress>,
   ) {
-    await this.prisma.upcActivityPriceExecution.updateMany({
+    await this.withExecutionFence(executionId, tx => tx.upcActivityPriceExecution.updateMany({
       where: { id: executionId, status: 'running' },
       data: {
         cancelRequested: true,
+        manualReviewRequired: true,
+        manualReviewReason: message,
         currentShopId: null,
         errorMessage: `Manual review required; no automatic resubmission: ${message}`,
         result: {
@@ -981,7 +1106,7 @@ export class UpcActivityPriceProcessor extends WorkerHost {
           manualReviewReason: message,
         } as unknown as Prisma.InputJsonValue,
       },
-    });
+    }));
   }
 
   private async markRecoveryPending(
@@ -990,17 +1115,17 @@ export class UpcActivityPriceProcessor extends WorkerHost {
     results: ShopResult[],
     activeShops: Map<string, ActiveShopProgress>,
   ) {
-    await this.prisma.upcActivityPriceExecution.updateMany({
+    await this.withExecutionFence(executionId, tx => tx.upcActivityPriceExecution.updateMany({
       where: { id: executionId, status: { in: ['pending', 'running'] } },
       data: {
         errorMessage: `Recovery pending for the same execution/taskID: ${message}`,
         result: { shops: results, activeShops: [...activeShops.values()] } as unknown as Prisma.InputJsonValue,
       },
-    });
+    }));
   }
 
   private async fail(executionId: string, message: string, results: ShopResult[], started: number) {
-    await this.prisma.upcActivityPriceExecution.updateMany({
+    await this.withExecutionFence(executionId, tx => tx.upcActivityPriceExecution.updateMany({
       where: { id: executionId, status: { in: ['pending', 'running'] } },
       data: {
         status: 'failed',
@@ -1011,10 +1136,12 @@ export class UpcActivityPriceProcessor extends WorkerHost {
         successfulShops: results.filter(value => ['updated', 'partial_success', 'would_update', 'already_current'].includes(value.outcome)).length,
         skippedShops: results.filter(value => value.outcome === 'upc_not_found').length,
         failedShops: results.filter(value => value.outcome === 'failed').length,
+        manualReviewRequired: false,
+        manualReviewReason: null,
         errorMessage: message,
         result: { shops: results } as unknown as Prisma.InputJsonValue,
       },
-    });
+    }));
   }
 
   private safeError(error: unknown) {

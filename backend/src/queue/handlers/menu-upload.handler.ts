@@ -2,10 +2,12 @@ import { Logger } from '@nestjs/common';
 import { join } from 'path';
 import { unlink } from 'fs/promises';
 import * as ExcelJS from 'exceljs';
+import { FlatGroceryUpload } from '../../file-integrations/grocery-destination-menu.util';
+import { uploadGroceryBatch } from '../../file-integrations/grocery-menu-upload.util';
 import { registerHandler, HandlerContext } from '../handler.processor';
 import {
-  DIDI_BASE, BATCH_SIZE, COOLDOWN_BATCH_MS,
-  sleep, parseJsonKeepingIds,
+  BATCH_SIZE, COOLDOWN_BATCH_MS,
+  sleep,
   isRawShopId, fetchShopIdMap, getAuthToken,
 } from './didi-food.util';
 
@@ -167,16 +169,31 @@ function buildMenuPayload(authToken: string, items: MenuItem[], categoriesInput:
 
 // ── DiDi API call ─────────────────────────────────────────────────────────────
 
-async function uploadMenuForShop(token: string, items: MenuItem[], categories: MenuCategory[], country: string): Promise<string> {
+async function uploadMenuForShop(
+  token: string,
+  items: MenuItem[],
+  categories: MenuCategory[],
+  country: string,
+  ensureActive: () => Promise<void>,
+  refreshAuthToken: () => Promise<string>,
+): Promise<string> {
   const payload = buildMenuPayload(token, items, categories, country);
-  const res = await fetch(`${DIDI_BASE}/v3/item/item/uploadGrocery`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const body = parseJsonKeepingIds(await res.text());
-  if (body.errno !== 0) throw new Error(`DiDi error (errno=${body.errno}): ${body.errmsg}`);
-  return String(body.data?.taskID ?? '');
+  const upload: FlatGroceryUpload = {
+    menus: payload.menus,
+    categories: payload.categories,
+    items: payload.items,
+    categoryIds: categories.map(category => category.id),
+  };
+  await ensureActive();
+  const result = await uploadGroceryBatch(
+    token,
+    upload,
+    'uploadGrocery',
+    1,
+    ensureActive,
+    refreshAuthToken,
+  );
+  return result.referenceId;
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -235,8 +252,21 @@ async function menuUpload(ctx: HandlerContext): Promise<unknown> {
 
     for (const shop of batch) {
       try {
-        const token  = await getAuthToken(appId, appSecret, shop.appShopId);
-        const taskId = await uploadMenuForShop(token, shop.items, shop.categories, brand.country);
+        const taskId = await ctx.runWithCatalogLease(
+          shop.appShopId,
+          'menu-upload',
+          async ensureActive => {
+            const token = await getAuthToken(appId, appSecret, shop.appShopId);
+            return uploadMenuForShop(
+              token,
+              shop.items,
+              shop.categories,
+              brand.country,
+              ensureActive,
+              () => getAuthToken(appId, appSecret, shop.appShopId),
+            );
+          },
+        );
         successful.push({ appShopId: shop.appShopId, taskId, items: shop.items.length });
         ctx.addNote(`✓ ${shop.appShopId}: taskID=${taskId} (${shop.items.length} items)`);
         logger.log(`✓ ${shop.appShopId}: taskID=${taskId}`);

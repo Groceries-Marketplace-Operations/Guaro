@@ -7,7 +7,7 @@ type PollResult = { status: number; failedItems: Array<{ appItemId: string; reas
 type MenuResult = { taskId: string; rawJson: string };
 
 function processorPoller() {
-  const processor = new UpcActivityPriceProcessor({} as never, {} as never);
+  const processor = new UpcActivityPriceProcessor({} as never, {} as never, {} as never);
   return processor as unknown as {
     pollUploadTask: (
       authToken: string,
@@ -21,7 +21,7 @@ function processorPoller() {
 }
 
 function processorMenuDownloader() {
-  const processor = new UpcActivityPriceProcessor({} as never, {} as never);
+  const processor = new UpcActivityPriceProcessor({} as never, {} as never, {} as never);
   return processor as unknown as {
     downloadMenuWithRetries: (
       getToken: () => Promise<string>,

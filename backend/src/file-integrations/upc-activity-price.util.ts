@@ -11,6 +11,7 @@ export type ActivityPriceMenuUpload = {
   categories: JsonObject[];
   items: JsonObject[];
   categoryIds: string[];
+  modifierGroups?: JsonObject[];
 };
 
 export function shouldRetryActivityPriceUpload(input: {
@@ -100,6 +101,9 @@ export function buildActivityPriceMenuUpload(
   const categories = Array.isArray(menu.categories)
     ? menu.categories.filter(value => value && typeof value === 'object') as JsonObject[]
     : [];
+  const modifierGroups = Array.isArray(menu.modifier_groups)
+    ? menu.modifier_groups.filter(value => value && typeof value === 'object') as JsonObject[]
+    : undefined;
   if (!menus.length || !categories.length || !sourceItems.length) {
     throw new Error('Exported menu must contain menus, categories, and items before uploadGrocery can be used');
   }
@@ -112,7 +116,13 @@ export function buildActivityPriceMenuUpload(
   return {
     ...prepared,
     updates,
-    upload: { menus, categories, items, categoryIds } satisfies ActivityPriceMenuUpload,
+    upload: {
+      menus,
+      categories,
+      items,
+      categoryIds,
+      ...(modifierGroups?.length ? { modifierGroups } : {}),
+    } satisfies ActivityPriceMenuUpload,
   };
 }
 

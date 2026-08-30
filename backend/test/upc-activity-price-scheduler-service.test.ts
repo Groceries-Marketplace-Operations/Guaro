@@ -52,7 +52,7 @@ test('execution reconciliation does not duplicate a live Bull job', async () => 
     },
   };
   const tx = {
-    $queryRaw: async () => [],
+    $executeRaw: async () => 1,
     upcActivityPriceExecution: {
       findUnique: async () => ({ status: 'running', result: null }),
     },
@@ -94,7 +94,7 @@ test('execution reconciliation requeues the same durable execution after a termi
     },
   };
   const tx = {
-    $queryRaw: async () => [],
+    $executeRaw: async () => 1,
     upcActivityPriceExecution: {
       findUnique: async () => ({ status: 'running', result: null }),
     },
@@ -126,7 +126,7 @@ test('execution reconciliation never queues an execution marked for manual revie
     },
   };
   const tx = {
-    $queryRaw: async () => [],
+    $executeRaw: async () => 1,
     upcActivityPriceExecution: {
       findUnique: async () => ({
         status: 'running',

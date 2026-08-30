@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma, PromotionApiMode } from '@prisma/client';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { catalogMutationResourceKey, OperationalLeaseService } from '../prisma/operational-lease.service';
 import { fetchWithEndpointContext, getAuthToken, parseJsonKeepingIds } from '../queue/handlers/didi-food.util';
 import { ExecutePromotionDto } from './dto/execute-promotion.dto';
 
@@ -34,7 +35,11 @@ export class PromotionApiService {
   private readonly encryptionKey: string;
   private readonly liveEnabled: boolean;
 
-  constructor(private readonly prisma: PrismaService, config: ConfigService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    config: ConfigService,
+    private readonly leases: OperationalLeaseService,
+  ) {
     this.encryptionKey = config.getOrThrow('APP_SECRET_ENCRYPTION_KEY');
     this.liveEnabled = config.get('PROMOTIONS_API_LIVE_ENABLED', 'false') === 'true';
   }
@@ -83,23 +88,35 @@ export class PromotionApiService {
       }
 
       const app = shop.brand.application;
-      const secret = decrypt(app.appSecret, this.encryptionKey);
-      const authToken = await getAuthToken(app.appId, secret, shop.appShopId);
-      const response = await fetchWithEndpointContext(ENDPOINT, URL, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auth_token: authToken, ...validated }),
-      });
-      const body = parseJsonKeepingIds(await response.text());
-      if (!response.ok || body.errno !== 0) {
-        throw new Error(`${ENDPOINT} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
-      }
-      const taskId = body.data?.taskID ?? body.data?.taskId;
-      return await this.prisma.promotionApiExecution.update({
-        where: { id: execution.id },
-        data: {
-          status: 'done', finishedAt: new Date(), durationMs: Date.now() - started,
-          response: body as Prisma.InputJsonValue, remoteTaskId: taskId ? String(taskId) : null,
-        },
+      return await this.leases.runExclusive({
+        resourceKey: catalogMutationResourceKey(app.id, shop.appShopId),
+        ownerKind: 'promotion-api',
+        ownerId: execution.id,
+        ttlMs: 5 * 60_000,
+        heartbeatIntervalMs: 30_000,
+        wait: true,
+        waitTimeoutMs: 15 * 60_000,
+        retryDelayMs: 1_000,
+      }, async catalogLease => {
+        const secret = decrypt(app.appSecret, this.encryptionKey);
+        const authToken = await getAuthToken(app.appId, secret, shop.appShopId);
+        await catalogLease.ensureActive();
+        const response = await fetchWithEndpointContext(ENDPOINT, URL, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auth_token: authToken, ...validated }),
+        });
+        const body = parseJsonKeepingIds(await response.text());
+        if (!response.ok || body.errno !== 0) {
+          throw new Error(`${ENDPOINT} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
+        }
+        const taskId = body.data?.taskID ?? body.data?.taskId;
+        return this.prisma.promotionApiExecution.update({
+          where: { id: execution.id },
+          data: {
+            status: 'done', finishedAt: new Date(), durationMs: Date.now() - started,
+            response: body as Prisma.InputJsonValue, remoteTaskId: taskId ? String(taskId) : null,
+          },
+        });
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

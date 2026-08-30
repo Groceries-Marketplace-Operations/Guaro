@@ -22,6 +22,7 @@ test('preserves exported menu structure and changes only the target activity pri
   const menu = {
     menus: [{ app_menu_id: 'menu-1', app_category_ids: ['cat-1'], custom: 'keep' }],
     categories: [{ app_category_id: 'cat-1', app_item_ids: ['a', 'b'], priority: 7 }],
+    modifier_groups: [{ app_modifier_group_id: 'modifier-group-1', name: 'Extras', custom: 'keep' }],
     items: [
       { app_item_id: 'a', upc: '7707430870113', price: 20, activity_price: 10, custom: 'target' },
       { app_item_id: 'b', upc: 'other', price: 30, activity_price: 12, custom: 'other' },
@@ -32,6 +33,7 @@ test('preserves exported menu structure and changes only the target activity pri
 
   assert.deepEqual(result.upload.menus, menu.menus);
   assert.deepEqual(result.upload.categories, menu.categories);
+  assert.deepEqual(result.upload.modifierGroups, menu.modifier_groups);
   assert.deepEqual(result.upload.items, [
     { ...menu.items[0], activity_price: 20 },
     menu.items[1],
