@@ -6,7 +6,7 @@ type Attempt = {
   attempt: number;
   submittedItemIds: string[];
   taskId?: string;
-  submissionState: 'prepared' | 'submitting' | 'submitted' | 'terminal' | 'verified' | 'unconfirmed';
+  submissionState: 'prepared' | 'submitting' | 'submitted' | 'terminal' | 'verified' | 'rejected' | 'unconfirmed';
   taskStatus?: number;
   polls: number;
   failures: Array<{ appItemId: string; reason: string }>;
@@ -198,6 +198,37 @@ test('submitting or unconfirmed checkpoint without taskID blocks automatic resub
   }
 
   assert.equal(uploadCalls, 0);
+});
+
+test('restored explicit rejection remains terminal and never resubmits uploadGrocery', async t => {
+  const processor = harness();
+  const rejected = attempt('rejected');
+  rejected.error = 'POST /v3/item/item/uploadGrocery explicitly rejected the category hierarchy';
+  const restored = progress(rejected);
+  const originalFetch = global.fetch;
+  let uploadCalls = 0;
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = async () => {
+    uploadCalls += 1;
+    throw new Error('a rejected checkpoint must not reach uploadGrocery');
+  };
+
+  await assert.rejects(
+    processor.runUploadLifecycle({
+      executionId: 'execution-rejected',
+      applicationId: 'application-1',
+      targetUpc: TARGET_UPC,
+      expectedItemIds: ['a'],
+      freshToken: async () => 'token',
+      progress: restored,
+      persist: async () => undefined,
+    }),
+    /explicitly rejected the category hierarchy/,
+  );
+
+  assert.equal(uploadCalls, 0);
+  assert.equal(restored.uploadAttempts.length, 1);
+  assert.equal(restored.uploadAttempts[0].submissionState, 'rejected');
 });
 
 test('terminal failures retry only remaining item IDs and stop at three attempts', async t => {

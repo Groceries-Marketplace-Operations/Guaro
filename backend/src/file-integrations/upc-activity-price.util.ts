@@ -11,8 +11,12 @@ export type ActivityPriceMenuUpload = {
   categories: JsonObject[];
   items: JsonObject[];
   categoryIds: string[];
-  modifierGroups?: JsonObject[];
 };
+
+const ACTIVITY_PRICE_CATEGORY_ID = 'Cate_Grocery_2';
+const ACTIVITY_PRICE_CATEGORY_NAME = 'Comida Refrigerada';
+const ACTIVITY_PRICE_MENU_NAME = 'Grocery_sample_1';
+const ACTIVITY_PRICE_APP_MENU_ID = 'Grocery DiDiFood Sample';
 
 export function shouldRetryActivityPriceUpload(input: {
   taskStatus: number;
@@ -95,24 +99,42 @@ export function buildActivityPriceMenuUpload(
   const sourceItems = Array.isArray(menu.items)
     ? menu.items.filter(value => value && typeof value === 'object') as JsonObject[]
     : [];
-  const menus = Array.isArray(menu.menus)
-    ? menu.menus.filter(value => value && typeof value === 'object') as JsonObject[]
-    : [];
-  const categories = Array.isArray(menu.categories)
-    ? menu.categories.filter(value => value && typeof value === 'object') as JsonObject[]
-    : [];
-  const modifierGroups = Array.isArray(menu.modifier_groups)
-    ? menu.modifier_groups.filter(value => value && typeof value === 'object') as JsonObject[]
-    : undefined;
-  if (!menus.length || !categories.length || !sourceItems.length) {
-    throw new Error('Exported menu must contain menus, categories, and items before uploadGrocery can be used');
+  if (!sourceItems.length) {
+    throw new Error('Exported menu must contain items before uploadGrocery can be used');
   }
 
   const items = sourceItems.map(item => {
     const update = updateById.get(text(item.app_item_id));
-    return update ? { ...item, activity_price: update.activity_price } : item;
+    const price = validPrice(item.price) ?? 0;
+    const activityPrice = update
+      ? update.activity_price
+      : validPrice(item.activity_price) ?? 0;
+    return {
+      app_item_id: text(item.app_item_id),
+      item_name: text(item.item_name),
+      short_desc: text(item.short_desc) || text(item.item_name),
+      price,
+      activity_price: activityPrice,
+      status: Number.isFinite(Number(item.status)) ? Number(item.status) : 1,
+      app_category_id: ACTIVITY_PRICE_CATEGORY_ID,
+      head_img: text(item.head_img),
+      upc: text(item.upc),
+    };
   });
-  const categoryIds = categories.map(category => text(category.app_category_id)).filter(Boolean);
+  const itemIds = items.map(item => text(item.app_item_id));
+  if (itemIds.some(itemId => !itemId)) {
+    throw new Error('Exported menu contains an item without app_item_id');
+  }
+  const menus: JsonObject[] = [{
+    menu_name: ACTIVITY_PRICE_MENU_NAME,
+    app_menu_id: ACTIVITY_PRICE_APP_MENU_ID,
+    app_category_ids: [ACTIVITY_PRICE_CATEGORY_ID],
+  }];
+  const categories: JsonObject[] = [{
+    app_category_id: ACTIVITY_PRICE_CATEGORY_ID,
+    category_name: ACTIVITY_PRICE_CATEGORY_NAME,
+    app_item_ids: itemIds,
+  }];
   return {
     ...prepared,
     updates,
@@ -120,8 +142,7 @@ export function buildActivityPriceMenuUpload(
       menus,
       categories,
       items,
-      categoryIds,
-      ...(modifierGroups?.length ? { modifierGroups } : {}),
+      categoryIds: [ACTIVITY_PRICE_CATEGORY_ID],
     } satisfies ActivityPriceMenuUpload,
   };
 }

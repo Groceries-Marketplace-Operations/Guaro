@@ -27,6 +27,13 @@ export interface GroceryBatchSubmission {
   referenceId: string;
 }
 
+export class GroceryBatchSubmissionRejectedError extends Error {
+  constructor(endpoint: string, status: number, errno: unknown, detail: unknown) {
+    super(`${endpoint} rejected the submission: ${String(detail ?? `HTTP ${status}`)} (errno=${String(errno ?? 'unknown')})`);
+    this.name = 'GroceryBatchSubmissionRejectedError';
+  }
+}
+
 export interface GroceryUploadTaskCheckResult {
   status: number | undefined;
   failedItems: GroceryItemFailure[];
@@ -198,13 +205,23 @@ export async function submitGroceryBatch(
     body: JSON.stringify(request.payload),
   });
   const body = parseJsonKeepingIds(await response.text()) as Record<string, any>;
+  const referenceId = uploadEndpoint === 'uploadGrocery'
+    ? String(body.data?.taskID ?? body.data?.taskId ?? '')
+    : '';
+  // A returned taskID is authoritative even if the surrounding HTTP/business
+  // envelope is contradictory. Poll that same task instead of risking a
+  // duplicate submission or incorrectly declaring that no task was accepted.
+  if (referenceId) return { referenceId };
   if (!response.ok || body.errno !== 0) {
-    throw new Error(`${request.endpoint} failed: ${body.errmsg ?? `HTTP ${response.status}`} (errno=${body.errno ?? 'unknown'})`);
+    throw new GroceryBatchSubmissionRejectedError(
+      request.endpoint,
+      response.status,
+      body.errno,
+      body.errmsg,
+    );
   }
   if (uploadEndpoint === 'updateItemsync') return parseUpdateItemSyncResult(body, batch.items.length);
-  const referenceId = String(body.data?.taskID ?? body.data?.taskId ?? '');
-  if (!referenceId) throw new Error(`${request.endpoint} did not return a taskID`);
-  return { referenceId };
+  throw new Error(`${request.endpoint} did not return a taskID`);
 }
 
 export async function resolveGroceryBatchSubmission(

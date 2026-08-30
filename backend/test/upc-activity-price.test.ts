@@ -18,27 +18,84 @@ test('retries terminal failed, partial, or unverified-success tasks only while s
   assert.equal(shouldRetryActivityPriceUpload({ ...base, taskStatus: 2, attempt: 3 }), false);
 });
 
-test('preserves exported menu structure and changes only the target activity price', () => {
+test('builds the flat payload from the supplied integration contract and changes only the target activity price', () => {
   const menu = {
-    menus: [{ app_menu_id: 'menu-1', app_category_ids: ['cat-1'], custom: 'keep' }],
-    categories: [{ app_category_id: 'cat-1', app_item_ids: ['a', 'b'], priority: 7 }],
-    modifier_groups: [{ app_modifier_group_id: 'modifier-group-1', name: 'Extras', custom: 'keep' }],
+    menus: [{
+      app_menu_id: 'menu-1',
+      app_category_ids: ['parent', 'child'],
+      subclasses: [{ app_category_id: 'child' }],
+      custom: 'must-not-leak',
+    }],
+    categories: [{
+      app_category_id: 'child',
+      app_item_ids: ['a', 'b'],
+      superclasses: [{ app_category_id: 'parent' }],
+      priority: 7,
+    }],
+    modifier_groups: [{ app_modifier_group_id: 'modifier-group-1', name: 'Extras', custom: 'must-not-leak' }],
     items: [
-      { app_item_id: 'a', upc: '7707430870113', price: 20, activity_price: 10, custom: 'target' },
-      { app_item_id: 'b', upc: 'other', price: 30, activity_price: 12, custom: 'other' },
+      {
+        app_item_id: 'a',
+        upc: '7707430870113',
+        item_name: 'Target',
+        short_desc: 'Target description',
+        price: 20,
+        activity_price: 10,
+        status: 1,
+        head_img: 'target.jpg',
+        modifier_groups: [{ app_modifier_group_id: 'modifier-group-1' }],
+        custom: 'must-not-leak',
+      },
+      {
+        app_item_id: 'b',
+        upc: 'other',
+        item_name: 'Other',
+        price: 30,
+        activity_price: 12,
+        status: 0,
+        custom: 'must-not-leak',
+      },
     ],
   };
 
   const result = buildActivityPriceMenuUpload(menu, '7707430870113');
 
-  assert.deepEqual(result.upload.menus, menu.menus);
-  assert.deepEqual(result.upload.categories, menu.categories);
-  assert.deepEqual(result.upload.modifierGroups, menu.modifier_groups);
+  assert.deepEqual(result.upload.menus, [{
+    menu_name: 'Grocery_sample_1',
+    app_menu_id: 'Grocery DiDiFood Sample',
+    app_category_ids: ['Cate_Grocery_2'],
+  }]);
+  assert.deepEqual(result.upload.categories, [{
+    app_category_id: 'Cate_Grocery_2',
+    category_name: 'Comida Refrigerada',
+    app_item_ids: ['a', 'b'],
+  }]);
+  assert.equal('modifierGroups' in result.upload, false);
   assert.deepEqual(result.upload.items, [
-    { ...menu.items[0], activity_price: 20 },
-    menu.items[1],
+    {
+      app_item_id: 'a',
+      item_name: 'Target',
+      short_desc: 'Target description',
+      price: 20,
+      activity_price: 20,
+      status: 1,
+      app_category_id: 'Cate_Grocery_2',
+      head_img: 'target.jpg',
+      upc: '7707430870113',
+    },
+    {
+      app_item_id: 'b',
+      item_name: 'Other',
+      short_desc: 'Other',
+      price: 30,
+      activity_price: 12,
+      status: 0,
+      app_category_id: 'Cate_Grocery_2',
+      head_img: '',
+      upc: 'other',
+    },
   ]);
-  assert.equal(result.upload.items[1], menu.items[1]);
+  assert.deepEqual(result.upload.categoryIds, ['Cate_Grocery_2']);
 });
 
 test('limits a retry transformation to the originally expected item ids', () => {
@@ -54,6 +111,12 @@ test('limits a retry transformation to the originally expected item ids', () => 
   assert.deepEqual(result.updates.map(item => item.app_item_id), ['a']);
   assert.equal(result.upload.items[0].activity_price, 20);
   assert.equal(result.upload.items[1].activity_price, 5);
+});
+
+test('rejects a flat upload when an exported item has no app_item_id', () => {
+  assert.throws(() => buildActivityPriceMenuUpload({
+    items: [{ upc: 'other', price: 30 }],
+  }, '7707430870113'), /without app_item_id/);
 });
 
 test('changes only the requested UPC and preserves the item identity', () => {

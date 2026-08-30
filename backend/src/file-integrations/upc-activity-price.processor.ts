@@ -21,6 +21,7 @@ import {
 import { getAuthToken, parseJsonKeepingIds, sleep } from '../queue/handlers/didi-food.util';
 import {
   checkGroceryUploadTaskOnce,
+  GroceryBatchSubmissionRejectedError,
   GroceryItemFailure,
   submitGroceryBatch,
 } from './grocery-menu-upload.util';
@@ -45,7 +46,7 @@ interface UploadAttemptAudit {
   attempt: number;
   submittedItemIds: string[];
   taskId?: string;
-  submissionState: 'prepared' | 'submitting' | 'submitted' | 'terminal' | 'verified' | 'unconfirmed';
+  submissionState: 'prepared' | 'submitting' | 'submitted' | 'terminal' | 'verified' | 'rejected' | 'unconfirmed';
   taskStatus?: number;
   polls: number;
   failures: GroceryItemFailure[];
@@ -464,7 +465,7 @@ export class UpcActivityPriceProcessor extends WorkerHost {
         const missingItemIds = strings(raw.missingItemIds);
         const explicitState = String(raw.submissionState ?? '');
         const allowedStates: UploadAttemptAudit['submissionState'][] = [
-          'prepared', 'submitting', 'submitted', 'terminal', 'verified', 'unconfirmed',
+          'prepared', 'submitting', 'submitted', 'terminal', 'verified', 'rejected', 'unconfirmed',
         ];
         const submissionState: UploadAttemptAudit['submissionState'] = allowedStates.includes(
           explicitState as UploadAttemptAudit['submissionState'],
@@ -631,6 +632,12 @@ export class UpcActivityPriceProcessor extends WorkerHost {
 
     while (true) {
       let attempt = input.progress.uploadAttempts.at(-1);
+      if (attempt?.submissionState === 'rejected') {
+        throw new Error(
+          attempt.error
+            ?? `Upload attempt ${attempt.attempt} for shop ${input.progress.shopId} was explicitly rejected before task acceptance`,
+        );
+      }
       if (attempt?.submissionState === 'unconfirmed'
         || (attempt?.submissionState === 'submitting' && !attempt.taskId)) {
         throw new UpcActivityPriceSubmissionAmbiguousError(
@@ -787,6 +794,17 @@ export class UpcActivityPriceProcessor extends WorkerHost {
         input.progress.message = `Accepted upload task ${submission.referenceId}; persisting before polling`;
         await this.persistUntilSaved(input.persist, 'accepted upload taskID');
       } catch (error) {
+        if (error instanceof GroceryBatchSubmissionRejectedError) {
+          attempt.submissionState = 'rejected';
+          attempt.error = this.safeError(error);
+          attempt.failures = submittedItemIds.slice(0, MAX_AUDITED_FAILURES).map(appItemId => ({
+            appItemId,
+            reason: attempt!.error!,
+          }));
+          input.progress.message = 'uploadGrocery explicitly rejected the request before returning a taskID; no automatic resubmission will occur';
+          await this.persistUntilSaved(input.persist, 'rejected upload checkpoint');
+          throw error;
+        }
         attempt.submissionState = 'unconfirmed';
         attempt.error = this.safeError(error);
         input.progress.message = 'uploadGrocery acceptance is ambiguous; automatic resubmission is blocked';

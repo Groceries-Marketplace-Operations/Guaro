@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import {
   checkGroceryUploadTaskOnce,
+  GroceryBatchSubmissionRejectedError,
   resolveGroceryBatchSubmission,
   submitGroceryBatch,
 } from '../src/file-integrations/grocery-menu-upload.util';
@@ -29,6 +30,42 @@ test('offer menu submission returns the taskID without polling its status', asyn
   assert.deepEqual(submission, { referenceId: 'task-123' });
   assert.equal(calls.length, 1);
   assert.match(calls[0], /\/v3\/item\/item\/uploadGrocery$/);
+});
+
+test('an explicit uploadGrocery rejection is distinguishable from ambiguous transport failure and is not retried', async t => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ errno: 20101, errmsg: 'invalid category hierarchy', data: {} }), { status: 200 });
+  };
+
+  await assert.rejects(
+    () => submitGroceryBatch('token', batch, 'uploadGrocery', 0),
+    (error: Error) => error instanceof GroceryBatchSubmissionRejectedError
+      && /invalid category hierarchy/.test(error.message),
+  );
+  assert.equal(calls, 1);
+});
+
+test('a returned taskID remains authoritative even when the response envelope is contradictory', async t => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({
+      errno: 20101,
+      errmsg: 'contradictory response',
+      data: { taskID: 'task-authoritative-1' },
+    }), { status: 500 });
+  };
+
+  const submission = await submitGroceryBatch('token', batch, 'uploadGrocery', 0);
+
+  assert.deepEqual(submission, { referenceId: 'task-authoritative-1' });
+  assert.equal(calls, 1);
 });
 
 test('offer menu task status is resolved independently after submission', async t => {
