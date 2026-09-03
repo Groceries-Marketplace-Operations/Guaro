@@ -105,6 +105,7 @@ function receiver(options: {
 } = {}) {
   let existing = options.existing;
   const updates: Array<Record<string, unknown>> = [];
+  const requestUpdates: Array<Record<string, unknown>> = [];
   const applicationFindCalls: unknown[] = [];
   const shopFindCalls: unknown[] = [];
   const prisma = {
@@ -122,6 +123,13 @@ function receiver(options: {
       findMany: async (input: unknown) => {
         shopFindCalls.push(input);
         return (options.shops ?? [SHOP_ID]).map(id => ({ id }));
+      },
+    },
+    didiOrderWebhookRequest: {
+      create: async () => ({ id: 'request-1' }),
+      update: async (input: { data: Record<string, unknown> }) => {
+        requestUpdates.push(input.data);
+        return { id: 'request-1', ...input.data };
       },
     },
     didiOrderWebhookEvent: {
@@ -155,6 +163,7 @@ function receiver(options: {
   return {
     value: new DidiOrderWebhooksService(prisma as never, config as never),
     updates,
+    requestUpdates,
     applicationFindCalls,
     shopFindCalls,
   };
@@ -197,6 +206,8 @@ test('receiver gets the shop token and confirms once with the exact order ID', a
   );
   assert.equal(subject.updates.at(-1)?.status, 'accepted');
   assert.equal(subject.updates.at(-1)?.remoteErrno, 0);
+  assert.equal(subject.requestUpdates.at(-1)?.outcome, 'accepted');
+  assert.equal(subject.requestUpdates.at(-1)?.localHttpStatus, 200);
 });
 
 test('an accepted duplicate and a live processing duplicate never resend', async () => {
@@ -218,6 +229,8 @@ test('an accepted duplicate and a live processing duplicate never resend', async
       appShopId: APP_SHOP_ID,
       status: 'accepted',
     });
+    assert.equal(accepted.requestUpdates.at(-1)?.outcome, 'deduplicated');
+    assert.equal(accepted.requestUpdates.at(-1)?.eventId, 'event-a');
 
     const processing = receiver({
       createUniqueConflict: true,
@@ -230,6 +243,7 @@ test('an accepted duplicate and a live processing duplicate never resend', async
       appShopId: APP_SHOP_ID,
       status: 'processing',
     });
+    assert.equal(processing.requestUpdates.at(-1)?.outcome, 'deduplicated');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -291,6 +305,22 @@ test('receiver refuses app mismatch and ambiguous shop resolution before remote 
   assert.equal(fetches, 0);
 });
 
+test('valid-token validation failures are audited, while no body or token is persisted', async () => {
+  const subject = receiver();
+  await assert.rejects(
+    subject.value.receive(TOKEN, payload({ type: 'orderUpdate' })),
+    BadRequestException,
+  );
+  const audit = subject.requestUpdates.at(-1);
+  assert.equal(audit?.stage, 'validation');
+  assert.equal(audit?.outcome, 'rejected');
+  assert.equal(audit?.localHttpStatus, 400);
+  const serialized = JSON.stringify(audit);
+  assert.equal(serialized.includes(TOKEN), false);
+  assert.equal(serialized.includes('rawBody'), false);
+  assert.equal(serialized.includes('auth_token'), false);
+});
+
 test('remote failures are audited without credentials, URLs, or raw payloads', async () => {
   const subject = receiver();
   const originalFetch = globalThis.fetch;
@@ -317,6 +347,30 @@ test('remote failures are audited without credentials, URLs, or raw payloads', a
   assert.equal(String(audit?.remoteErrmsg).includes('secret-value'), false);
   assert.equal(String(audit?.remoteErrmsg).includes('https://'), false);
   assert.equal(JSON.stringify(audit).includes(ORDER_ID), false);
+  const requestAudit = subject.requestUpdates.at(-1);
+  assert.equal(requestAudit?.stage, 'confirmation');
+  assert.equal(requestAudit?.outcome, 'failed');
+  assert.equal(requestAudit?.localHttpStatus, 502);
+  assert.equal(String(requestAudit?.remoteErrmsg).includes('secret-value'), false);
+  assert.equal(String(requestAudit?.remoteErrmsg).includes('https://'), false);
+});
+
+test('authentication failures record their exact safe stage without credentials', async () => {
+  const subject = receiver();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error(`auth failed for app_secret=${SECRET} Bearer ${TOKEN}`);
+  }) as typeof fetch;
+  try {
+    await assert.rejects(subject.value.receive(TOKEN, payload()), BadGatewayException);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const audit = subject.requestUpdates.at(-1);
+  assert.equal(audit?.stage, 'authentication');
+  assert.equal(audit?.outcome, 'failed');
+  assert.equal(String(audit?.errorMessage).includes(SECRET), false);
+  assert.equal(String(audit?.errorMessage).includes(TOKEN), false);
 });
 
 interface AdminApplicationState {

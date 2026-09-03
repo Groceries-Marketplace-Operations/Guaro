@@ -152,6 +152,22 @@ export const applicationsApi = {
     client.post<import('../types').ApplicationOrderWebhook>(`/applications/${id}/order-webhook/rotate`),
   disableOrderWebhook: (id: string) =>
     client.delete<import('../types').ApplicationOrderWebhook>(`/applications/${id}/order-webhook`),
+  listOrderWebhookEvents: (id: string, params?: {
+    page?: number;
+    limit?: number;
+    status?: import('../types').DidiOrderWebhookEventStatus;
+    appShopId?: string;
+    orderId?: string;
+    from?: string;
+    to?: string;
+  }) => client.get<import('../types').DidiOrderWebhookEventsResponse>(
+    `/applications/${id}/order-webhook/events`,
+    { params },
+  ),
+  getOrderWebhookEvent: (id: string, eventId: string) =>
+    client.get<import('../types').DidiOrderWebhookEvent>(
+      `/applications/${id}/order-webhook/events/${eventId}`,
+    ),
 };
 
 /* ── Tasks ──────────────────────────────────────────────────── */

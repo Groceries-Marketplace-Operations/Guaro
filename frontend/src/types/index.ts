@@ -168,6 +168,74 @@ export interface ApplicationOrderWebhook {
   lastError: string | null;
 }
 
+export type DidiOrderWebhookEventOutcome = 'processing' | 'accepted' | 'deduplicated' | 'rejected' | 'failed';
+export type DidiOrderWebhookEventStatus = DidiOrderWebhookEventOutcome;
+export type DidiOrderWebhookEventStage =
+  | 'received'
+  | 'validation'
+  | 'shop_resolution'
+  | 'idempotency'
+  | 'authentication'
+  | 'confirmation'
+  | 'completed'
+  | 'legacy';
+
+export interface DidiOrderWebhookEventShop {
+  id: string;
+  shopId: string;
+  name: string | null;
+  brand: {
+    id: string;
+    brandId: string;
+    brandName: string;
+  } | null;
+}
+
+export interface DidiOrderWebhookEvent {
+  id: string;
+  eventId: string | null;
+  applicationId: string;
+  application?: {
+    id: string;
+    appName: string;
+  };
+  shop: DidiOrderWebhookEventShop | null;
+  appShopId: string | null;
+  orderId: string | null;
+  type: string | null;
+  status: DidiOrderWebhookEventStatus;
+  stage: DidiOrderWebhookEventStage;
+  outcome: DidiOrderWebhookEventOutcome;
+  attempts: number | null;
+  sourceTimestamp: string | null;
+  sourceOccurredAt: string | null;
+  localHttpStatus: number | null;
+  durationMs: number | null;
+  remoteHttpStatus: number | null;
+  remoteErrno: number | null;
+  remoteErrmsg: string | null;
+  errorMessage: string | null;
+  startedAt: string | null;
+  acceptedAt: string | null;
+  failedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DidiOrderWebhookEventSummary {
+  total: number;
+  accepted: number;
+  failed: number;
+  processing: number;
+  deduplicated: number;
+  rejected: number;
+}
+
+export interface DidiOrderWebhookEventsResponse extends Paginated<DidiOrderWebhookEvent> {
+  summary: DidiOrderWebhookEventSummary;
+}
+
 export interface DidiStoreBindingShop {
   shopId: string;
   appShopId: string;

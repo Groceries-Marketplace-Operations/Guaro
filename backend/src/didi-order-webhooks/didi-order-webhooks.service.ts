@@ -1,12 +1,14 @@
 import {
   BadGatewayException,
   BadRequestException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import { DidiOrderWebhookRequestStage, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -118,7 +120,6 @@ export class DidiOrderWebhooksService {
 
   async receive(token: string, rawBody: Buffer | undefined) {
     if (!WEBHOOK_TOKEN_PATTERN.test(token)) throw new NotFoundException('Order webhook not found');
-    if (!rawBody) throw new BadRequestException('Raw webhook body is unavailable');
 
     const application = await this.prisma.application.findFirst({
       where: {
@@ -130,62 +131,127 @@ export class DidiOrderWebhooksService {
       select: { id: true, appId: true, appSecret: true },
     });
     if (!application) throw new NotFoundException('Order webhook not found');
-
-    const payload = parseDidiOrderWebhookPayload(rawBody);
-    if (payload.appId !== application.appId) {
-      throw new BadRequestException('Payload app_id does not match webhook application');
-    }
-
-    const shops = await this.prisma.shop.findMany({
-      where: {
-        appShopId: payload.appShopId,
-        deletedAt: null,
-        brand: { applicationId: application.id, deletedAt: null },
-      },
+    const requestStartedAt = Date.now();
+    const requestLog = await this.prisma.didiOrderWebhookRequest.create({
+      data: { applicationId: application.id },
       select: { id: true },
-      take: 2,
     });
-    if (shops.length !== 1) {
-      throw new BadRequestException(
-        'app_shop_id must resolve to exactly one active shop for the webhook application',
-      );
-    }
-
-    const event = await this.claimEvent(application.id, shops[0].id, payload);
-    if (!event.claimed) {
-      return {
-        accepted: event.status === 'accepted',
-        deduplicated: true,
-        orderId: payload.orderId,
-        appShopId: event.appShopId,
-        status: event.status,
-      };
-    }
-
+    let stage: DidiOrderWebhookRequestStage = 'received';
+    let eventId: string | null = null;
+    let remote: DidiOrderConfirmError | null = null;
+    let failureDetail: string | null = null;
     const auditSecrets: string[] = [];
+
     try {
-      let appSecret: string;
-      try {
-        appSecret = decrypt(application.appSecret, this.encryptionKey);
-      } catch {
-        throw new Error('Application credential could not be decrypted');
+      if (!rawBody) throw new BadRequestException('Raw webhook body is unavailable');
+      stage = 'validation';
+      const payload = parseDidiOrderWebhookPayload(rawBody);
+      if (payload.appId !== application.appId) {
+        throw new BadRequestException('Payload app_id does not match webhook application');
       }
-      auditSecrets.push(appSecret);
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), DIDI_ORDER_CONFIRM_TIMEOUT_MS);
+
+      stage = 'shop_resolution';
+      await this.prisma.didiOrderWebhookRequest.update({
+        where: { id: requestLog.id },
+        data: {
+          stage,
+          appShopId: payload.appShopId,
+          orderId: payload.orderId,
+          type: payload.type,
+        },
+      });
+      const shops = await this.prisma.shop.findMany({
+        where: {
+          appShopId: payload.appShopId,
+          deletedAt: null,
+          brand: { applicationId: application.id, deletedAt: null },
+        },
+        select: { id: true },
+        take: 2,
+      });
+      if (shops.length !== 1) {
+        throw new BadRequestException(
+          'app_shop_id must resolve to exactly one active shop for the webhook application',
+        );
+      }
+
+      stage = 'idempotency';
+      await this.prisma.didiOrderWebhookRequest.update({
+        where: { id: requestLog.id },
+        data: { stage },
+      });
+      const event = await this.claimEvent(application.id, shops[0].id, payload);
+      eventId = event.id;
+      await this.prisma.didiOrderWebhookRequest.update({
+        where: { id: requestLog.id },
+        data: { eventId },
+      });
+      if (!event.claimed) {
+        await this.completeRequest(requestLog.id, requestStartedAt, {
+          stage: 'completed',
+          outcome: 'deduplicated',
+          localHttpStatus: HttpStatus.OK,
+          eventId,
+        });
+        return {
+          accepted: event.status === 'accepted',
+          deduplicated: true,
+          orderId: payload.orderId,
+          appShopId: event.appShopId,
+          status: event.status,
+        };
+      }
+
       let confirmed: ConfirmResult;
       try {
-        const authToken = await getAuthToken(
-          application.appId,
-          appSecret,
-          payload.appShopId,
-          controller.signal,
-        );
-        auditSecrets.push(authToken);
-        confirmed = await this.confirmOrder(authToken, payload.orderId, controller.signal);
-      } finally {
-        clearTimeout(timeout);
+        stage = 'authentication';
+        await this.prisma.didiOrderWebhookRequest.update({
+          where: { id: requestLog.id },
+          data: { stage },
+        });
+        let appSecret: string;
+        try {
+          appSecret = decrypt(application.appSecret, this.encryptionKey);
+        } catch {
+          throw new Error('Application credential could not be decrypted');
+        }
+        auditSecrets.push(appSecret);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), DIDI_ORDER_CONFIRM_TIMEOUT_MS);
+        try {
+          const authToken = await getAuthToken(
+            application.appId,
+            appSecret,
+            payload.appShopId,
+            controller.signal,
+          );
+          auditSecrets.push(authToken);
+          stage = 'confirmation';
+          await this.prisma.didiOrderWebhookRequest.update({
+            where: { id: requestLog.id },
+            data: { stage },
+          });
+          confirmed = await this.confirmOrder(authToken, payload.orderId, controller.signal);
+        } finally {
+          clearTimeout(timeout);
+        }
+      } catch (error) {
+        remote = error instanceof DidiOrderConfirmError ? error : null;
+        failureDetail = safeError(error, auditSecrets);
+        await this.prisma.didiOrderWebhookEvent.update({
+          where: { id: event.id },
+          data: {
+            status: 'failed',
+            failedAt: new Date(),
+            remoteHttpStatus: remote?.httpStatus ?? null,
+            remoteErrno: remote?.errno ?? null,
+            remoteErrmsg: sanitizeAuditText(remote?.errmsg),
+            errorMessage: failureDetail,
+          },
+        });
+        throw new BadGatewayException('DiDi order confirmation failed');
       }
+
       await this.prisma.didiOrderWebhookEvent.update({
         where: { id: event.id },
         data: {
@@ -198,6 +264,16 @@ export class DidiOrderWebhooksService {
           errorMessage: null,
         },
       });
+      await this.completeRequest(requestLog.id, requestStartedAt, {
+        stage: 'completed',
+        outcome: 'accepted',
+        localHttpStatus: HttpStatus.OK,
+        eventId,
+        remoteHttpStatus: confirmed.httpStatus,
+        remoteErrno: confirmed.errno,
+        remoteErrmsg: sanitizeAuditText(confirmed.errmsg),
+        errorMessage: null,
+      });
       return {
         accepted: true,
         deduplicated: false,
@@ -206,20 +282,35 @@ export class DidiOrderWebhooksService {
         status: 'accepted' as const,
       };
     } catch (error) {
-      const remote = error instanceof DidiOrderConfirmError ? error : null;
-      await this.prisma.didiOrderWebhookEvent.update({
-        where: { id: event.id },
-        data: {
-          status: 'failed',
-          failedAt: new Date(),
-          remoteHttpStatus: remote?.httpStatus ?? null,
-          remoteErrno: remote?.errno ?? null,
-          remoteErrmsg: sanitizeAuditText(remote?.errmsg),
-          errorMessage: safeError(error, auditSecrets),
-        },
+      const localHttpStatus = error instanceof HttpException ? error.getStatus() : 500;
+      const recordedRemote = remote as DidiOrderConfirmError | null;
+      await this.completeRequest(requestLog.id, requestStartedAt, {
+        stage,
+        outcome: localHttpStatus >= 500 ? 'failed' : 'rejected',
+        localHttpStatus,
+        eventId,
+        remoteHttpStatus: recordedRemote?.httpStatus ?? null,
+        remoteErrno: recordedRemote?.errno ?? null,
+        remoteErrmsg: sanitizeAuditText(recordedRemote?.errmsg),
+        errorMessage: failureDetail ?? safeError(error, auditSecrets),
       });
-      throw new BadGatewayException('DiDi order confirmation failed');
+      throw error;
     }
+  }
+
+  private completeRequest(
+    id: string,
+    startedAt: number,
+    data: Prisma.DidiOrderWebhookRequestUncheckedUpdateInput,
+  ) {
+    return this.prisma.didiOrderWebhookRequest.update({
+      where: { id },
+      data: {
+        ...data,
+        durationMs: Math.min(2_147_483_647, Math.max(0, Date.now() - startedAt)),
+        completedAt: new Date(),
+      },
+    });
   }
 
   private async claimEvent(
@@ -410,8 +501,10 @@ function sanitizeAuditText(
 ) {
   if (!value) return null;
   let sanitized = value
-    .replace(/((?:auth_token|app_secret|refresh_token)\s*[=:]\s*)[^\s,;}&]+/gi, '$1[REDACTED]')
-    .replace(/https?:\/\/[^\s]+/gi, '[REDACTED_URL]');
+    .replace(/((?:auth_token|app_secret|refresh_token|authorization)\s*[=:]\s*)[^\s,;}&]+/gi, '$1[REDACTED]')
+    .replace(/\bBearer\s+[^\s,;}&]+/gi, 'Bearer [REDACTED]')
+    .replace(/https?:\/\/[^\s]+/gi, '[REDACTED_URL]')
+    .replace(/\b[A-Za-z0-9_-]{43}\b/g, '[REDACTED_TOKEN]');
   for (const secret of secrets) {
     if (secret) sanitized = sanitized.split(secret).join('[REDACTED]');
   }

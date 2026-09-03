@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../components/layout/Topbar';
 import Modal from '../components/ui/Modal';
 import Paginator from '../components/ui/Paginator';
+import OrderWebhookLogsPanel from '../components/applications/OrderWebhookLogsPanel';
+import '../components/applications/order-webhook-logs.css';
 import { applicationsApi } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useT } from '../i18n';
@@ -80,6 +82,7 @@ export default function ApplicationsPage() {
   const [webhookAction, setWebhookAction] = useState<WebhookAction>(null);
   const [webhookErr, setWebhookErr] = useState('');
   const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [webhookTab, setWebhookTab] = useState<'configuration' | 'logs'>('configuration');
 
   const params = { page, limit: LIMIT, ...(q ? { q } : {}), ...(country ? { country } : {}) };
 
@@ -160,6 +163,7 @@ export default function ApplicationsPage() {
     setWebhookApp(application);
     setWebhookErr('');
     setCopiedWebhook(false);
+    setWebhookTab('configuration');
   };
 
   const closeOrderWebhook = () => {
@@ -167,6 +171,7 @@ export default function ApplicationsPage() {
     setWebhookApp(null);
     setWebhookErr('');
     setCopiedWebhook(false);
+    setWebhookTab('configuration');
   };
 
   const refreshOrderWebhook = async () => {
@@ -410,6 +415,29 @@ export default function ApplicationsPage() {
           onClose={closeOrderWebhook}
           footer={<button className="btn btn-ghost" onClick={closeOrderWebhook} disabled={!!webhookAction}>{t('common.close')}</button>}
         >
+          <div className="order-webhook-panel">
+          <div className="order-webhook-tabs" role="tablist" aria-label={t('pages.applications.orderWebhookTabs')}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={webhookTab === 'configuration'}
+              className={webhookTab === 'configuration' ? 'is-active' : undefined}
+              onClick={() => setWebhookTab('configuration')}
+            >
+              {t('pages.applications.orderWebhookTabConfiguration')}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={webhookTab === 'logs'}
+              className={webhookTab === 'logs' ? 'is-active' : undefined}
+              onClick={() => setWebhookTab('logs')}
+            >
+              {t('pages.applications.orderWebhookTabLogs')}
+            </button>
+          </div>
+
+          {webhookTab === 'configuration' && <>
           {(webhookErr || webhookQuery.isError) && (
             <div className="error-banner">
               {webhookErr || t('pages.applications.orderWebhookLoadError')}
@@ -500,6 +528,12 @@ export default function ApplicationsPage() {
               )}
             </>
           )}
+          </>}
+
+          {webhookTab === 'logs' && (
+            <OrderWebhookLogsPanel applicationId={webhookApp.id} active={webhookTab === 'logs'} />
+          )}
+          </div>
         </Modal>
       )}
     </>

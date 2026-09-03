@@ -210,6 +210,25 @@ enum DidiOrderWebhookStatus {
   failed
 }
 
+enum DidiOrderWebhookRequestStage {
+  received
+  validation
+  shop_resolution
+  idempotency
+  authentication
+  confirmation
+  completed
+  legacy
+}
+
+enum DidiOrderWebhookRequestOutcome {
+  processing
+  accepted
+  deduplicated
+  rejected
+  failed
+}
+
 enum AutoFetchKind {
   stores
   menu
@@ -348,43 +367,43 @@ model Account {
   updatedAt      DateTime      @updatedAt @map("updated_at")
   deletedAt      DateTime?     @map("deleted_at")
 
-  section                        Section?                     @relation(fields: [sectionId], references: [id])
-  createdTasks                   Task[]                       @relation("TaskCreador")
-  ownedBrands                    Brand[]                      @relation("BrandResponsable")
-  createdBrands                  Brand[]                      @relation("BrandCreador")
-  createdShops                   Shop[]                       @relation("ShopCreador")
-  createdApps                    Application[]                @relation("AppCreador")
-  createdSftpApps                SftpApplication[]            @relation("SftpAppCreator")
-  createdStoreEmergencies        StoreEmergency[]             @relation("StoreEmergencyCreator")
-  storeEmergencyEvents           StoreEmergencyEvent[]        @relation("StoreEmergencyEventActor")
-  createdForcedOpenOperations    ForcedOpenOperation[]        @relation("ForcedOpenOperationCreator")
-  assignedSteps                  StepInstance[]
-  stepCandidate                  StepDefinitionAccount[]
-  ruleCandidate                  BrandAssignmentRuleAccount[]
-  createdInvitations             Invitation[]                 @relation("InvitacionCreador")
-  usedInvitation                 Invitation?                  @relation("InvitacionCuenta")
-  createdAutoTurnOffRules        AutoTurnOffRule[]            @relation("AutoTurnOffRuleCreator")
-  updatedAutoTurnOffRules        AutoTurnOffRule[]            @relation("AutoTurnOffRuleUpdater")
-  cancelledAutoTurnOffExecutions AutoTurnOffExecution[]       @relation("AutoTurnOffExecutionCanceller")
-  createdFileIntegrationRules    FileIntegrationRule[]        @relation("FileIntegrationRuleCreator")
-  createdFileIntegrationRuns     FileIntegrationExecution[]   @relation("FileIntegrationExecutionCreator")
-  createdPromotionApiRuns        PromotionApiExecution[]      @relation("PromotionApiExecutionCreator")
-  createdTargetedMenuRules       TargetedMenuRule[]           @relation("TargetedMenuRuleCreator")
-  updatedTargetedMenuRules       TargetedMenuRule[]           @relation("TargetedMenuRuleUpdater")
-  createdTargetedMenuRuns        TargetedMenuExecution[]      @relation("TargetedMenuExecutionCreator")
-  createdMenuCopyRuns            MenuCopyExecution[]          @relation("MenuCopyExecutionCreator")
-  createdMassiveRtboRuns         MassiveRtboExecution[]       @relation("MassiveRtboExecutionCreator")
-  createdDidiStoreBindingRuns    DidiStoreBindingExecution[]  @relation("DidiStoreBindingExecutionCreator")
-  createdOfferMenuRules          OfferMenuUploadRule[]        @relation("OfferMenuRuleCreator")
-  updatedOfferMenuRules          OfferMenuUploadRule[]        @relation("OfferMenuRuleUpdater")
-  createdOfferMenuRuns           OfferMenuUploadExecution[]   @relation("OfferMenuExecutionCreator")
-  createdUpcActivityPriceRules   UpcActivityPriceRule[]        @relation("UpcActivityPriceRuleCreator")
-  updatedUpcActivityPriceRules   UpcActivityPriceRule[]        @relation("UpcActivityPriceRuleUpdater")
-  createdUpcActivityPriceRuns    UpcActivityPriceExecution[]   @relation("UpcActivityPriceExecutionCreator")
-  accessProfile                  AccountAccessProfile?
-  accessPermissionOverrides      AccountPermissionOverride[]
-  accessSectionScopes            AccountSectionScope[]
-  accessControlAudits            AccessControlAudit[]         @relation("AccessControlAuditActor")
+  section                                    Section?                             @relation(fields: [sectionId], references: [id])
+  createdTasks                               Task[]                               @relation("TaskCreador")
+  ownedBrands                                Brand[]                              @relation("BrandResponsable")
+  createdBrands                              Brand[]                              @relation("BrandCreador")
+  createdShops                               Shop[]                               @relation("ShopCreador")
+  createdApps                                Application[]                        @relation("AppCreador")
+  createdSftpApps                            SftpApplication[]                    @relation("SftpAppCreator")
+  createdStoreEmergencies                    StoreEmergency[]                     @relation("StoreEmergencyCreator")
+  storeEmergencyEvents                       StoreEmergencyEvent[]                @relation("StoreEmergencyEventActor")
+  createdForcedOpenOperations                ForcedOpenOperation[]                @relation("ForcedOpenOperationCreator")
+  assignedSteps                              StepInstance[]
+  stepCandidate                              StepDefinitionAccount[]
+  ruleCandidate                              BrandAssignmentRuleAccount[]
+  createdInvitations                         Invitation[]                         @relation("InvitacionCreador")
+  usedInvitation                             Invitation?                          @relation("InvitacionCuenta")
+  createdAutoTurnOffRules                    AutoTurnOffRule[]                    @relation("AutoTurnOffRuleCreator")
+  updatedAutoTurnOffRules                    AutoTurnOffRule[]                    @relation("AutoTurnOffRuleUpdater")
+  cancelledAutoTurnOffExecutions             AutoTurnOffExecution[]               @relation("AutoTurnOffExecutionCanceller")
+  createdFileIntegrationRules                FileIntegrationRule[]                @relation("FileIntegrationRuleCreator")
+  createdFileIntegrationRuns                 FileIntegrationExecution[]           @relation("FileIntegrationExecutionCreator")
+  createdPromotionApiRuns                    PromotionApiExecution[]              @relation("PromotionApiExecutionCreator")
+  createdTargetedMenuRules                   TargetedMenuRule[]                   @relation("TargetedMenuRuleCreator")
+  updatedTargetedMenuRules                   TargetedMenuRule[]                   @relation("TargetedMenuRuleUpdater")
+  createdTargetedMenuRuns                    TargetedMenuExecution[]              @relation("TargetedMenuExecutionCreator")
+  createdMenuCopyRuns                        MenuCopyExecution[]                  @relation("MenuCopyExecutionCreator")
+  createdMassiveRtboRuns                     MassiveRtboExecution[]               @relation("MassiveRtboExecutionCreator")
+  createdDidiStoreBindingRuns                DidiStoreBindingExecution[]          @relation("DidiStoreBindingExecutionCreator")
+  createdOfferMenuRules                      OfferMenuUploadRule[]                @relation("OfferMenuRuleCreator")
+  updatedOfferMenuRules                      OfferMenuUploadRule[]                @relation("OfferMenuRuleUpdater")
+  createdOfferMenuRuns                       OfferMenuUploadExecution[]           @relation("OfferMenuExecutionCreator")
+  createdUpcActivityPriceRules               UpcActivityPriceRule[]               @relation("UpcActivityPriceRuleCreator")
+  updatedUpcActivityPriceRules               UpcActivityPriceRule[]               @relation("UpcActivityPriceRuleUpdater")
+  createdUpcActivityPriceRuns                UpcActivityPriceExecution[]          @relation("UpcActivityPriceExecutionCreator")
+  accessProfile                              AccountAccessProfile?
+  accessPermissionOverrides                  AccountPermissionOverride[]
+  accessSectionScopes                        AccountSectionScope[]
+  accessControlAudits                        AccessControlAudit[]                 @relation("AccessControlAuditActor")
   storeOnboardingControls                    StoreOnboardingControl[]             @relation("StoreOnboardingControlUpdater")
   storeOnboardingControlRevisions            StoreOnboardingControlRevision[]     @relation("StoreOnboardingControlRevisionActor")
   storeOnboardingRolloutDrafts               StoreOnboardingRolloutRevision[]     @relation("StoreOnboardingRolloutCreator")
@@ -447,11 +466,11 @@ model TaskType {
   updatedAt   DateTime  @updatedAt @map("updated_at")
   deletedAt   DateTime? @map("deleted_at")
 
-  section         Section            @relation(fields: [sectionId], references: [id])
-  stepDefinitions StepDefinition[]
-  formFields      FormField[]
-  tasks           Task[]
-  templates       TaskTypeTemplate[]
+  section                       Section                          @relation(fields: [sectionId], references: [id])
+  stepDefinitions               StepDefinition[]
+  formFields                    FormField[]
+  tasks                         Task[]
+  templates                     TaskTypeTemplate[]
   storeOnboardingSourceRollouts StoreOnboardingRolloutSource[]   @relation("StoreOnboardingSourceTaskType")
   storeOnboardingBrandRollouts  StoreOnboardingRolloutRevision[] @relation("StoreOnboardingBrandTaskType")
 
@@ -662,10 +681,10 @@ model Webhook {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  stepWebhooks     StepWebhook[]
-  brandWebhooks    BrandWebhook[]
-  autoOpenPools    AutoOpenPool[]
-  autoTurnOffPools AutoTurnOffPool[]
+  stepWebhooks                        StepWebhook[]
+  brandWebhooks                       BrandWebhook[]
+  autoOpenPools                       AutoOpenPool[]
+  autoTurnOffPools                    AutoTurnOffPool[]
   storeOnboardingNotificationProfiles StoreOnboardingNotificationProfile[]
 
   @@map("webhook")
@@ -705,15 +724,16 @@ model Application {
   updatedAt                  DateTime                @updatedAt @map("updated_at")
   deletedAt                  DateTime?               @map("deleted_at")
 
-  createdBy                Account?            @relation("AppCreador", fields: [createdById], references: [id])
-  brands                   Brand[]
-  sourceMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopySourceApplication")
-  targetMenuCopyExecutions MenuCopyExecution[] @relation("MenuCopyTargetApplication")
-  massiveRtboExecutions    MassiveRtboExecution[]
+  createdBy                  Account?                    @relation("AppCreador", fields: [createdById], references: [id])
+  brands                     Brand[]
+  sourceMenuCopyExecutions   MenuCopyExecution[]         @relation("MenuCopySourceApplication")
+  targetMenuCopyExecutions   MenuCopyExecution[]         @relation("MenuCopyTargetApplication")
+  massiveRtboExecutions      MassiveRtboExecution[]
   didiStoreBindingExecutions DidiStoreBindingExecution[]
-  offerMenuUploadRules     OfferMenuUploadRule[]
-  upcActivityPriceRules    UpcActivityPriceRule[]
-  didiOrderWebhookEvents   DidiOrderWebhookEvent[]
+  offerMenuUploadRules       OfferMenuUploadRule[]
+  upcActivityPriceRules      UpcActivityPriceRule[]
+  didiOrderWebhookEvents     DidiOrderWebhookEvent[]
+  didiOrderWebhookRequests   DidiOrderWebhookRequest[]
 
   @@unique([id, country]) // target of composite FK (see constraints.sql)
   @@map("application")
@@ -763,25 +783,25 @@ model Brand {
   updatedAt       DateTime         @updatedAt @map("updated_at")
   deletedAt       DateTime?        @map("deleted_at")
 
-  owner                  Account?                @relation("BrandResponsable", fields: [ownerId], references: [id])
-  createdBy              Account?                @relation("BrandCreador", fields: [createdById], references: [id])
-  application            Application?            @relation(fields: [applicationId], references: [id])
-  webhooks               BrandWebhook[]
-  shops                  Shop[]
-  tasks                  Task[]
-  formValues             FormValue[]
-  autoOpenPoolBrands     AutoOpenPoolBrand[]
+  owner                       Account?                     @relation("BrandResponsable", fields: [ownerId], references: [id])
+  createdBy                   Account?                     @relation("BrandCreador", fields: [createdById], references: [id])
+  application                 Application?                 @relation(fields: [applicationId], references: [id])
+  webhooks                    BrandWebhook[]
+  shops                       Shop[]
+  tasks                       Task[]
+  formValues                  FormValue[]
+  autoOpenPoolBrands          AutoOpenPoolBrand[]
   autoOpenPoolBrandExclusions AutoOpenPoolBrandExclusion[]
-  autoFetchPoolBrands    AutoFetchPoolBrand[]
-  autoTurnOffRules       AutoTurnOffRule[]
-  storeEmergencies       StoreEmergency[]
-  forcedOpenOperations   ForcedOpenOperation[]
-  items                  BrandItem[]
-  shopItems              BrandShopItem[]
-  menuCategories         BrandMenuCategory[]
-  sftpApplications       SftpApplication[]
-  promotionApiExecutions PromotionApiExecution[]
-  targetedMenuRules      TargetedMenuRule[]
+  autoFetchPoolBrands         AutoFetchPoolBrand[]
+  autoTurnOffRules            AutoTurnOffRule[]
+  storeEmergencies            StoreEmergency[]
+  forcedOpenOperations        ForcedOpenOperation[]
+  items                       BrandItem[]
+  shopItems                   BrandShopItem[]
+  menuCategories              BrandMenuCategory[]
+  sftpApplications            SftpApplication[]
+  promotionApiExecutions      PromotionApiExecution[]
+  targetedMenuRules           TargetedMenuRule[]
   storeOnboardingProvisioning BrandProvisioning?
   storeOnboardingRequests     StoreOnboardingRequest[]
 
@@ -861,13 +881,44 @@ model DidiOrderWebhookEvent {
   createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz
 
-  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
-  shop        Shop        @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  application Application               @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  shop        Shop                      @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  requests    DidiOrderWebhookRequest[]
 
   @@unique([applicationId, orderId, type])
+  @@index([applicationId, createdAt])
+  @@index([applicationId, status, createdAt])
   @@index([status, startedAt])
   @@index([shopId, createdAt])
   @@map("didi_order_webhook_event")
+}
+
+model DidiOrderWebhookRequest {
+  id               String                         @id @default(uuid()) @db.Uuid
+  applicationId    String                         @map("application_id") @db.Uuid
+  eventId          String?                        @map("event_id") @db.Uuid
+  appShopId        String?                        @map("app_shop_id")
+  orderId          String?                        @map("order_id")
+  type             String?
+  stage            DidiOrderWebhookRequestStage   @default(received)
+  outcome          DidiOrderWebhookRequestOutcome @default(processing)
+  localHttpStatus  Int?                           @map("local_http_status")
+  durationMs       Int?                           @map("duration_ms")
+  remoteHttpStatus Int?                           @map("remote_http_status")
+  remoteErrno      Int?                           @map("remote_errno")
+  remoteErrmsg     String?                        @map("remote_errmsg") @db.Text
+  errorMessage     String?                        @map("error_message") @db.Text
+  completedAt      DateTime?                      @map("completed_at") @db.Timestamptz
+  createdAt        DateTime                       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime                       @updatedAt @map("updated_at") @db.Timestamptz
+
+  application Application            @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  event       DidiOrderWebhookEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@index([applicationId, createdAt])
+  @@index([applicationId, outcome, createdAt])
+  @@index([eventId])
+  @@map("didi_order_webhook_request")
 }
 
 model BrandItem {
@@ -984,12 +1035,12 @@ model Task {
   updatedAt      DateTime   @updatedAt @map("updated_at")
   deletedAt      DateTime?  @map("deleted_at")
 
-  taskType      TaskType       @relation(fields: [taskTypeId], references: [id])
-  brand         Brand?         @relation(fields: [brandId], references: [id])
-  createdBy     Account        @relation("TaskCreador", fields: [createdById], references: [id])
-  stepInstances StepInstance[]
-  formValues    FormValue[]
-  taskShops     TaskShop[]
+  taskType                     TaskType                       @relation(fields: [taskTypeId], references: [id])
+  brand                        Brand?                         @relation(fields: [brandId], references: [id])
+  createdBy                    Account                        @relation("TaskCreador", fields: [createdById], references: [id])
+  stepInstances                StepInstance[]
+  formValues                   FormValue[]
+  taskShops                    TaskShop[]
   storeOnboardingEnrollment    StoreOnboardingTaskEnrollment? @relation("StoreOnboardingEnrollmentTask")
   storeOnboardingRequest       StoreOnboardingRequest?        @relation("StoreOnboardingRequestTask")
   storeOnboardingProvisioning  BrandProvisioning?             @relation("StoreOnboardingProvisioningSourceTask")
@@ -1030,9 +1081,9 @@ model StepInstance {
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
 
-  task           Task           @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  stepDefinition StepDefinition @relation(fields: [stepDefinitionId], references: [id])
-  assignedTo     Account?       @relation(fields: [assignedToId], references: [id])
+  task                   Task                   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  stepDefinition         StepDefinition         @relation(fields: [stepDefinitionId], references: [id])
+  assignedTo             Account?               @relation(fields: [assignedToId], references: [id])
   storeOnboardingBatches StoreOnboardingBatch[]
 
   @@index([taskId])
@@ -1115,10 +1166,10 @@ model AutoOpenPool {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  webhook    Webhook?            @relation(fields: [webhookId], references: [id])
-  brands     AutoOpenPoolBrand[]
+  webhook         Webhook?                     @relation(fields: [webhookId], references: [id])
+  brands          AutoOpenPoolBrand[]
   brandExclusions AutoOpenPoolBrandExclusion[]
-  executions AutoOpenExecution[]
+  executions      AutoOpenExecution[]
 
   @@map("auto_open_pool")
 }
@@ -1173,12 +1224,12 @@ model AutoOpenExecution {
   logs                  Json?
   createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
-  pool       AutoOpenPool             @relation(fields: [poolId], references: [id])
-  brandRuns  AutoOpenBrandExecution[]
+  pool      AutoOpenPool             @relation(fields: [poolId], references: [id])
+  brandRuns AutoOpenBrandExecution[]
 
+  @@unique([poolId, scheduledSlot])
   @@index([poolId])
   @@index([status, heartbeatAt])
-  @@unique([poolId, scheduledSlot])
   @@map("auto_open_execution")
 }
 
@@ -1388,43 +1439,43 @@ model FileIntegrationExecution {
 }
 
 model OfferMenuUploadRule {
-  id                     String    @id @default(uuid()) @db.Uuid
-  name                   String
-  sftpApplicationId      String    @map("sftp_application_id") @db.Uuid
-  applicationId          String    @map("application_id") @db.Uuid
-  active                 Boolean   @default(false)
-  dryRun                 Boolean   @default(true) @map("dry_run")
-  scheduleHours          Int[]     @default([10, 20]) @map("schedule_hours")
-  timezone               String    @default("America/Mexico_City")
-  nextRunAt              DateTime? @map("next_run_at") @db.Timestamptz
-  lastRunAt              DateTime? @map("last_run_at") @db.Timestamptz
-  filePattern            String    @default("offer*.csv") @map("file_pattern")
-  delimiter              String    @default(";")
-  categoryIdPrefix       String    @default("category_0") @map("category_id_prefix")
-  categoryName           String    @default("Despensa") @map("category_name")
-  menuIdPrefix           String    @default("menu") @map("menu_id_prefix")
-  menuNamePrefix         String    @default("Menu") @map("menu_name_prefix")
-  mergePolicy            Int       @default(1) @map("merge_policy")
-  storeConcurrency       Int       @default(2) @map("store_concurrency")
-  maxItemsPerStore       Int       @default(30000) @map("max_items_per_store")
-  maxItemsPerCategory    Int       @default(4999) @map("max_items_per_category")
-  activeStatus           Int       @default(1) @map("active_status")
-  includeTaxInfo         Boolean   @default(false) @map("include_tax_info")
-  taxType                Int       @default(1) @map("tax_type")
-  taxRate                Int       @default(1600) @map("tax_rate")
-  lastSourceFile         String?   @map("last_source_file")
-  lastSourceModifiedAt   DateTime? @map("last_source_modified_at") @db.Timestamptz
-  lastSourceSize         BigInt?   @map("last_source_size")
-  createdById            String?   @map("created_by") @db.Uuid
-  updatedById            String?   @map("updated_by") @db.Uuid
-  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt              DateTime? @map("deleted_at") @db.Timestamptz
+  id                   String    @id @default(uuid()) @db.Uuid
+  name                 String
+  sftpApplicationId    String    @map("sftp_application_id") @db.Uuid
+  applicationId        String    @map("application_id") @db.Uuid
+  active               Boolean   @default(false)
+  dryRun               Boolean   @default(true) @map("dry_run")
+  scheduleHours        Int[]     @default([10, 20]) @map("schedule_hours")
+  timezone             String    @default("America/Mexico_City")
+  nextRunAt            DateTime? @map("next_run_at") @db.Timestamptz
+  lastRunAt            DateTime? @map("last_run_at") @db.Timestamptz
+  filePattern          String    @default("offer*.csv") @map("file_pattern")
+  delimiter            String    @default(";")
+  categoryIdPrefix     String    @default("category_0") @map("category_id_prefix")
+  categoryName         String    @default("Despensa") @map("category_name")
+  menuIdPrefix         String    @default("menu") @map("menu_id_prefix")
+  menuNamePrefix       String    @default("Menu") @map("menu_name_prefix")
+  mergePolicy          Int       @default(1) @map("merge_policy")
+  storeConcurrency     Int       @default(2) @map("store_concurrency")
+  maxItemsPerStore     Int       @default(30000) @map("max_items_per_store")
+  maxItemsPerCategory  Int       @default(4999) @map("max_items_per_category")
+  activeStatus         Int       @default(1) @map("active_status")
+  includeTaxInfo       Boolean   @default(false) @map("include_tax_info")
+  taxType              Int       @default(1) @map("tax_type")
+  taxRate              Int       @default(1600) @map("tax_rate")
+  lastSourceFile       String?   @map("last_source_file")
+  lastSourceModifiedAt DateTime? @map("last_source_modified_at") @db.Timestamptz
+  lastSourceSize       BigInt?   @map("last_source_size")
+  createdById          String?   @map("created_by") @db.Uuid
+  updatedById          String?   @map("updated_by") @db.Uuid
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt            DateTime? @map("deleted_at") @db.Timestamptz
 
-  sftpApplication SftpApplication           @relation(fields: [sftpApplicationId], references: [id])
-  application     Application               @relation(fields: [applicationId], references: [id])
-  createdBy       Account?                  @relation("OfferMenuRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedBy       Account?                  @relation("OfferMenuRuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  sftpApplication SftpApplication            @relation(fields: [sftpApplicationId], references: [id])
+  application     Application                @relation(fields: [applicationId], references: [id])
+  createdBy       Account?                   @relation("OfferMenuRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy       Account?                   @relation("OfferMenuRuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
   executions      OfferMenuUploadExecution[]
 
   @@index([active, nextRunAt])
@@ -1525,27 +1576,27 @@ model UpcActivityPriceRule {
 }
 
 model UpcActivityPriceExecution {
-  id              String         @id @default(uuid()) @db.Uuid
-  ruleId          String         @map("rule_id") @db.Uuid
-  status          AutoOpenStatus @default(pending)
-  trigger         String         @default("manual")
-  dryRun          Boolean        @default(true) @map("dry_run")
-  startedAt       DateTime?      @map("started_at") @db.Timestamptz
-  finishedAt      DateTime?      @map("finished_at") @db.Timestamptz
-  durationMs      Int?           @map("duration_ms")
-  totalShops      Int            @default(0) @map("total_shops")
-  processedShops  Int            @default(0) @map("processed_shops")
-  successfulShops Int            @default(0) @map("successful_shops")
-  skippedShops    Int            @default(0) @map("skipped_shops")
-  failedShops     Int            @default(0) @map("failed_shops")
-  currentShopId   String?        @map("current_shop_id")
-  cancelRequested Boolean        @default(false) @map("cancel_requested")
-  manualReviewRequired Boolean   @default(false) @map("manual_review_required")
-  manualReviewReason String?     @map("manual_review_reason") @db.Text
-  errorMessage    String?        @map("error_message") @db.Text
-  result          Json?
-  createdById     String?        @map("created_by") @db.Uuid
-  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  id                   String         @id @default(uuid()) @db.Uuid
+  ruleId               String         @map("rule_id") @db.Uuid
+  status               AutoOpenStatus @default(pending)
+  trigger              String         @default("manual")
+  dryRun               Boolean        @default(true) @map("dry_run")
+  startedAt            DateTime?      @map("started_at") @db.Timestamptz
+  finishedAt           DateTime?      @map("finished_at") @db.Timestamptz
+  durationMs           Int?           @map("duration_ms")
+  totalShops           Int            @default(0) @map("total_shops")
+  processedShops       Int            @default(0) @map("processed_shops")
+  successfulShops      Int            @default(0) @map("successful_shops")
+  skippedShops         Int            @default(0) @map("skipped_shops")
+  failedShops          Int            @default(0) @map("failed_shops")
+  currentShopId        String?        @map("current_shop_id")
+  cancelRequested      Boolean        @default(false) @map("cancel_requested")
+  manualReviewRequired Boolean        @default(false) @map("manual_review_required")
+  manualReviewReason   String?        @map("manual_review_reason") @db.Text
+  errorMessage         String?        @map("error_message") @db.Text
+  result               Json?
+  createdById          String?        @map("created_by") @db.Uuid
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
   rule      UpcActivityPriceRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
   createdBy Account?             @relation("UpcActivityPriceExecutionCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -1556,16 +1607,16 @@ model UpcActivityPriceExecution {
 }
 
 model OperationalLease {
-  resourceKey   String    @id @map("resource_key") @db.Text
-  ownerToken    String?   @map("owner_token") @db.Uuid
-  ownerKind     String?   @map("owner_kind")
-  ownerId       String?   @map("owner_id")
-  fencingToken  BigInt    @default(0) @map("fencing_token")
-  acquiredAt    DateTime? @map("acquired_at") @db.Timestamptz
-  heartbeatAt   DateTime? @map("heartbeat_at") @db.Timestamptz
-  expiresAt     DateTime? @map("expires_at") @db.Timestamptz
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  resourceKey  String    @id @map("resource_key") @db.Text
+  ownerToken   String?   @map("owner_token") @db.Uuid
+  ownerKind    String?   @map("owner_kind")
+  ownerId      String?   @map("owner_id")
+  fencingToken BigInt    @default(0) @map("fencing_token")
+  acquiredAt   DateTime? @map("acquired_at") @db.Timestamptz
+  heartbeatAt  DateTime? @map("heartbeat_at") @db.Timestamptz
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   @@index([expiresAt])
   @@index([ownerKind, ownerId])
@@ -1922,22 +1973,22 @@ model StoreEmergency {
 }
 
 model StoreEmergencyTarget {
-  id            String    @id @default(uuid()) @db.Uuid
-  emergencyId   String    @map("emergency_id") @db.Uuid
-  shopId        String    @map("shop_id") @db.Uuid
-  offlineStatus String    @default("pending") @map("offline_status")
-  restoreStatus String    @default("pending") @map("restore_status")
-  offlineError  String?   @map("offline_error") @db.Text
-  restoreError  String?   @map("restore_error") @db.Text
-  offlineAttempts Int     @default(0) @map("offline_attempts")
-  restoreAttempts Int     @default(0) @map("restore_attempts")
-  offlineAt     DateTime? @map("offline_at") @db.Timestamptz
-  restoredAt    DateTime? @map("restored_at") @db.Timestamptz
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  id              String    @id @default(uuid()) @db.Uuid
+  emergencyId     String    @map("emergency_id") @db.Uuid
+  shopId          String    @map("shop_id") @db.Uuid
+  offlineStatus   String    @default("pending") @map("offline_status")
+  restoreStatus   String    @default("pending") @map("restore_status")
+  offlineError    String?   @map("offline_error") @db.Text
+  restoreError    String?   @map("restore_error") @db.Text
+  offlineAttempts Int       @default(0) @map("offline_attempts")
+  restoreAttempts Int       @default(0) @map("restore_attempts")
+  offlineAt       DateTime? @map("offline_at") @db.Timestamptz
+  restoredAt      DateTime? @map("restored_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
-  emergency StoreEmergency @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
-  shop      Shop           @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  emergency StoreEmergency        @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+  shop      Shop                  @relation(fields: [shopId], references: [id], onDelete: Restrict)
   events    StoreEmergencyEvent[]
 
   @@unique([emergencyId, shopId])
@@ -1947,19 +1998,19 @@ model StoreEmergencyTarget {
 }
 
 model StoreEmergencyEvent {
-  id          String    @id @default(uuid()) @db.Uuid
-  emergencyId String    @map("emergency_id") @db.Uuid
-  targetId    String?   @map("target_id") @db.Uuid
-  type        String    @db.VarChar(64)
-  phase       String    @db.VarChar(24)
-  outcome     String?   @db.VarChar(24)
-  source      String    @db.VarChar(24)
-  actorId     String?   @map("actor_id") @db.Uuid
+  id          String   @id @default(uuid()) @db.Uuid
+  emergencyId String   @map("emergency_id") @db.Uuid
+  targetId    String?  @map("target_id") @db.Uuid
+  type        String   @db.VarChar(64)
+  phase       String   @db.VarChar(24)
+  outcome     String?  @db.VarChar(24)
+  source      String   @db.VarChar(24)
+  actorId     String?  @map("actor_id") @db.Uuid
   attempt     Int?
-  message     String?   @db.Text
+  message     String?  @db.Text
   metadata    Json?
-  occurredAt  DateTime  @default(now()) @map("occurred_at") @db.Timestamptz
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  occurredAt  DateTime @default(now()) @map("occurred_at") @db.Timestamptz
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   emergency StoreEmergency        @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
   target    StoreEmergencyTarget? @relation(fields: [targetId], references: [id], onDelete: SetNull)
