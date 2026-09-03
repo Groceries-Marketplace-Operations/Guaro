@@ -204,6 +204,12 @@ enum AutoOpenStatus {
   @@map("AutoOpenEstado")
 }
 
+enum DidiOrderWebhookStatus {
+  processing
+  accepted
+  failed
+}
+
 enum AutoFetchKind {
   stores
   menu
@@ -683,16 +689,21 @@ model StepWebhook {
 
 // ---------------------------- Catalog -------------------------------------
 model Application {
-  id                     String                  @id @default(uuid()) @db.Uuid
-  appId                  String                  @unique @map("app_id")
-  appName                String                  @map("app_name")
-  country                Country
-  appSecret              String                  @map("app_secret") // ENCRYPTED at rest; never expose
-  didiBindingEnvironment DidiBindingEnvironment? @map("didi_binding_environment")
-  createdById            String?                 @map("created_by") @db.Uuid
-  createdAt              DateTime                @default(now()) @map("created_at")
-  updatedAt              DateTime                @updatedAt @map("updated_at")
-  deletedAt              DateTime?               @map("deleted_at")
+  id                         String                  @id @default(uuid()) @db.Uuid
+  appId                      String                  @unique @map("app_id")
+  appName                    String                  @map("app_name")
+  country                    Country
+  appSecret                  String                  @map("app_secret") // ENCRYPTED at rest; never expose
+  didiBindingEnvironment     DidiBindingEnvironment? @map("didi_binding_environment")
+  orderWebhookTokenEncrypted String?                 @map("order_webhook_token_encrypted") @db.Text
+  orderWebhookTokenHash      String?                 @unique @map("order_webhook_token_hash")
+  orderWebhookCreatedAt      DateTime?               @map("order_webhook_created_at") @db.Timestamptz
+  orderWebhookRotatedAt      DateTime?               @map("order_webhook_rotated_at") @db.Timestamptz
+  orderWebhookDisabledAt     DateTime?               @map("order_webhook_disabled_at") @db.Timestamptz
+  createdById                String?                 @map("created_by") @db.Uuid
+  createdAt                  DateTime                @default(now()) @map("created_at")
+  updatedAt                  DateTime                @updatedAt @map("updated_at")
+  deletedAt                  DateTime?               @map("deleted_at")
 
   createdBy                Account?            @relation("AppCreador", fields: [createdById], references: [id])
   brands                   Brand[]
@@ -702,6 +713,7 @@ model Application {
   didiStoreBindingExecutions DidiStoreBindingExecution[]
   offerMenuUploadRules     OfferMenuUploadRule[]
   upcActivityPriceRules    UpcActivityPriceRule[]
+  didiOrderWebhookEvents   DidiOrderWebhookEvent[]
 
   @@unique([id, country]) // target of composite FK (see constraints.sql)
   @@map("application")
@@ -822,10 +834,40 @@ model Shop {
   forcedOpenTargets      ForcedOpenTarget[]
   promotionApiExecutions PromotionApiExecution[]
   storeOnboardingUnits   StoreOnboardingUnit[]
+  didiOrderWebhookEvents DidiOrderWebhookEvent[]
 
   @@unique([brandId, appShopId])
   @@index([brandId])
   @@map("shop")
+}
+
+model DidiOrderWebhookEvent {
+  id               String                 @id @default(uuid()) @db.Uuid
+  applicationId    String                 @map("application_id") @db.Uuid
+  shopId           String                 @map("shop_id") @db.Uuid
+  appShopId        String                 @map("app_shop_id")
+  orderId          String                 @map("order_id")
+  type             String
+  status           DidiOrderWebhookStatus @default(processing)
+  attempts         Int                    @default(1)
+  sourceTimestamp  String?                @map("source_timestamp")
+  remoteHttpStatus Int?                   @map("remote_http_status")
+  remoteErrno      Int?                   @map("remote_errno")
+  remoteErrmsg     String?                @map("remote_errmsg") @db.Text
+  errorMessage     String?                @map("error_message") @db.Text
+  startedAt        DateTime               @default(now()) @map("started_at") @db.Timestamptz
+  acceptedAt       DateTime?              @map("accepted_at") @db.Timestamptz
+  failedAt         DateTime?              @map("failed_at") @db.Timestamptz
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  shop        Shop        @relation(fields: [shopId], references: [id], onDelete: Restrict)
+
+  @@unique([applicationId, orderId, type])
+  @@index([status, startedAt])
+  @@index([shopId, createdAt])
+  @@map("didi_order_webhook_event")
 }
 
 model BrandItem {

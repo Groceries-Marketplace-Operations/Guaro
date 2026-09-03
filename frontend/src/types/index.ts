@@ -158,6 +158,16 @@ export interface Application {
   createdAt: string;
 }
 
+export interface ApplicationOrderWebhook {
+  enabled: boolean;
+  url: string | null;
+  createdAt: string | null;
+  rotatedAt: string | null;
+  lastReceivedAt: string | null;
+  lastAcceptedAt: string | null;
+  lastError: string | null;
+}
+
 export interface DidiStoreBindingShop {
   shopId: string;
   appShopId: string;

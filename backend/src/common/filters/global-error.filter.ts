@@ -30,6 +30,13 @@ function getExceptionStatus(exception: unknown): number {
   return 500;
 }
 
+export function redactSensitiveRequestUrl(url: string): string {
+  return url.replace(
+    /(\/didi-order-webhooks\/)[^/?#]+/gi,
+    '$1[redacted]',
+  );
+}
+
 @Catch()
 export class GlobalErrorFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalErrorFilter.name);
@@ -42,6 +49,7 @@ export class GlobalErrorFilter implements ExceptionFilter {
     const res    = ctx.getResponse<Response>();
 
     const status = getExceptionStatus(exception);
+    const safeUrl = redactSensitiveRequestUrl(req.url);
 
     // Let the default handler deal with 4xx — only alert on server errors
     if (status < 500) {
@@ -73,7 +81,7 @@ export class GlobalErrorFilter implements ExceptionFilter {
 
       const content = [
         `Date:    ${new Date().toISOString()}`,
-        `Route:   ${req.method} ${req.url}`,
+        `Route:   ${req.method} ${safeUrl}`,
         `Status:  ${status}`,
         userLine,
         `Message: ${message}`,
@@ -90,7 +98,7 @@ export class GlobalErrorFilter implements ExceptionFilter {
     // ── Send webhook alert ───────────────────────────────────────────────────
     try {
       await this.webhookSender.sendAlert({
-        text: `🚨 **Server Error 500** — \`${req.method} ${req.url}\``,
+        text: `🚨 **Server Error 500** — \`${req.method} ${safeUrl}\``,
         attachments: [
           {
             title: 'Error details',
@@ -108,7 +116,7 @@ export class GlobalErrorFilter implements ExceptionFilter {
       this.logger.error(`Failed to send error webhook: ${(webhookErr as Error).message}`);
     }
 
-    this.logger.error(`${req.method} ${req.url} → ${status}: ${message}`);
+    this.logger.error(`${req.method} ${safeUrl} → ${status}: ${message}`);
 
     res.status(status).json({ statusCode: status, message: 'Internal server error' });
   }

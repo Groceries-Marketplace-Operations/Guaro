@@ -1,4 +1,4 @@
-import { Body, Controller, DefaultValuePipe, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Delete, Get, Header, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AccountRole, Country } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
@@ -38,6 +38,38 @@ export class ApplicationsController {
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateApplicationDto) {
     return this.applicationsService.create(dto, u.id);
+  }
+
+  @Get(':id/order-webhook')
+  @Header('Cache-Control', 'no-store')
+  @Permissions('applications.update')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  getOrderWebhook(@Param('id') id: string) {
+    return this.applicationsService.getOrderWebhook(id);
+  }
+
+  @Post(':id/order-webhook')
+  @Header('Cache-Control', 'no-store')
+  @Permissions('applications.update')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  createOrderWebhook(@Param('id') id: string) {
+    return this.applicationsService.createOrderWebhook(id);
+  }
+
+  @Post(':id/order-webhook/rotate')
+  @Header('Cache-Control', 'no-store')
+  @Permissions('applications.update')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  rotateOrderWebhook(@Param('id') id: string) {
+    return this.applicationsService.rotateOrderWebhook(id);
+  }
+
+  @Delete(':id/order-webhook')
+  @Header('Cache-Control', 'no-store')
+  @Permissions('applications.update')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  disableOrderWebhook(@Param('id') id: string) {
+    return this.applicationsService.disableOrderWebhook(id);
   }
 
   @Patch(':id')

@@ -15,6 +15,7 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
+    rawBody: true,
   });
 
   // A 7,000-store binding job is larger than Express' 100 KB default. Keep

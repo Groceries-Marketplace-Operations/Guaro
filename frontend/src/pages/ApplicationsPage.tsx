@@ -6,7 +6,7 @@ import Paginator from '../components/ui/Paginator';
 import { applicationsApi } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useT } from '../i18n';
-import type { Application, Country, DidiBindingEnvironment, Paginated } from '../types';
+import type { Application, ApplicationOrderWebhook, Country, DidiBindingEnvironment, Paginated } from '../types';
 import { hasPermission } from '../auth/permissions';
 
 const COUNTRIES: Country[] = ['MX', 'CO', 'CR'];
@@ -30,6 +30,25 @@ const EditIcon = () => (
     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
   </svg>
 );
+const WebhookIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+    <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.15 1.15"/>
+    <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.15-1.15"/>
+  </svg>
+);
+const CopyIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="14" height="14">
+    <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+  </svg>
+);
+
+type WebhookAction = 'generate' | 'rotate' | 'disable' | null;
+
+function responseMessage(error: unknown, fallback: string) {
+  const apiError = error as { response?: { data?: { message?: string | string[] } } };
+  const message = apiError.response?.data?.message;
+  return Array.isArray(message) ? message.join(', ') : (message ?? fallback);
+}
 
 export default function ApplicationsPage() {
   const qc = useQueryClient();
@@ -57,12 +76,23 @@ export default function ApplicationsPage() {
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  const [webhookApp, setWebhookApp] = useState<Application | null>(null);
+  const [webhookAction, setWebhookAction] = useState<WebhookAction>(null);
+  const [webhookErr, setWebhookErr] = useState('');
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
 
   const params = { page, limit: LIMIT, ...(q ? { q } : {}), ...(country ? { country } : {}) };
 
   const { data: result, isLoading } = useQuery<Paginated<Application>>({
     queryKey: ['applications', params],
     queryFn: () => applicationsApi.list(params).then(r => r.data as Paginated<Application>),
+  });
+
+  const webhookQuery = useQuery<ApplicationOrderWebhook>({
+    queryKey: ['application-order-webhook', webhookApp?.id],
+    queryFn: () => applicationsApi.getOrderWebhook(webhookApp!.id).then(response => response.data),
+    enabled: !!webhookApp,
+    retry: false,
   });
 
   const apps = result?.data ?? [];
@@ -125,6 +155,60 @@ export default function ApplicationsPage() {
       qc.invalidateQueries({ queryKey: ['applications'] });
     } catch { /* ignore */ }
   };
+
+  const openOrderWebhook = (application: Application) => {
+    setWebhookApp(application);
+    setWebhookErr('');
+    setCopiedWebhook(false);
+  };
+
+  const closeOrderWebhook = () => {
+    if (webhookAction) return;
+    setWebhookApp(null);
+    setWebhookErr('');
+    setCopiedWebhook(false);
+  };
+
+  const refreshOrderWebhook = async () => {
+    await webhookQuery.refetch();
+    qc.invalidateQueries({ queryKey: ['applications'] });
+  };
+
+  const mutateOrderWebhook = async (action: Exclude<WebhookAction, null>) => {
+    if (!webhookApp) return;
+    if (action === 'rotate' && !window.confirm(t('pages.applications.orderWebhookRotateConfirm'))) return;
+    if (action === 'disable' && !window.confirm(t('pages.applications.orderWebhookDisableConfirm'))) return;
+
+    setWebhookAction(action);
+    setWebhookErr('');
+    setCopiedWebhook(false);
+    try {
+      if (action === 'generate') await applicationsApi.generateOrderWebhook(webhookApp.id);
+      if (action === 'rotate') await applicationsApi.rotateOrderWebhook(webhookApp.id);
+      if (action === 'disable') await applicationsApi.disableOrderWebhook(webhookApp.id);
+      await refreshOrderWebhook();
+    } catch (error: unknown) {
+      setWebhookErr(responseMessage(error, t('pages.applications.orderWebhookActionError')));
+    } finally {
+      setWebhookAction(null);
+    }
+  };
+
+  const copyOrderWebhook = async () => {
+    const url = webhookQuery.data?.url;
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedWebhook(true);
+      window.setTimeout(() => setCopiedWebhook(false), 2000);
+    } catch {
+      setWebhookErr(t('pages.applications.orderWebhookCopyError'));
+    }
+  };
+
+  const formatWebhookDate = (value: string | null) => value
+    ? new Date(value).toLocaleString()
+    : t('pages.applications.orderWebhookNever');
 
   const subtitle = total === 1
     ? t('pages.applications.subtitle').replace('{total}', String(total))
@@ -203,6 +287,10 @@ export default function ApplicationsPage() {
                   <td className="text-muted text-sm">{new Date(a.createdAt).toLocaleDateString()}</td>
                   <td>
                     <div style={{ display: 'flex', gap: 4 }}>
+                      {canUpdateApp && <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px' }}
+                        onClick={() => openOrderWebhook(a)} title={t('pages.applications.orderWebhookAction')}>
+                        <WebhookIcon />
+                      </button>}
                       {canUpdateApp && <button className="btn btn-ghost btn-sm" style={{ padding: '3px 8px' }}
                         onClick={() => openEdit(a)} title={t('common.edit')}>
                         <EditIcon />
@@ -313,6 +401,105 @@ export default function ApplicationsPage() {
               onChange={e => setEditForm(f => ({ ...f, appSecret: e.target.value }))} />
             <p className="form-hint">{t('pages.applications.editSecretHint')}</p>
           </div>
+        </Modal>
+      )}
+
+      {webhookApp && (
+        <Modal
+          title={t('pages.applications.orderWebhookTitle').replace('{name}', webhookApp.appName)}
+          onClose={closeOrderWebhook}
+          footer={<button className="btn btn-ghost" onClick={closeOrderWebhook} disabled={!!webhookAction}>{t('common.close')}</button>}
+        >
+          {(webhookErr || webhookQuery.isError) && (
+            <div className="error-banner">
+              {webhookErr || t('pages.applications.orderWebhookLoadError')}
+            </div>
+          )}
+
+          {webhookQuery.isLoading && (
+            <p className="text-muted text-sm">{t('pages.applications.orderWebhookLoading')}</p>
+          )}
+
+          {!webhookQuery.isLoading && webhookQuery.data && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>{t('pages.applications.orderWebhookStatus')}</div>
+                  <p className="form-hint">{t('pages.applications.orderWebhookStatusHint')}</p>
+                </div>
+                <span className={`status ${webhookQuery.data.enabled ? 's-done' : 's-cancelled'}`}>
+                  {webhookQuery.data.enabled
+                    ? t('pages.applications.orderWebhookEnabled')
+                    : t('pages.applications.orderWebhookDisabled')}
+                </span>
+              </div>
+
+              {webhookQuery.data.enabled && webhookQuery.data.url ? (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">{t('pages.applications.orderWebhookUrl')}</label>
+                    <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
+                      <code style={{
+                        flex: 1, minWidth: 0, padding: '9px 10px', border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-md)', background: 'var(--surface-2)', color: 'var(--text-secondary)',
+                        fontSize: '0.72rem', lineHeight: 1.45, overflowWrap: 'anywhere',
+                      }}>{webhookQuery.data.url}</code>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={copyOrderWebhook}
+                        title={t('pages.applications.orderWebhookCopy')}
+                        style={{ color: copiedWebhook ? 'var(--green-text)' : undefined }}
+                      >
+                        {copiedWebhook ? '✓' : <CopyIcon />}
+                        {copiedWebhook
+                          ? t('pages.applications.orderWebhookCopied')
+                          : t('pages.applications.orderWebhookCopy')}
+                      </button>
+                    </div>
+                    <p className="form-hint">{t('pages.applications.orderWebhookUrlHint')}</p>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px 14px', marginTop: 16, fontSize: '0.76rem' }}>
+                    <div><span className="text-muted">{t('pages.applications.orderWebhookCreated')}</span><br />{formatWebhookDate(webhookQuery.data.createdAt)}</div>
+                    <div><span className="text-muted">{t('pages.applications.orderWebhookRotated')}</span><br />{formatWebhookDate(webhookQuery.data.rotatedAt)}</div>
+                    <div><span className="text-muted">{t('pages.applications.orderWebhookLastReceived')}</span><br />{formatWebhookDate(webhookQuery.data.lastReceivedAt)}</div>
+                    <div><span className="text-muted">{t('pages.applications.orderWebhookLastAccepted')}</span><br />{formatWebhookDate(webhookQuery.data.lastAcceptedAt)}</div>
+                  </div>
+
+                  {webhookQuery.data.lastError && (
+                    <div style={{ marginTop: 14, padding: '9px 10px', borderRadius: 'var(--radius-md)', background: 'var(--red-bg)', color: 'var(--red-text)', fontSize: '0.75rem', overflowWrap: 'anywhere' }}>
+                      <strong>{t('pages.applications.orderWebhookLastError')}:</strong> {webhookQuery.data.lastError}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+                    <button className="btn btn-ghost" disabled={!!webhookAction} onClick={() => mutateOrderWebhook('rotate')}>
+                      {webhookAction === 'rotate'
+                        ? t('pages.applications.orderWebhookRotating')
+                        : t('pages.applications.orderWebhookRotate')}
+                    </button>
+                    <button className="btn btn-danger" disabled={!!webhookAction} onClick={() => mutateOrderWebhook('disable')}>
+                      {webhookAction === 'disable'
+                        ? t('pages.applications.orderWebhookDisabling')
+                        : t('pages.applications.orderWebhookDisable')}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div style={{ padding: '18px 0 4px', textAlign: 'center' }}>
+                  <p className="text-muted text-sm" style={{ marginBottom: 14 }}>
+                    {t('pages.applications.orderWebhookGenerateHint')}
+                  </p>
+                  <button className="btn btn-primary" disabled={!!webhookAction} onClick={() => mutateOrderWebhook('generate')}>
+                    {webhookAction === 'generate'
+                      ? t('pages.applications.orderWebhookGenerating')
+                      : t('pages.applications.orderWebhookGenerate')}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </Modal>
       )}
     </>

@@ -144,6 +144,14 @@ export const applicationsApi = {
   create: (data: object) => client.post('/applications', data),
   update: (id: string, data: object) => client.patch(`/applications/${id}`, data),
   delete: (id: string) => client.delete(`/applications/${id}`),
+  getOrderWebhook: (id: string) =>
+    client.get<import('../types').ApplicationOrderWebhook>(`/applications/${id}/order-webhook`),
+  generateOrderWebhook: (id: string) =>
+    client.post<import('../types').ApplicationOrderWebhook>(`/applications/${id}/order-webhook`),
+  rotateOrderWebhook: (id: string) =>
+    client.post<import('../types').ApplicationOrderWebhook>(`/applications/${id}/order-webhook/rotate`),
+  disableOrderWebhook: (id: string) =>
+    client.delete<import('../types').ApplicationOrderWebhook>(`/applications/${id}/order-webhook`),
 };
 
 /* ── Tasks ──────────────────────────────────────────────────── */

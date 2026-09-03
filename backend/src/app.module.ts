@@ -24,6 +24,7 @@ import { SftpApplicationsModule } from './sftp-applications/sftp-applications.mo
 import { FileIntegrationsModule } from './file-integrations/file-integrations.module';
 import { AccessControlModule } from './access-control/access-control.module';
 import { StoreOnboardingModule } from './store-onboarding/store-onboarding.module';
+import { DidiOrderWebhooksModule } from './didi-order-webhooks/didi-order-webhooks.module';
 
 const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
 
@@ -53,6 +54,7 @@ const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
     SftpApplicationsModule,
     FileIntegrationsModule,
     StoreOnboardingModule,
+    DidiOrderWebhooksModule,
     ...devModules,
   ],
 })
