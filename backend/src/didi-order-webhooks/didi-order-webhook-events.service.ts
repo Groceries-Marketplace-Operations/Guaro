@@ -8,10 +8,12 @@ const REQUEST_SELECT = {
   applicationId: true,
   eventId: true,
   appShopId: true,
+  didiShopId: true,
   orderId: true,
   type: true,
   stage: true,
   outcome: true,
+  remoteShopValidated: true,
   localHttpStatus: true,
   durationMs: true,
   remoteHttpStatus: true,
@@ -24,14 +26,17 @@ const REQUEST_SELECT = {
   event: {
     select: {
       shopId: true,
+      didiShopId: true,
       status: true,
       attempts: true,
+      remoteShopValidated: true,
       sourceTimestamp: true,
       startedAt: true,
       acceptedAt: true,
       failedAt: true,
       shop: {
         select: {
+          id: true,
           shopId: true,
           name: true,
           brand: { select: { id: true, brandId: true, brandName: true } },
@@ -147,6 +152,7 @@ export class DidiOrderWebhookEventsService {
       applicationId: request.applicationId,
       eventId: request.eventId,
       shopId: event?.shopId ?? null,
+      didiShopId: request.didiShopId ?? event?.didiShopId ?? null,
       appShopId: request.appShopId,
       orderId: request.orderId,
       type: request.type,
@@ -155,6 +161,8 @@ export class DidiOrderWebhookEventsService {
       status: request.outcome,
       stage: request.stage,
       outcome: request.outcome,
+      remoteShopValidated:
+        request.remoteShopValidated || (event?.remoteShopValidated ?? false),
       localHttpStatus: request.localHttpStatus,
       durationMs: request.durationMs,
       attempts: event?.attempts ?? null,
@@ -170,9 +178,9 @@ export class DidiOrderWebhookEventsService {
       completedAt: request.completedAt,
       createdAt: request.createdAt,
       updatedAt: request.updatedAt,
-      shop: event
+      shop: event?.shop
         ? {
-            id: event.shopId,
+            id: event.shop.id,
             shopId: event.shop.shopId,
             name: event.shop.name,
             brand: event.shop.brand,

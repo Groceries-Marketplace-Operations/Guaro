@@ -862,27 +862,29 @@ model Shop {
 }
 
 model DidiOrderWebhookEvent {
-  id               String                 @id @default(uuid()) @db.Uuid
-  applicationId    String                 @map("application_id") @db.Uuid
-  shopId           String                 @map("shop_id") @db.Uuid
-  appShopId        String                 @map("app_shop_id")
-  orderId          String                 @map("order_id")
-  type             String
-  status           DidiOrderWebhookStatus @default(processing)
-  attempts         Int                    @default(1)
-  sourceTimestamp  String?                @map("source_timestamp")
-  remoteHttpStatus Int?                   @map("remote_http_status")
-  remoteErrno      Int?                   @map("remote_errno")
-  remoteErrmsg     String?                @map("remote_errmsg") @db.Text
-  errorMessage     String?                @map("error_message") @db.Text
-  startedAt        DateTime               @default(now()) @map("started_at") @db.Timestamptz
-  acceptedAt       DateTime?              @map("accepted_at") @db.Timestamptz
-  failedAt         DateTime?              @map("failed_at") @db.Timestamptz
-  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz
+  id                  String                 @id @default(uuid()) @db.Uuid
+  applicationId       String                 @map("application_id") @db.Uuid
+  shopId              String?                @map("shop_id") @db.Uuid
+  didiShopId          String?                @map("didi_shop_id")
+  appShopId           String                 @map("app_shop_id")
+  orderId             String                 @map("order_id")
+  type                String
+  status              DidiOrderWebhookStatus @default(processing)
+  attempts            Int                    @default(1)
+  remoteShopValidated Boolean                @default(false) @map("remote_shop_validated")
+  sourceTimestamp     String?                @map("source_timestamp")
+  remoteHttpStatus    Int?                   @map("remote_http_status")
+  remoteErrno         Int?                   @map("remote_errno")
+  remoteErrmsg        String?                @map("remote_errmsg") @db.Text
+  errorMessage        String?                @map("error_message") @db.Text
+  startedAt           DateTime               @default(now()) @map("started_at") @db.Timestamptz
+  acceptedAt          DateTime?              @map("accepted_at") @db.Timestamptz
+  failedAt            DateTime?              @map("failed_at") @db.Timestamptz
+  createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime               @updatedAt @map("updated_at") @db.Timestamptz
 
   application Application               @relation(fields: [applicationId], references: [id], onDelete: Restrict)
-  shop        Shop                      @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  shop        Shop?                     @relation(fields: [shopId], references: [id], onDelete: Restrict)
   requests    DidiOrderWebhookRequest[]
 
   @@unique([applicationId, orderId, type])
@@ -894,23 +896,25 @@ model DidiOrderWebhookEvent {
 }
 
 model DidiOrderWebhookRequest {
-  id               String                         @id @default(uuid()) @db.Uuid
-  applicationId    String                         @map("application_id") @db.Uuid
-  eventId          String?                        @map("event_id") @db.Uuid
-  appShopId        String?                        @map("app_shop_id")
-  orderId          String?                        @map("order_id")
-  type             String?
-  stage            DidiOrderWebhookRequestStage   @default(received)
-  outcome          DidiOrderWebhookRequestOutcome @default(processing)
-  localHttpStatus  Int?                           @map("local_http_status")
-  durationMs       Int?                           @map("duration_ms")
-  remoteHttpStatus Int?                           @map("remote_http_status")
-  remoteErrno      Int?                           @map("remote_errno")
-  remoteErrmsg     String?                        @map("remote_errmsg") @db.Text
-  errorMessage     String?                        @map("error_message") @db.Text
-  completedAt      DateTime?                      @map("completed_at") @db.Timestamptz
-  createdAt        DateTime                       @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime                       @updatedAt @map("updated_at") @db.Timestamptz
+  id                  String                         @id @default(uuid()) @db.Uuid
+  applicationId       String                         @map("application_id") @db.Uuid
+  eventId             String?                        @map("event_id") @db.Uuid
+  appShopId           String?                        @map("app_shop_id")
+  didiShopId          String?                        @map("didi_shop_id")
+  orderId             String?                        @map("order_id")
+  type                String?
+  stage               DidiOrderWebhookRequestStage   @default(received)
+  outcome             DidiOrderWebhookRequestOutcome @default(processing)
+  remoteShopValidated Boolean                        @default(false) @map("remote_shop_validated")
+  localHttpStatus     Int?                           @map("local_http_status")
+  durationMs          Int?                           @map("duration_ms")
+  remoteHttpStatus    Int?                           @map("remote_http_status")
+  remoteErrno         Int?                           @map("remote_errno")
+  remoteErrmsg        String?                        @map("remote_errmsg") @db.Text
+  errorMessage        String?                        @map("error_message") @db.Text
+  completedAt         DateTime?                      @map("completed_at") @db.Timestamptz
+  createdAt           DateTime                       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime                       @updatedAt @map("updated_at") @db.Timestamptz
 
   application Application            @relation(fields: [applicationId], references: [id], onDelete: Restrict)
   event       DidiOrderWebhookEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)

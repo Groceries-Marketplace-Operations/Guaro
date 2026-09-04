@@ -341,6 +341,7 @@ export default function OrderWebhookLogsPanel({ applicationId, active }: Props) 
                 <div><span>{t('pages.applications.orderWebhookLogsEventType')}</span><strong>{detail.type ?? '—'}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsOrderId')}</span><strong className="td-mono">{detail.orderId ?? '—'}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsAppShopId')}</span><strong className="td-mono">{detail.appShopId ?? '—'}</strong></div>
+                <div><span>{t('pages.applications.orderWebhookLogsDidiShopId')}</span><strong className="td-mono">{detail.didiShopId ?? '—'}</strong>{detail.remoteShopValidated && <small>{t('pages.applications.orderWebhookLogsRemoteValidated')}</small>}</div>
                 <div><span>{t('pages.applications.orderWebhookLogsStore')}</span><strong>{detail.shop?.name || detail.shop?.shopId || '—'}</strong>{detail.shop?.brand && <small>{detail.shop.brand.brandName}</small>}</div>
                 <div><span>{t('pages.applications.orderWebhookLogsAttempts')}</span><strong>{detail.attempts ?? '—'}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsLocalHttp')}</span><strong>{detail.localHttpStatus ?? '—'}</strong></div>

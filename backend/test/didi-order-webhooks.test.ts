@@ -133,6 +133,7 @@ interface ExistingEvent {
   id: string;
   status: 'processing' | 'accepted' | 'failed';
   appShopId: string;
+  didiShopId: string | null;
   startedAt: Date;
 }
 
@@ -145,6 +146,7 @@ function receiver(options: {
   let existing = options.existing;
   const updates: Array<Record<string, unknown>> = [];
   const requestUpdates: Array<Record<string, unknown>> = [];
+  const eventCreates: Array<Record<string, unknown>> = [];
   const applicationFindCalls: unknown[] = [];
   const shopFindCalls: unknown[] = [];
   let shopFindIndex = 0;
@@ -163,7 +165,7 @@ function receiver(options: {
       findMany: async (input: unknown) => {
         shopFindCalls.push(input);
         const ids = options.shopResponses?.[shopFindIndex++] ?? options.shops ?? [SHOP_ID];
-        return ids.map(id => ({ id }));
+        return ids.map(id => ({ id, shopId: REMOTE_SHOP_ID }));
       },
     },
     didiOrderWebhookRequest: {
@@ -174,17 +176,29 @@ function receiver(options: {
       },
     },
     didiOrderWebhookEvent: {
-      create: async () => {
+      create: async (input: { data: Record<string, unknown> }) => {
+        eventCreates.push(input.data);
         if (options.createUniqueConflict || existing) throw { code: 'P2002' };
         existing = {
           id: 'event-1',
           status: 'processing',
           appShopId: APP_SHOP_ID,
+          didiShopId: String(input.data.didiShopId),
           startedAt: new Date(),
         };
-        return { id: existing.id, status: existing.status, appShopId: existing.appShopId };
+        return {
+          id: existing.id,
+          status: existing.status,
+          appShopId: existing.appShopId,
+          didiShopId: existing.didiShopId,
+        };
       },
-      findUnique: async () => existing ? { ...existing } : null,
+      findUnique: async () => existing
+        ? {
+            ...existing,
+            shop: existing.didiShopId === null ? { shopId: REMOTE_SHOP_ID } : null,
+          }
+        : null,
       updateMany: async (input: { where: { status: string; startedAt?: { lt: Date } } }) => {
         if (!existing || existing.status !== input.where.status) return { count: 0 };
         if (input.where.startedAt && existing.startedAt >= input.where.startedAt.lt) return { count: 0 };
@@ -205,6 +219,7 @@ function receiver(options: {
     value: new DidiOrderWebhooksService(prisma as never, config as never),
     updates,
     requestUpdates,
+    eventCreates,
     applicationFindCalls,
     shopFindCalls,
   };
@@ -262,6 +277,7 @@ test('receiver resolves a missing app_shop_id from the application shop list', a
       assert.deepEqual(subject.requestUpdates.at(-1), {
         stage: 'shop_resolution',
         appShopId: null,
+        didiShopId: REMOTE_SHOP_ID,
         orderId: ORDER_ID,
         type: 'orderNew',
       });
@@ -308,10 +324,11 @@ test('receiver resolves a missing app_shop_id from the application shop list', a
   assert.deepEqual(subject.shopFindCalls.at(-1), {
     where: {
       shopId: REMOTE_SHOP_ID,
+      appShopId: APP_SHOP_ID,
       deletedAt: null,
       brand: { applicationId: APPLICATION_ID, deletedAt: null },
     },
-    select: { id: true },
+    select: { id: true, shopId: true },
     take: 2,
   });
   const resolutionAudit = subject.requestUpdates.find(update => update.appShopId === APP_SHOP_ID);
@@ -353,12 +370,165 @@ test('receiver verifies a supplied app_shop_id remotely when its exact local pai
   assert.deepEqual(subject.shopFindCalls[1], {
     where: {
       shopId: REMOTE_SHOP_ID,
+      appShopId: APP_SHOP_ID,
       deletedAt: null,
       brand: { applicationId: APPLICATION_ID, deletedAt: null },
     },
-    select: { id: true },
+    select: { id: true, shopId: true },
     take: 2,
   });
+});
+
+test('receiver confirms a remotely verified shop even when it is absent locally', async () => {
+  const subject = receiver({ shopResponses: [[], []] });
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith('/v1/shop/shop/list')) {
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: {
+          total: 1,
+          shop_list: [{ shop_id: REMOTE_SHOP_ID, app_shop_id: APP_SHOP_ID }],
+        },
+      }));
+    }
+    if (url.includes('/v1/auth/authtoken/refresh')) {
+      assert.equal(new URL(url).searchParams.get('app_shop_id'), APP_SHOP_ID);
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/v1/auth/authtoken/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, payload({
+      omitRootAppShopId: true,
+      omitNestedAppShopId: true,
+      shopId: REMOTE_SHOP_ID,
+    }));
+    assert.deepEqual(result, {
+      accepted: true,
+      deduplicated: false,
+      orderId: ORDER_ID,
+      appShopId: APP_SHOP_ID,
+      status: 'accepted',
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(calls.filter(url => url.endsWith('/v1/shop/shop/list')).length, 1);
+  assert.equal(calls.filter(url => url.endsWith('/v1/order/order/confirm')).length, 1);
+  assert.deepEqual(subject.eventCreates[0], {
+    applicationId: APPLICATION_ID,
+    shopId: null,
+    didiShopId: REMOTE_SHOP_ID,
+    appShopId: APP_SHOP_ID,
+    orderId: ORDER_ID,
+    type: 'orderNew',
+    sourceTimestamp: '1770000000000',
+    remoteShopValidated: true,
+  });
+  assert.ok(subject.requestUpdates.some(update =>
+    update.didiShopId === REMOTE_SHOP_ID && update.remoteShopValidated === true));
+});
+
+test('receiver confirms a supplied app_shop_id after its remote pair is verified without a local Shop', async () => {
+  const subject = receiver({ shopResponses: [[], []] });
+  const originalFetch = globalThis.fetch;
+  let confirms = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.endsWith('/v1/shop/shop/list')) {
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: {
+          total: 1,
+          shop_list: [{ shop_id: REMOTE_SHOP_ID, app_shop_id: APP_SHOP_ID }],
+        },
+      }));
+    }
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirms += 1;
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, payload({ shopId: REMOTE_SHOP_ID }));
+    assert.equal(result.accepted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(confirms, 1);
+  assert.equal(subject.eventCreates[0]?.shopId, null);
+  assert.equal(subject.eventCreates[0]?.didiShopId, REMOTE_SHOP_ID);
+  assert.equal(subject.eventCreates[0]?.remoteShopValidated, true);
+});
+
+test('remote shop resolution single-flights concurrent calls and reuses the signed mapping cache', async () => {
+  const subject = receiver({ shops: [] });
+  const originalFetch = globalThis.fetch;
+  let shopListCalls = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    assert.ok(String(input).endsWith('/v1/shop/shop/list'));
+    shopListCalls += 1;
+    await new Promise(resolve => setTimeout(resolve, 5));
+    return new Response(JSON.stringify({
+      errno: 0,
+      data: {
+        total: 1,
+        shop_list: [{ shop_id: REMOTE_SHOP_ID, app_shop_id: APP_SHOP_ID }],
+      },
+    }));
+  }) as typeof fetch;
+  const resolveRemote = (
+    subject.value as unknown as {
+      resolveRemoteAppShopId: (
+        applicationId: string,
+        appId: string,
+        appSecret: string,
+        shopId: string,
+      ) => Promise<string | undefined>;
+    }
+  ).resolveRemoteAppShopId.bind(subject.value);
+  try {
+    const [first, second] = await Promise.all([
+      resolveRemote(APPLICATION_ID, APP_ID, SECRET, REMOTE_SHOP_ID),
+      resolveRemote(APPLICATION_ID, APP_ID, SECRET, REMOTE_SHOP_ID),
+    ]);
+    const cached = await resolveRemote(APPLICATION_ID, APP_ID, SECRET, REMOTE_SHOP_ID);
+    assert.equal(first, APP_SHOP_ID);
+    assert.equal(second, APP_SHOP_ID);
+    assert.equal(cached, APP_SHOP_ID);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(shopListCalls, 1);
+});
+
+test('receiver does not trust an app_shop_id-only payload when the shop is absent locally', async () => {
+  const subject = receiver({ shops: [] });
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches += 1;
+    throw new Error('fetch must not be called');
+  }) as typeof fetch;
+  try {
+    await assert.rejects(subject.value.receive(TOKEN, payload()), BadRequestException);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(fetches, 0);
+  assert.equal(subject.eventCreates.length, 0);
 });
 
 test('receiver rejects a supplied app_shop_id that disagrees with the remote shop mapping', async () => {
@@ -472,7 +642,13 @@ test('an accepted duplicate and a live processing duplicate never resend', async
   try {
     const accepted = receiver({
       createUniqueConflict: true,
-      existing: { id: 'event-a', status: 'accepted', appShopId: APP_SHOP_ID, startedAt: new Date() },
+      existing: {
+        id: 'event-a',
+        status: 'accepted',
+        appShopId: APP_SHOP_ID,
+        didiShopId: REMOTE_SHOP_ID,
+        startedAt: new Date(),
+      },
     });
     assert.deepEqual(await accepted.value.receive(TOKEN, payload()), {
       accepted: true,
@@ -486,7 +662,13 @@ test('an accepted duplicate and a live processing duplicate never resend', async
 
     const processing = receiver({
       createUniqueConflict: true,
-      existing: { id: 'event-p', status: 'processing', appShopId: APP_SHOP_ID, startedAt: new Date() },
+      existing: {
+        id: 'event-p',
+        status: 'processing',
+        appShopId: APP_SHOP_ID,
+        didiShopId: REMOTE_SHOP_ID,
+        startedAt: new Date(),
+      },
     });
     assert.deepEqual(await processing.value.receive(TOKEN, payload()), {
       accepted: false,
@@ -502,13 +684,74 @@ test('an accepted duplicate and a live processing duplicate never resend', async
   assert.equal(fetches, 0);
 });
 
+test('a duplicate order_id for another DiDi shop_id is rejected before confirmation', async () => {
+  const subject = receiver({
+    createUniqueConflict: true,
+    existing: {
+      id: 'event-conflict',
+      status: 'accepted',
+      appShopId: APP_SHOP_ID,
+      didiShopId: '5764607688097661020',
+      startedAt: new Date(),
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches += 1;
+    throw new Error('fetch must not be called');
+  }) as typeof fetch;
+  try {
+    await assert.rejects(subject.value.receive(TOKEN, payload()), /another shop_id/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(fetches, 0);
+  assert.equal(subject.requestUpdates.at(-1)?.outcome, 'rejected');
+});
+
+test('a legacy duplicate with a null audit shop ID still verifies its local Shop mapping', async () => {
+  const subject = receiver({
+    existing: {
+      id: 'event-legacy',
+      status: 'accepted',
+      appShopId: APP_SHOP_ID,
+      didiShopId: null,
+      startedAt: new Date(),
+    },
+    createUniqueConflict: true,
+  });
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches += 1;
+    throw new Error('confirmation must not be called');
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      subject.value.receive(TOKEN, payload({ shopId: '5764607688097661020' })),
+      /order_id was previously received for another shop_id/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(fetches, 0);
+});
+
 test('failed and stale processing events are reclaimable', async () => {
   for (const existing of [
-    { id: 'event-f', status: 'failed' as const, appShopId: APP_SHOP_ID, startedAt: new Date() },
+    {
+      id: 'event-f',
+      status: 'failed' as const,
+      appShopId: APP_SHOP_ID,
+      didiShopId: REMOTE_SHOP_ID,
+      startedAt: new Date(),
+    },
     {
       id: 'event-s',
       status: 'processing' as const,
       appShopId: APP_SHOP_ID,
+      didiShopId: REMOTE_SHOP_ID,
       startedAt: new Date(Date.now() - DIDI_ORDER_WEBHOOK_STALE_PROCESSING_MS - 1000),
     },
   ]) {

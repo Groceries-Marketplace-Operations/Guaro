@@ -201,6 +201,8 @@ export interface DidiOrderWebhookEvent {
   };
   shop: DidiOrderWebhookEventShop | null;
   appShopId: string | null;
+  didiShopId: string | null;
+  remoteShopValidated: boolean;
   orderId: string | null;
   type: string | null;
   status: DidiOrderWebhookEventStatus;

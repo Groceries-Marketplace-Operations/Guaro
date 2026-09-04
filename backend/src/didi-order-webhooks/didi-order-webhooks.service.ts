@@ -28,6 +28,8 @@ const DIDI_ORDER_CONFIRM_TIMEOUT_MS = 30_000;
 const DIDI_ORDER_SHOP_RESOLUTION_TIMEOUT_MS = 55_000;
 const DIDI_ORDER_SHOP_RESOLUTION_MAX_PAGES = 3;
 const DIDI_ORDER_SHOP_RESOLUTION_RATE_LIMIT_RETRIES = 1;
+const DIDI_ORDER_SHOP_RESOLUTION_CACHE_TTL_MS = 5 * 60 * 1000;
+const DIDI_ORDER_SHOP_RESOLUTION_CACHE_MAX_ENTRIES = 5_000;
 const WEBHOOK_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const INTEGER_ID_PATTERN = /^\d{1,20}$/;
 
@@ -44,6 +46,7 @@ interface ClaimedEvent {
   id: string;
   status: 'processing' | 'accepted' | 'failed';
   appShopId: string;
+  didiShopId: string | null;
   claimed: boolean;
 }
 
@@ -132,6 +135,11 @@ export function parseDidiOrderWebhookPayload(rawBody: Buffer): DidiOrderWebhookP
 export class DidiOrderWebhooksService {
   private readonly encryptionKey: string;
   private readonly shopListCoordinator: DidiStoreBindingCoordinator;
+  private readonly remoteShopResolutionCache = new Map<
+    string,
+    { appShopId: string; expiresAt: number }
+  >();
+  private readonly remoteShopResolutionInFlight = new Map<string, Promise<string | undefined>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -180,6 +188,7 @@ export class DidiOrderWebhooksService {
         data: {
           stage,
           appShopId: payload.appShopId ?? null,
+          didiShopId: payload.shopId ?? null,
           orderId: payload.orderId,
           type: payload.type,
         },
@@ -196,6 +205,7 @@ export class DidiOrderWebhooksService {
         return appSecret;
       };
       let appShopId = payload.appShopId;
+      let remoteShopValidated = false;
       let shops = appShopId
         ? await this.prisma.shop.findMany({
           where: {
@@ -204,7 +214,7 @@ export class DidiOrderWebhooksService {
             deletedAt: null,
             brand: { applicationId: application.id, deletedAt: null },
           },
-          select: { id: true },
+          select: { id: true, shopId: true },
           take: 2,
         })
         : [];
@@ -230,6 +240,7 @@ export class DidiOrderWebhooksService {
             remoteAppShopId,
             'Resolved app_shop_id',
           );
+          remoteShopValidated = true;
         } catch (error) {
           if (error instanceof HttpException) throw error;
           failureDetail = safeError(error, auditSecrets);
@@ -237,21 +248,32 @@ export class DidiOrderWebhooksService {
         }
         await this.prisma.didiOrderWebhookRequest.update({
           where: { id: requestLog.id },
-          data: { appShopId },
+          data: {
+            appShopId,
+            didiShopId: payload.shopId,
+            remoteShopValidated,
+          },
         });
         shops = await this.prisma.shop.findMany({
           where: {
             shopId: payload.shopId,
+            appShopId,
             deletedAt: null,
             brand: { applicationId: application.id, deletedAt: null },
           },
-          select: { id: true },
+          select: { id: true, shopId: true },
           take: 2,
         });
       }
-      if (!appShopId || shops.length !== 1) {
+      if (!appShopId || shops.length > 1 || (shops.length === 0 && !remoteShopValidated)) {
         throw new BadRequestException(
           'Webhook shop must resolve to exactly one active shop for the webhook application',
+        );
+      }
+      const didiShopId = payload.shopId ?? shops[0]?.shopId;
+      if (!didiShopId) {
+        throw new BadRequestException(
+          'Webhook shop_id could not be resolved for the webhook application',
         );
       }
       const resolvedPayload: DidiOrderWebhookPayload & { appShopId: string } = {
@@ -259,12 +281,23 @@ export class DidiOrderWebhooksService {
         appShopId,
       };
 
+      await this.prisma.didiOrderWebhookRequest.update({
+        where: { id: requestLog.id },
+        data: { didiShopId, remoteShopValidated },
+      });
+
       stage = 'idempotency';
       await this.prisma.didiOrderWebhookRequest.update({
         where: { id: requestLog.id },
         data: { stage },
       });
-      const event = await this.claimEvent(application.id, shops[0].id, resolvedPayload);
+      const event = await this.claimEvent(
+        application.id,
+        shops[0]?.id ?? null,
+        didiShopId,
+        remoteShopValidated,
+        resolvedPayload,
+      );
       eventId = event.id;
       await this.prisma.didiOrderWebhookRequest.update({
         where: { id: requestLog.id },
@@ -396,22 +429,62 @@ export class DidiOrderWebhooksService {
     appSecret: string,
     shopId: string,
   ) {
-    const signal = AbortSignal.timeout(DIDI_ORDER_SHOP_RESOLUTION_TIMEOUT_MS);
-    const remoteShops = await this.shopListCoordinator.withShopListRateLimit(
-      applicationId,
-      () => fetchShopIdMap(appId, appSecret, [shopId], {
+    const cacheKey = `${applicationId}:${shopId}`;
+    const now = Date.now();
+    const cached = this.remoteShopResolutionCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) return cached.appShopId;
+    if (cached) this.remoteShopResolutionCache.delete(cacheKey);
+
+    const inFlight = this.remoteShopResolutionInFlight.get(cacheKey);
+    if (inFlight) return inFlight;
+
+    let resolution!: Promise<string | undefined>;
+    resolution = (async () => {
+      const signal = AbortSignal.timeout(DIDI_ORDER_SHOP_RESOLUTION_TIMEOUT_MS);
+      const remoteShops = await this.shopListCoordinator.withShopListRateLimit(
+        applicationId,
+        () => fetchShopIdMap(appId, appSecret, [shopId], {
+          signal,
+          maxPages: DIDI_ORDER_SHOP_RESOLUTION_MAX_PAGES,
+          maxRateLimitRetries: DIDI_ORDER_SHOP_RESOLUTION_RATE_LIMIT_RETRIES,
+        }),
         signal,
-        maxPages: DIDI_ORDER_SHOP_RESOLUTION_MAX_PAGES,
-        maxRateLimitRetries: DIDI_ORDER_SHOP_RESOLUTION_RATE_LIMIT_RETRIES,
-      }),
-      signal,
-    );
-    return remoteShops.get(shopId);
+      );
+      const appShopId = remoteShops.get(shopId);
+      if (appShopId) {
+        this.pruneRemoteShopResolutionCache(now);
+        this.remoteShopResolutionCache.delete(cacheKey);
+        this.remoteShopResolutionCache.set(cacheKey, {
+          appShopId,
+          expiresAt: Date.now() + DIDI_ORDER_SHOP_RESOLUTION_CACHE_TTL_MS,
+        });
+      }
+      return appShopId;
+    })().finally(() => {
+      if (this.remoteShopResolutionInFlight.get(cacheKey) === resolution) {
+        this.remoteShopResolutionInFlight.delete(cacheKey);
+      }
+    });
+    this.remoteShopResolutionInFlight.set(cacheKey, resolution);
+    return resolution;
+  }
+
+  private pruneRemoteShopResolutionCache(now: number) {
+    for (const [key, value] of this.remoteShopResolutionCache) {
+      if (value.expiresAt <= now) this.remoteShopResolutionCache.delete(key);
+    }
+    while (this.remoteShopResolutionCache.size >= DIDI_ORDER_SHOP_RESOLUTION_CACHE_MAX_ENTRIES) {
+      const oldestKey = this.remoteShopResolutionCache.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      this.remoteShopResolutionCache.delete(oldestKey);
+    }
   }
 
   private async claimEvent(
     applicationId: string,
-    shopId: string,
+    shopId: string | null,
+    didiShopId: string,
+    remoteShopValidated: boolean,
     payload: DidiOrderWebhookPayload & { appShopId: string },
   ): Promise<ClaimedEvent> {
     try {
@@ -419,12 +492,14 @@ export class DidiOrderWebhooksService {
         data: {
           applicationId,
           shopId,
+          didiShopId,
           appShopId: payload.appShopId,
           orderId: payload.orderId,
           type: payload.type,
           sourceTimestamp: payload.sourceTimestamp,
+          remoteShopValidated,
         },
-        select: { id: true, status: true, appShopId: true },
+        select: { id: true, status: true, appShopId: true, didiShopId: true },
       });
       return { ...created, claimed: true };
     } catch (error) {
@@ -440,11 +515,25 @@ export class DidiOrderWebhooksService {
     };
     let existing = await this.prisma.didiOrderWebhookEvent.findUnique({
       where,
-      select: { id: true, status: true, appShopId: true, startedAt: true },
+      select: {
+        id: true,
+        status: true,
+        appShopId: true,
+        didiShopId: true,
+        startedAt: true,
+        shop: { select: { shopId: true } },
+      },
     });
     if (!existing) throw new Error('Idempotency record disappeared after unique conflict');
     if (existing.appShopId !== payload.appShopId) {
       throw new BadRequestException('order_id was previously received for another app_shop_id');
+    }
+    const existingDidiShopId = existing.didiShopId ?? existing.shop?.shopId;
+    if (!existingDidiShopId) {
+      throw new Error('Idempotency record has no verifiable shop mapping');
+    }
+    if (existingDidiShopId !== didiShopId) {
+      throw new BadRequestException('order_id was previously received for another shop_id');
     }
     if (existing.status === 'accepted') return { ...existing, claimed: false };
 
@@ -458,6 +547,8 @@ export class DidiOrderWebhooksService {
         status: 'processing',
         attempts: { increment: 1 },
         shopId,
+        didiShopId,
+        remoteShopValidated,
         sourceTimestamp: payload.sourceTimestamp,
         startedAt: new Date(),
         acceptedAt: null,
@@ -469,12 +560,25 @@ export class DidiOrderWebhooksService {
       },
     });
     if (reclaimed.count === 1) {
-      return { id: existing.id, status: 'processing', appShopId: existing.appShopId, claimed: true };
+      return {
+        id: existing.id,
+        status: 'processing',
+        appShopId: existing.appShopId,
+        didiShopId,
+        claimed: true,
+      };
     }
 
     existing = await this.prisma.didiOrderWebhookEvent.findUnique({
       where,
-      select: { id: true, status: true, appShopId: true, startedAt: true },
+      select: {
+        id: true,
+        status: true,
+        appShopId: true,
+        didiShopId: true,
+        startedAt: true,
+        shop: { select: { shopId: true } },
+      },
     });
     if (!existing) throw new Error('Idempotency record disappeared while claiming');
     return { ...existing, claimed: false };
