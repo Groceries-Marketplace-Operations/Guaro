@@ -170,6 +170,30 @@ export const applicationsApi = {
     ),
 };
 
+export const applicationShopInventoryApi = {
+  list: () => client.get<import('../types').ApplicationShopInventory[]>('/admin/app-shop-inventory'),
+  options: (q = '') => client.get<import('../types').ApplicationShopInventoryOption[]>(
+    '/admin/app-shop-inventory/options',
+    { params: q ? { q } : undefined },
+  ),
+  add: (applicationId: string) => client.post<import('../types').ApplicationShopInventory>(
+    '/admin/app-shop-inventory',
+    { applicationId },
+  ),
+  remove: (id: string) => client.delete<{ deleted: true }>(`/admin/app-shop-inventory/${id}`),
+  fetch: (id: string) => client.post<import('../types').ApplicationShopInventory>(
+    `/admin/app-shop-inventory/${id}/fetch`,
+  ),
+  brands: (id: string) => client.get<import('../types').ApplicationShopInventoryBrandsResponse>(
+    `/admin/app-shop-inventory/${id}/brands`,
+  ),
+  shops: (id: string, params?: { page?: number; limit?: number; q?: string; brand?: string }) =>
+    client.get<import('../types').Paginated<import('../types').ApplicationShopInventoryShop>>(
+      `/admin/app-shop-inventory/${id}/shops`,
+      { params },
+    ),
+};
+
 export const orderWebhookEventsApi = {
   list: (params?: {
     page?: number;

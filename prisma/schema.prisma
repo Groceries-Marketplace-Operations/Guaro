@@ -229,6 +229,14 @@ enum DidiOrderWebhookRequestOutcome {
   failed
 }
 
+enum ApplicationShopInventoryFetchStatus {
+  never
+  queued
+  running
+  succeeded
+  failed
+}
+
 enum AutoFetchKind {
   stores
   menu
@@ -373,6 +381,8 @@ model Account {
   createdBrands                              Brand[]                              @relation("BrandCreador")
   createdShops                               Shop[]                               @relation("ShopCreador")
   createdApps                                Application[]                        @relation("AppCreador")
+  createdApplicationShopInventories          ApplicationShopInventory[]           @relation("ApplicationShopInventoryCreator")
+  requestedApplicationShopInventories        ApplicationShopInventory[]           @relation("ApplicationShopInventoryRequester")
   createdSftpApps                            SftpApplication[]                    @relation("SftpAppCreator")
   createdStoreEmergencies                    StoreEmergency[]                     @relation("StoreEmergencyCreator")
   storeEmergencyEvents                       StoreEmergencyEvent[]                @relation("StoreEmergencyEventActor")
@@ -734,9 +744,63 @@ model Application {
   upcActivityPriceRules      UpcActivityPriceRule[]
   didiOrderWebhookEvents     DidiOrderWebhookEvent[]
   didiOrderWebhookRequests   DidiOrderWebhookRequest[]
+  shopInventory              ApplicationShopInventory?
 
   @@unique([id, country]) // target of composite FK (see constraints.sql)
   @@map("application")
+}
+
+model ApplicationShopInventory {
+  id                    String                              @id @default(uuid()) @db.Uuid
+  applicationId         String                              @unique @map("application_id") @db.Uuid
+  createdById           String                              @map("created_by_id") @db.Uuid
+  lastRequestedById     String?                             @map("last_requested_by_id") @db.Uuid
+  fetchStatus           ApplicationShopInventoryFetchStatus @default(never) @map("fetch_status")
+  activeRunId           String?                             @map("active_run_id") @db.Uuid
+  fetchRequestedAt      DateTime?                           @map("fetch_requested_at") @db.Timestamptz
+  fetchStartedAt        DateTime?                           @map("fetch_started_at") @db.Timestamptz
+  fetchFinishedAt       DateTime?                           @map("fetch_finished_at") @db.Timestamptz
+  fetchPagesProcessed   Int                                 @default(0) @map("fetch_pages_processed")
+  fetchShopsDiscovered  Int                                 @default(0) @map("fetch_shops_discovered")
+  fetchExpectedShops    Int?                                @map("fetch_expected_shops")
+  lastSuccessfulFetchAt DateTime?                           @map("last_successful_fetch_at") @db.Timestamptz
+  totalShops            Int                                 @default(0) @map("total_shops")
+  identifiedBrandShops  Int                                 @default(0) @map("identified_brand_shops")
+  totalBrands           Int                                 @default(0) @map("total_brands")
+  lastError             String?                             @map("last_error") @db.Text
+  createdAt             DateTime                            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime                            @updatedAt @map("updated_at") @db.Timestamptz
+
+  application     Application                    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  createdBy       Account                        @relation("ApplicationShopInventoryCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  lastRequestedBy Account?                       @relation("ApplicationShopInventoryRequester", fields: [lastRequestedById], references: [id], onDelete: SetNull)
+  shops           ApplicationShopInventoryShop[]
+
+  @@index([fetchStatus, fetchRequestedAt])
+  @@map("application_shop_inventory")
+}
+
+model ApplicationShopInventoryShop {
+  id              String   @id @default(uuid()) @db.Uuid
+  inventoryId     String   @map("inventory_id") @db.Uuid
+  shopId          String   @map("shop_id")
+  appShopId       String   @map("app_shop_id")
+  shopName        String?  @map("shop_name")
+  brandExternalId String?  @map("brand_external_id")
+  brandName       String?  @map("brand_name")
+  brandSource     String?  @map("brand_source")
+  city            String?
+  address         String?  @db.Text
+  fetchedAt       DateTime @map("fetched_at") @db.Timestamptz
+
+  inventory ApplicationShopInventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@unique([inventoryId, shopId])
+  @@unique([inventoryId, appShopId])
+  @@index([inventoryId, brandExternalId])
+  @@index([inventoryId, brandName])
+  @@index([inventoryId, shopName])
+  @@map("application_shop_inventory_shop")
 }
 
 model SftpApplication {

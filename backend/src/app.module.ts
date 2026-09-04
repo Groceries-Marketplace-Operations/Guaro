@@ -25,6 +25,7 @@ import { FileIntegrationsModule } from './file-integrations/file-integrations.mo
 import { AccessControlModule } from './access-control/access-control.module';
 import { StoreOnboardingModule } from './store-onboarding/store-onboarding.module';
 import { DidiOrderWebhooksModule } from './didi-order-webhooks/didi-order-webhooks.module';
+import { ApplicationShopInventoryModule } from './application-shop-inventory/application-shop-inventory.module';
 
 const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
 
@@ -55,6 +56,7 @@ const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
     FileIntegrationsModule,
     StoreOnboardingModule,
     DidiOrderWebhooksModule,
+    ApplicationShopInventoryModule,
     ...devModules,
   ],
 })

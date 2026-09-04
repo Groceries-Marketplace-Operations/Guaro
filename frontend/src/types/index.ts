@@ -168,6 +168,67 @@ export interface ApplicationOrderWebhook {
   lastError: string | null;
 }
 
+export type ApplicationShopInventoryFetchStatus = 'never' | 'queued' | 'running' | 'succeeded' | 'failed';
+
+export interface ApplicationShopInventoryOption {
+  id: string;
+  appId: string;
+  appName: string;
+  country: Country;
+  shopInventory: { id: string } | null;
+}
+
+export interface ApplicationShopInventory {
+  id: string;
+  applicationId: string;
+  fetchStatus: ApplicationShopInventoryFetchStatus;
+  activeRunId: string | null;
+  fetchRequestedAt: string | null;
+  fetchStartedAt: string | null;
+  fetchFinishedAt: string | null;
+  fetchPagesProcessed: number;
+  fetchShopsDiscovered: number;
+  fetchExpectedShops: number | null;
+  lastSuccessfulFetchAt: string | null;
+  totalShops: number;
+  identifiedBrandShops: number;
+  totalBrands: number;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  application: Pick<Application, 'id' | 'appId' | 'appName' | 'country'> & { deletedAt: string | null };
+  createdBy: { id: string; name: string };
+  lastRequestedBy: { id: string; name: string } | null;
+}
+
+export interface ApplicationShopInventoryBrand {
+  brandExternalId: string | null;
+  brandName: string | null;
+  brandSource: 'remote' | 'local' | null;
+  shopCount: number;
+}
+
+export interface ApplicationShopInventoryBrandsResponse {
+  inventoryId: string;
+  totalShops: number;
+  identifiedBrandShops: number;
+  data: ApplicationShopInventoryBrand[];
+}
+
+export interface ApplicationShopInventoryShop {
+  id: string;
+  inventoryId: string;
+  shopId: string;
+  appShopId: string;
+  shopName: string | null;
+  brandExternalId: string | null;
+  brandName: string | null;
+  brandSource: 'remote' | 'local' | null;
+  city: string | null;
+  address: string | null;
+  fetchedAt: string;
+}
+
 export type DidiOrderWebhookEventOutcome = 'processing' | 'accepted' | 'deduplicated' | 'rejected' | 'failed';
 export type DidiOrderWebhookEventStatus = DidiOrderWebhookEventOutcome;
 export type DidiOrderWebhookEventStage =

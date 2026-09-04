@@ -94,7 +94,7 @@ export default function Sidebar() {
   ];
   const configPermissions = ['config.handlers', 'config.webhooks', 'config.invitations', 'config.users'];
   const canCreate = can('tasks.create') && !isDirector;
-  const showAdmin = hasAnyPermission(account, [
+  const showAdmin = isSA || hasAnyPermission(account, [
     'applications.manage', 'applications.update', 'sftp_applications.manage', 'bpo.team', 'sections.manage',
     'settings.manage', 'system.manage', ...configPermissions,
   ]);
@@ -250,13 +250,16 @@ export default function Sidebar() {
           {isSA && <NavLink to="/role-access" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconUsers /> Roles y permisos
           </NavLink>}
+          {isSA && <NavLink to="/admin/app-shop-inventory" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconApp /> Inventario de tiendas
+          </NavLink>}
           {can('settings.manage') && (
             <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
               <IconGrid /> {t('nav.settings')}
             </NavLink>
           )}
           {can('system.manage') && (
-            <NavLink to="/admin" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <NavLink to="/admin" end className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
               <IconTerminal /> {t('nav.systemPanel')}
             </NavLink>
           )}

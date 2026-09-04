@@ -41,6 +41,7 @@ import AccessDenied from './pages/AccessDenied';
 import RoleAccessPage from './pages/admin/RoleAccessPage';
 import StoreOnboardingPage from './pages/integrations/StoreOnboardingPage';
 import { ThemeProvider } from './theme/ThemeContext';
+import AppShopInventoryPage from './pages/admin/AppShopInventoryPage';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
 
@@ -88,6 +89,7 @@ export default function App() {
               <Route path="bpo-management" element={protectedPage('bpo.team', <BpoManagement />)} />
               <Route path="sections" element={protectedPage('sections.manage', <SectionsList />)} />
               <Route path="role-access" element={<SuperAdminOnly><RoleAccessPage /></SuperAdminOnly>} />
+              <Route path="admin/app-shop-inventory" element={<SuperAdminOnly><AppShopInventoryPage /></SuperAdminOnly>} />
               <Route path="config" element={protectedPage(['config.users', 'config.invitations', 'config.handlers', 'config.webhooks'], <Config />)} />
               <Route path="settings" element={protectedPage('settings.manage', <SettingsPage />)} />
               <Route path="applications" element={protectedPage('applications.manage', <ApplicationsPage />)} />
