@@ -95,7 +95,7 @@ export default function Sidebar() {
   const configPermissions = ['config.handlers', 'config.webhooks', 'config.invitations', 'config.users'];
   const canCreate = can('tasks.create') && !isDirector;
   const showAdmin = hasAnyPermission(account, [
-    'applications.manage', 'sftp_applications.manage', 'bpo.team', 'sections.manage',
+    'applications.manage', 'applications.update', 'sftp_applications.manage', 'bpo.team', 'sections.manage',
     'settings.manage', 'system.manage', ...configPermissions,
   ]);
 
@@ -222,8 +222,13 @@ export default function Sidebar() {
         <div className="sidebar-section">
           <div className="sidebar-section-label">{t('nav.admin')}</div>
           {can('applications.manage') && (
-            <NavLink to="/applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <NavLink to="/applications" end className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
               <IconApp /> {t('nav.applications')}
+            </NavLink>
+          )}
+          {can('applications.update') && (
+            <NavLink to="/applications/webhook-logs" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+              <IconClipboard /> {t('nav.orderWebhookLogs')}
             </NavLink>
           )}
           {can('sftp_applications.manage') && <NavLink to="/sftp-applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>

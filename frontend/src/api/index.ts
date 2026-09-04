@@ -170,6 +170,25 @@ export const applicationsApi = {
     ),
 };
 
+export const orderWebhookEventsApi = {
+  list: (params?: {
+    page?: number;
+    limit?: number;
+    applicationId?: string;
+    status?: import('../types').DidiOrderWebhookEventStatus;
+    appShopId?: string;
+    orderId?: string;
+    from?: string;
+    to?: string;
+  }) => client.get<import('../types').DidiOrderWebhookEventsResponse>(
+    '/order-webhook/events',
+    { params },
+  ),
+  get: (eventId: string) => client.get<import('../types').DidiOrderWebhookEvent>(
+    `/order-webhook/events/${eventId}`,
+  ),
+};
+
 /* ── Tasks ──────────────────────────────────────────────────── */
 export const tasksApi = {
   list: (params?: object) => client.get<{ data: unknown[]; total: number; page: number; limit: number }>('/tasks', { params }),

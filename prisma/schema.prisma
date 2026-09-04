@@ -921,6 +921,8 @@ model DidiOrderWebhookRequest {
 
   @@index([applicationId, createdAt])
   @@index([applicationId, outcome, createdAt])
+  @@index([createdAt, id], map: "didi_order_webhook_request_created_at_id_idx")
+  @@index([outcome, createdAt], map: "didi_order_webhook_request_outcome_created_at_idx")
   @@index([eventId])
   @@map("didi_order_webhook_request")
 }

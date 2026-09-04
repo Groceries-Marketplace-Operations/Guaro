@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { applicationsApi } from '../../api';
+import { orderWebhookEventsApi } from '../../api';
 import { useLang, useT } from '../../i18n';
 import type {
+  Application,
   DidiOrderWebhookEvent,
   DidiOrderWebhookEventStage,
   DidiOrderWebhookEventStatus,
@@ -13,11 +14,13 @@ import Paginator from '../ui/Paginator';
 const LIMIT = 20;
 
 interface Props {
-  applicationId: string;
-  active: boolean;
+  applications: Application[];
+  applicationsLoading?: boolean;
+  active?: boolean;
 }
 
 interface EventFilters {
+  applicationId: string;
   status: DidiOrderWebhookEventStatus | '';
   appShopId: string;
   orderId: string;
@@ -26,6 +29,7 @@ interface EventFilters {
 }
 
 const EMPTY_FILTERS: EventFilters = {
+  applicationId: '',
   status: '',
   appShopId: '',
   orderId: '',
@@ -52,7 +56,7 @@ function apiMessage(error: unknown, fallback: string) {
   return Array.isArray(message) ? message.join(', ') : (message ?? fallback);
 }
 
-export default function OrderWebhookLogsPanel({ applicationId, active }: Props) {
+export default function OrderWebhookLogsPanel({ applications, applicationsLoading = false, active = true }: Props) {
   const t = useT();
   const { lang } = useLang();
   const [draft, setDraft] = useState<EventFilters>(EMPTY_FILTERS);
@@ -63,6 +67,7 @@ export default function OrderWebhookLogsPanel({ applicationId, active }: Props) 
   const params = useMemo(() => ({
     page,
     limit: LIMIT,
+    ...(filters.applicationId ? { applicationId: filters.applicationId } : {}),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.appShopId ? { appShopId: filters.appShopId } : {}),
     ...(filters.orderId ? { orderId: filters.orderId } : {}),
@@ -71,17 +76,16 @@ export default function OrderWebhookLogsPanel({ applicationId, active }: Props) 
   }), [filters, page]);
 
   const eventsQuery = useQuery<DidiOrderWebhookEventsResponse>({
-    queryKey: ['application-order-webhook-events', applicationId, params],
-    queryFn: () => applicationsApi.listOrderWebhookEvents(applicationId, params).then(response => response.data),
+    queryKey: ['order-webhook-events', params],
+    queryFn: () => orderWebhookEventsApi.list(params).then(response => response.data),
     enabled: active,
     retry: false,
     refetchInterval: active ? 15_000 : false,
-    placeholderData: previous => previous,
   });
 
   const detailQuery = useQuery<DidiOrderWebhookEvent>({
-    queryKey: ['application-order-webhook-event', applicationId, selectedId],
-    queryFn: () => applicationsApi.getOrderWebhookEvent(applicationId, selectedId!).then(response => response.data),
+    queryKey: ['order-webhook-event', selectedId],
+    queryFn: () => orderWebhookEventsApi.get(selectedId!).then(response => response.data),
     enabled: active && !!selectedId,
     retry: false,
   });
@@ -142,6 +146,10 @@ export default function OrderWebhookLogsPanel({ applicationId, active }: Props) 
   };
 
   const events = eventsQuery.data?.data ?? [];
+  const applicationsById = useMemo(
+    () => new Map(applications.map(application => [application.id, application])),
+    [applications],
+  );
   const summary = eventsQuery.data?.summary ?? {
     total: 0,
     accepted: 0,
@@ -200,6 +208,25 @@ export default function OrderWebhookLogsPanel({ applicationId, active }: Props) 
       </div>
 
       <form className="order-webhook-filters" onSubmit={applyFilters}>
+        <div className="form-group">
+          <label className="form-label" htmlFor="webhook-log-application">{t('pages.applications.orderWebhookLogsApplication')}</label>
+          <select
+            id="webhook-log-application"
+            className="form-select"
+            value={draft.applicationId}
+            disabled={applicationsLoading}
+            onChange={event => setDraft(current => ({ ...current, applicationId: event.target.value }))}
+          >
+            <option value="">{applicationsLoading
+              ? t('common.loading')
+              : t('pages.applications.orderWebhookLogsAllApplications')}</option>
+            {applications.map(application => (
+              <option key={application.id} value={application.id}>
+                {application.appName} · {application.appId} · {application.country}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="form-group">
           <label className="form-label" htmlFor="webhook-log-status">{t('pages.applications.orderWebhookLogsStatus')}</label>
           <select
@@ -265,6 +292,7 @@ export default function OrderWebhookLogsPanel({ applicationId, active }: Props) 
           <thead>
             <tr>
               <th>{t('pages.applications.orderWebhookLogsReceived')}</th>
+              <th>{t('pages.applications.orderWebhookLogsApplication')}</th>
               <th>{t('pages.applications.orderWebhookLogsStatus')}</th>
               <th>{t('pages.applications.orderWebhookLogsOrderId')}</th>
               <th>{t('pages.applications.orderWebhookLogsStore')}</th>
@@ -276,10 +304,10 @@ export default function OrderWebhookLogsPanel({ applicationId, active }: Props) 
           </thead>
           <tbody>
             {eventsQuery.isLoading && (
-              <tr><td colSpan={8} className="order-webhook-table-message">{t('common.loading')}</td></tr>
+              <tr><td colSpan={9} className="order-webhook-table-message">{t('common.loading')}</td></tr>
             )}
             {!eventsQuery.isLoading && events.length === 0 && (
-              <tr><td colSpan={8} className="order-webhook-table-message">
+              <tr><td colSpan={9} className="order-webhook-table-message">
                 <strong>{hasFilters ? t('pages.applications.orderWebhookLogsNoMatch') : t('pages.applications.orderWebhookLogsEmpty')}</strong>
                 <span>{hasFilters ? t('pages.applications.orderWebhookLogsNoMatchHint') : t('pages.applications.orderWebhookLogsEmptyHint')}</span>
               </td></tr>
@@ -287,6 +315,14 @@ export default function OrderWebhookLogsPanel({ applicationId, active }: Props) 
             {events.map(event => (
               <tr key={event.id} className={selectedId === event.id ? 'is-selected' : undefined}>
                 <td className="order-webhook-date">{formatDate(event.createdAt)}</td>
+                <td>
+                  <strong>{event.application?.appName || applicationsById.get(event.applicationId)?.appName || '—'}</strong>
+                  {(event.application?.appId || applicationsById.get(event.applicationId)?.appId) && (
+                    <span className="order-webhook-cell-note">
+                      {event.application?.appId || applicationsById.get(event.applicationId)?.appId}
+                    </span>
+                  )}
+                </td>
                 <td><span className={`order-webhook-log-status is-${event.status}`}>{statusLabel(event.status)}</span></td>
                 <td className="td-mono">{event.orderId ?? '—'}</td>
                 <td>
@@ -338,6 +374,7 @@ export default function OrderWebhookLogsPanel({ applicationId, active }: Props) 
               <div className="order-webhook-detail-grid">
                 <div><span>{t('pages.applications.orderWebhookLogsStatus')}</span><strong><span className={`order-webhook-log-status is-${detail.status}`}>{statusLabel(detail.status)}</span></strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsStage')}</span><strong>{stageLabel(detail.stage)}</strong></div>
+                <div><span>{t('pages.applications.orderWebhookLogsApplication')}</span><strong>{detail.application?.appName || applicationsById.get(detail.applicationId)?.appName || '—'}</strong><small>{detail.application?.appId || applicationsById.get(detail.applicationId)?.appId || detail.applicationId}</small></div>
                 <div><span>{t('pages.applications.orderWebhookLogsEventType')}</span><strong>{detail.type ?? '—'}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsOrderId')}</span><strong className="td-mono">{detail.orderId ?? '—'}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsAppShopId')}</span><strong className="td-mono">{detail.appShopId ?? '—'}</strong></div>

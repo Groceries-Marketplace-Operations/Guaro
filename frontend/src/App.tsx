@@ -20,6 +20,7 @@ import SectionsList from './pages/sections/SectionsList';
 import Config from './pages/Config';
 import SettingsPage from './pages/settings/SettingsPage';
 import ApplicationsPage from './pages/ApplicationsPage';
+import OrderWebhookLogsPage from './pages/OrderWebhookLogsPage';
 import InvitePage from './pages/InvitePage';
 import AuthCallback from './pages/AuthCallback';
 import AuthError from './pages/AuthError';
@@ -90,6 +91,7 @@ export default function App() {
               <Route path="config" element={protectedPage(['config.users', 'config.invitations', 'config.handlers', 'config.webhooks'], <Config />)} />
               <Route path="settings" element={protectedPage('settings.manage', <SettingsPage />)} />
               <Route path="applications" element={protectedPage('applications.manage', <ApplicationsPage />)} />
+              <Route path="applications/webhook-logs" element={protectedPage('applications.update', <OrderWebhookLogsPage />)} />
               <Route path="integrations/auto-open" element={protectedPage('integrations.forced_open', <IntegrationsPage />)} />
               <Route path="integrations/forced-open" element={protectedPage('integrations.forced_open', <ForcedOpenStoresPage />)} />
               <Route path="integrations/auto-turn-off" element={protectedPage('integrations.auto_turn_off', <AutoTurnOffItemsPage />)} />

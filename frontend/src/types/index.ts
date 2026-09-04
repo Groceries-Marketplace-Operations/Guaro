@@ -197,7 +197,9 @@ export interface DidiOrderWebhookEvent {
   applicationId: string;
   application?: {
     id: string;
+    appId?: string;
     appName: string;
+    country?: Country;
   };
   shop: DidiOrderWebhookEventShop | null;
   appShopId: string | null;
