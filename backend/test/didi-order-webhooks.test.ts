@@ -17,6 +17,7 @@ import {
   DidiOrderWebhooksService,
   parseDidiOrderWebhookPayload,
 } from '../src/didi-order-webhooks/didi-order-webhooks.service';
+import { fetchShopIdMap } from '../src/queue/handlers/didi-food.util';
 
 const KEY = '42'.repeat(32);
 const TOKEN = 'A'.repeat(43);
@@ -25,6 +26,7 @@ const SHOP_ID = '22222222-2222-4222-8222-222222222222';
 // Exact 64-bit identifiers from the representative DiDi orderNew payload.
 const APP_ID = '5764607584567296012';
 const APP_SHOP_ID = '7093';
+const REMOTE_SHOP_ID = '5764607688097661019';
 const ORDER_ID = '1152921547153933576';
 const SECRET = 'test-secret-never-real';
 
@@ -35,17 +37,29 @@ function payload(options: {
   orderId?: string;
   nestedOrderId?: string;
   type?: string;
+  shopId?: string;
+  omitRootAppShopId?: boolean;
+  omitNestedAppShopId?: boolean;
 } = {}) {
   const appId = options.appId ?? APP_ID;
   const appShopId = options.appShopId ?? APP_SHOP_ID;
   const nestedAppShopId = options.nestedAppShopId ?? appShopId;
   const orderId = options.orderId ?? ORDER_ID;
   const nestedOrderId = options.nestedOrderId ?? orderId;
+  const rootShopField = options.omitRootAppShopId
+    ? ''
+    : `,"app_shop_id":${JSON.stringify(appShopId)}`;
+  const nestedShopFields = [
+    ...(options.omitNestedAppShopId
+      ? []
+      : [`"app_shop_id":${JSON.stringify(nestedAppShopId)}`]),
+    ...(options.shopId ? [`"shop_id":${options.shopId}`] : []),
+  ].join(',');
   return Buffer.from(
-    `{"app_id":${appId},"app_shop_id":${JSON.stringify(appShopId)},`
+    `{"app_id":${appId}${rootShopField},`
       + `"timestamp":1770000000000,"type":${JSON.stringify(options.type ?? 'orderNew')},`
       + `"data":{"order_id":${orderId},"order_info":{"order_id":${nestedOrderId},`
-      + `"shop":{"app_shop_id":${JSON.stringify(nestedAppShopId)}}}}}`,
+      + `"shop":{${nestedShopFields}}}}}`,
     'utf8',
   );
 }
@@ -77,6 +91,30 @@ test('raw webhook parsing rejects mismatched nested identifiers and non-order ev
   );
 });
 
+test('raw webhook parsing preserves shop_id when app_shop_id is absent', () => {
+  assert.deepEqual(
+    parseDidiOrderWebhookPayload(payload({
+      omitRootAppShopId: true,
+      omitNestedAppShopId: true,
+      shopId: REMOTE_SHOP_ID,
+    })),
+    {
+      appId: APP_ID,
+      shopId: REMOTE_SHOP_ID,
+      orderId: ORDER_ID,
+      type: 'orderNew',
+      sourceTimestamp: '1770000000000',
+    },
+  );
+  assert.throws(
+    () => parseDidiOrderWebhookPayload(payload({
+      omitRootAppShopId: true,
+      omitNestedAppShopId: true,
+    })),
+    BadRequestException,
+  );
+});
+
 test('receiver enforces its own 1 MiB raw-body limit', () => {
   assert.throws(
     () => parseDidiOrderWebhookPayload(Buffer.alloc(DIDI_ORDER_WEBHOOK_MAX_BODY_BYTES + 1)),
@@ -100,6 +138,7 @@ interface ExistingEvent {
 
 function receiver(options: {
   shops?: string[];
+  shopResponses?: string[][];
   existing?: ExistingEvent;
   createUniqueConflict?: boolean;
 } = {}) {
@@ -108,6 +147,7 @@ function receiver(options: {
   const requestUpdates: Array<Record<string, unknown>> = [];
   const applicationFindCalls: unknown[] = [];
   const shopFindCalls: unknown[] = [];
+  let shopFindIndex = 0;
   const prisma = {
     application: {
       findFirst: async (input: unknown) => {
@@ -122,7 +162,8 @@ function receiver(options: {
     shop: {
       findMany: async (input: unknown) => {
         shopFindCalls.push(input);
-        return (options.shops ?? [SHOP_ID]).map(id => ({ id }));
+        const ids = options.shopResponses?.[shopFindIndex++] ?? options.shops ?? [SHOP_ID];
+        return ids.map(id => ({ id }));
       },
     },
     didiOrderWebhookRequest: {
@@ -208,6 +249,217 @@ test('receiver gets the shop token and confirms once with the exact order ID', a
   assert.equal(subject.updates.at(-1)?.remoteErrno, 0);
   assert.equal(subject.requestUpdates.at(-1)?.outcome, 'accepted');
   assert.equal(subject.requestUpdates.at(-1)?.localHttpStatus, 200);
+});
+
+test('receiver resolves a missing app_shop_id from the application shop list', async () => {
+  const subject = receiver();
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.endsWith('/v1/shop/shop/list')) {
+      assert.deepEqual(subject.requestUpdates.at(-1), {
+        stage: 'shop_resolution',
+        appShopId: null,
+        orderId: ORDER_ID,
+        type: 'orderNew',
+      });
+      const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      assert.equal(request.app_id, APP_ID);
+      assert.equal(request.page_no, 1);
+      assert.equal(typeof request.sign, 'string');
+      assert.equal(JSON.stringify(request).includes(SECRET), false);
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: {
+          total: 1,
+          shop_list: [{ shop_id: REMOTE_SHOP_ID, app_shop_id: APP_SHOP_ID }],
+        },
+      }));
+    }
+    if (url.includes('/v1/auth/authtoken/refresh')) {
+      assert.equal(new URL(url).searchParams.get('app_shop_id'), APP_SHOP_ID);
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh-value' } }));
+    }
+    if (url.includes('/v1/auth/authtoken/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'access-value' } }));
+    }
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, payload({
+      omitRootAppShopId: true,
+      omitNestedAppShopId: true,
+      shopId: REMOTE_SHOP_ID,
+    }));
+    assert.deepEqual(result, {
+      accepted: true,
+      deduplicated: false,
+      orderId: ORDER_ID,
+      appShopId: APP_SHOP_ID,
+      status: 'accepted',
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls.length, 4);
+  assert.equal(calls[0].url, 'https://openapi.didi-food.com/v1/shop/shop/list');
+  assert.deepEqual(subject.shopFindCalls.at(-1), {
+    where: {
+      shopId: REMOTE_SHOP_ID,
+      deletedAt: null,
+      brand: { applicationId: APPLICATION_ID, deletedAt: null },
+    },
+    select: { id: true },
+    take: 2,
+  });
+  const resolutionAudit = subject.requestUpdates.find(update => update.appShopId === APP_SHOP_ID);
+  assert.equal(resolutionAudit?.appShopId, APP_SHOP_ID);
+});
+
+test('receiver verifies a supplied app_shop_id remotely when its exact local pair is missing', async () => {
+  const subject = receiver({ shopResponses: [[], [SHOP_ID]] });
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith('/v1/shop/shop/list')) {
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: {
+          total: 1,
+          shop_list: [{ shop_id: REMOTE_SHOP_ID, app_shop_id: APP_SHOP_ID }],
+        },
+      }));
+    }
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, payload({ shopId: REMOTE_SHOP_ID }));
+    assert.equal(result.accepted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls.filter(url => url.endsWith('/v1/shop/shop/list')).length, 1);
+  assert.equal(subject.shopFindCalls.length, 2);
+  assert.deepEqual(subject.shopFindCalls[1], {
+    where: {
+      shopId: REMOTE_SHOP_ID,
+      deletedAt: null,
+      brand: { applicationId: APPLICATION_ID, deletedAt: null },
+    },
+    select: { id: true },
+    take: 2,
+  });
+});
+
+test('receiver rejects a supplied app_shop_id that disagrees with the remote shop mapping', async () => {
+  const subject = receiver({ shopResponses: [[]] });
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches += 1;
+    return new Response(JSON.stringify({
+      errno: 0,
+      data: {
+        total: 1,
+        shop_list: [{ shop_id: REMOTE_SHOP_ID, app_shop_id: 'remote-value' }],
+      },
+    }));
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      subject.value.receive(TOKEN, payload({ shopId: REMOTE_SHOP_ID })),
+      /Payload app_shop_id does not match/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(fetches, 1);
+  assert.equal(subject.shopFindCalls.length, 1);
+  assert.equal(subject.requestUpdates.at(-1)?.outcome, 'rejected');
+});
+
+test('missing app_shop_id fails closed when the remote shop is absent or ambiguous', async () => {
+  for (const shopList of [
+    [],
+    [
+      { shop_id: REMOTE_SHOP_ID, app_shop_id: APP_SHOP_ID },
+      { shop_id: REMOTE_SHOP_ID, app_shop_id: 'different-app-shop' },
+    ],
+  ]) {
+    const subject = receiver();
+    const originalFetch = globalThis.fetch;
+    let fetches = 0;
+    globalThis.fetch = (async () => {
+      fetches += 1;
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: { total: shopList.length, shop_list: shopList },
+      }));
+    }) as typeof fetch;
+    try {
+      const request = subject.value.receive(TOKEN, payload({
+        omitRootAppShopId: true,
+        omitNestedAppShopId: true,
+        shopId: REMOTE_SHOP_ID,
+      }));
+      if (shopList.length === 0) {
+        await assert.rejects(request, BadRequestException);
+      } else {
+        await assert.rejects(request, BadGatewayException);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert.equal(fetches, 1);
+    assert.equal(subject.shopFindCalls.length, 0);
+    const audit = subject.requestUpdates.at(-1);
+    assert.equal(audit?.stage, 'shop_resolution');
+    assert.equal(audit?.outcome, shopList.length === 0 ? 'rejected' : 'failed');
+    assert.equal(JSON.stringify(audit).includes(SECRET), false);
+  }
+});
+
+test('shop-list fallback has bounded rate-limit retries and rejects non-2xx responses', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches += 1;
+    return new Response(JSON.stringify({ errno: 10005, errmsg: 'too frequent' }), {
+      status: 429,
+    });
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      fetchShopIdMap(APP_ID, SECRET, [REMOTE_SHOP_ID], { maxRateLimitRetries: 0 }),
+      /remained rate limited after 1 attempt/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(fetches, 1);
+
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    errno: 0,
+    data: { total: 0, shop_list: [] },
+  }), { status: 503 })) as typeof fetch;
+  try {
+    await assert.rejects(
+      fetchShopIdMap(APP_ID, SECRET, [REMOTE_SHOP_ID], { maxRateLimitRetries: 0 }),
+      /HTTP 503/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('an accepted duplicate and a live processing duplicate never resend', async () => {

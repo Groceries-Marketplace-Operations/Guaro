@@ -75,6 +75,6 @@ import { UpcActivityPriceService } from './upc-activity-price.service';
     UpcActivityPriceProcessor,
     UpcActivityPriceScheduler,
   ],
-  exports: [TargetedPromotionReaderService],
+  exports: [TargetedPromotionReaderService, DidiStoreBindingCoordinator],
 })
 export class FileIntegrationsModule {}

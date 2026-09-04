@@ -38,21 +38,60 @@ export class DidiStoreBindingCoordinator {
   }
 
   /** Serializes and rate-limits real provider shop-list calls per Application. */
-  async withShopListRateLimit<T>(applicationId: string, operation: () => Promise<T>): Promise<T> {
+  async withShopListRateLimit<T>(
+    applicationId: string,
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
     const predecessor = this.shopListTails.get(applicationId) ?? Promise.resolve();
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const tail = predecessor.catch(() => undefined).then(() => gate);
     this.shopListTails.set(applicationId, tail);
-    await predecessor.catch(() => undefined);
+    void tail.then(() => {
+      if (this.shopListTails.get(applicationId) === tail) {
+        this.shopListTails.delete(applicationId);
+      }
+    });
     try {
+      await waitOrAbort(predecessor.catch(() => undefined), signal);
       const elapsed = Date.now() - (this.lastShopListStartedAt.get(applicationId) ?? 0);
-      if (elapsed < this.shopListCooldownMs) await sleep(this.shopListCooldownMs - elapsed);
+      if (elapsed < this.shopListCooldownMs) {
+        await sleepOrAbort(this.shopListCooldownMs - elapsed, signal);
+      }
+      if (signal?.aborted) throw signal.reason;
       this.lastShopListStartedAt.set(applicationId, Date.now());
       return await operation();
     } finally {
       release();
-      if (this.shopListTails.get(applicationId) === tail) this.shopListTails.delete(applicationId);
     }
   }
+}
+
+function waitOrAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
+
+async function sleepOrAbort(ms: number, signal?: AbortSignal) {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) throw signal.reason;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    const abort = () => {
+      clearTimeout(timeout);
+      cleanup();
+      reject(signal.reason);
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
 }

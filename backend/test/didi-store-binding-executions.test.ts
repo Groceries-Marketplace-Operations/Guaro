@@ -86,6 +86,39 @@ test('coordinator serializes operations for one Application and permits another 
   await first;
 });
 
+test('an aborted shop-list waiter releases its queue slot for the next request', async () => {
+  const coordinator = new DidiStoreBindingCoordinator({
+    get: () => '1',
+  } as never);
+  let releaseFirst!: () => void;
+  const first = coordinator.withShopListRateLimit(
+    APPLICATION_ID,
+    () => new Promise<void>(resolve => { releaseFirst = resolve; }),
+  );
+  await new Promise(resolve => setImmediate(resolve));
+
+  const controller = new AbortController();
+  const second = coordinator.withShopListRateLimit(
+    APPLICATION_ID,
+    async () => assert.fail('aborted waiter must not call the provider'),
+    controller.signal,
+  );
+  controller.abort(new Error('test abort'));
+  await assert.rejects(second, /test abort/);
+
+  let thirdRan = false;
+  const third = coordinator.withShopListRateLimit(APPLICATION_ID, async () => {
+    thirdRan = true;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(thirdRan, false, 'third request must remain behind the active first request');
+
+  releaseFirst();
+  await first;
+  await third;
+  assert.equal(thirdRan, true);
+});
+
 function publicExecution(overrides: Record<string, unknown> = {}) {
   return {
     id: '55555555-5555-4555-8555-555555555555',

@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Injectable,
   NotFoundException,
+  Optional,
   PayloadTooLargeException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -12,8 +13,10 @@ import { DidiOrderWebhookRequestStage, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { DidiStoreBindingCoordinator } from '../file-integrations/didi-store-binding-coordinator.service';
 import {
   DIDI_BASE,
+  fetchShopIdMap,
   fetchWithEndpointContext,
   getAuthToken,
   parseJsonKeepingIds,
@@ -22,12 +25,16 @@ import {
 export const DIDI_ORDER_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 export const DIDI_ORDER_WEBHOOK_STALE_PROCESSING_MS = 2 * 60 * 1000;
 const DIDI_ORDER_CONFIRM_TIMEOUT_MS = 30_000;
+const DIDI_ORDER_SHOP_RESOLUTION_TIMEOUT_MS = 55_000;
+const DIDI_ORDER_SHOP_RESOLUTION_MAX_PAGES = 3;
+const DIDI_ORDER_SHOP_RESOLUTION_RATE_LIMIT_RETRIES = 1;
 const WEBHOOK_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const INTEGER_ID_PATTERN = /^\d{1,20}$/;
 
 interface DidiOrderWebhookPayload {
   appId: string;
-  appShopId: string;
+  appShopId?: string;
+  shopId?: string;
   orderId: string;
   type: 'orderNew';
   sourceTimestamp: string;
@@ -84,7 +91,7 @@ export function parseDidiOrderWebhookPayload(rawBody: Buffer): DidiOrderWebhookP
   if (type !== 'orderNew') throw new BadRequestException('type must be orderNew');
 
   const appId = requiredIntegerId(root.app_id, 'app_id');
-  const appShopId = requiredAppShopId(root.app_shop_id, 'app_shop_id');
+  const rootAppShopId = optionalAppShopId(root.app_shop_id, 'app_shop_id');
   const sourceTimestamp = requiredTimestamp(root.timestamp);
   const data = asRecord(root.data, 'data');
   const orderId = requiredIntegerId(data.order_id, 'data.order_id');
@@ -94,28 +101,45 @@ export function parseDidiOrderWebhookPayload(rawBody: Buffer): DidiOrderWebhookP
     throw new BadRequestException('data.order_id does not match data.order_info.order_id');
   }
   const nestedShop = asRecord(orderInfo.shop, 'data.order_info.shop');
-  const nestedAppShopId = requiredAppShopId(
+  const nestedAppShopId = optionalAppShopId(
     nestedShop.app_shop_id,
     'data.order_info.shop.app_shop_id',
   );
-  if (nestedAppShopId !== appShopId) {
+  if (rootAppShopId && nestedAppShopId && nestedAppShopId !== rootAppShopId) {
     throw new BadRequestException(
       'app_shop_id does not match data.order_info.shop.app_shop_id',
     );
   }
+  const appShopId = rootAppShopId ?? nestedAppShopId;
+  const shopId = optionalIntegerId(nestedShop.shop_id, 'data.order_info.shop.shop_id');
+  if (!appShopId && !shopId) {
+    throw new BadRequestException(
+      'app_shop_id or data.order_info.shop.shop_id is required',
+    );
+  }
 
-  return { appId, appShopId, orderId, type, sourceTimestamp };
+  return {
+    appId,
+    ...(appShopId ? { appShopId } : {}),
+    ...(shopId ? { shopId } : {}),
+    orderId,
+    type,
+    sourceTimestamp,
+  };
 }
 
 @Injectable()
 export class DidiOrderWebhooksService {
   private readonly encryptionKey: string;
+  private readonly shopListCoordinator: DidiStoreBindingCoordinator;
 
   constructor(
     private readonly prisma: PrismaService,
     config: ConfigService,
+    @Optional() shopListCoordinator?: DidiStoreBindingCoordinator,
   ) {
     this.encryptionKey = config.getOrThrow('APP_SECRET_ENCRYPTION_KEY');
+    this.shopListCoordinator = shopListCoordinator ?? new DidiStoreBindingCoordinator();
   }
 
   async receive(token: string, rawBody: Buffer | undefined) {
@@ -155,32 +179,92 @@ export class DidiOrderWebhooksService {
         where: { id: requestLog.id },
         data: {
           stage,
-          appShopId: payload.appShopId,
+          appShopId: payload.appShopId ?? null,
           orderId: payload.orderId,
           type: payload.type,
         },
       });
-      const shops = await this.prisma.shop.findMany({
-        where: {
-          appShopId: payload.appShopId,
-          deletedAt: null,
-          brand: { applicationId: application.id, deletedAt: null },
-        },
-        select: { id: true },
-        take: 2,
-      });
-      if (shops.length !== 1) {
+      let appSecret: string | null = null;
+      const applicationSecret = () => {
+        if (appSecret) return appSecret;
+        try {
+          appSecret = decrypt(application.appSecret, this.encryptionKey);
+        } catch {
+          throw new Error('Application credential could not be decrypted');
+        }
+        auditSecrets.push(appSecret);
+        return appSecret;
+      };
+      let appShopId = payload.appShopId;
+      let shops = appShopId
+        ? await this.prisma.shop.findMany({
+          where: {
+            appShopId,
+            ...(payload.shopId ? { shopId: payload.shopId } : {}),
+            deletedAt: null,
+            brand: { applicationId: application.id, deletedAt: null },
+          },
+          select: { id: true },
+          take: 2,
+        })
+        : [];
+      if (shops.length !== 1 && payload.shopId) {
+        try {
+          const remoteAppShopId = await this.resolveRemoteAppShopId(
+            application.id,
+            application.appId,
+            applicationSecret(),
+            payload.shopId,
+          );
+          if (!remoteAppShopId) {
+            throw new BadRequestException(
+              'data.order_info.shop.shop_id was not found in the webhook application shop list',
+            );
+          }
+          if (payload.appShopId && payload.appShopId !== remoteAppShopId) {
+            throw new BadRequestException(
+              'Payload app_shop_id does not match the application shop-list mapping for shop_id',
+            );
+          }
+          appShopId = requiredAppShopId(
+            remoteAppShopId,
+            'Resolved app_shop_id',
+          );
+        } catch (error) {
+          if (error instanceof HttpException) throw error;
+          failureDetail = safeError(error, auditSecrets);
+          throw new BadGatewayException('DiDi shop resolution failed');
+        }
+        await this.prisma.didiOrderWebhookRequest.update({
+          where: { id: requestLog.id },
+          data: { appShopId },
+        });
+        shops = await this.prisma.shop.findMany({
+          where: {
+            shopId: payload.shopId,
+            deletedAt: null,
+            brand: { applicationId: application.id, deletedAt: null },
+          },
+          select: { id: true },
+          take: 2,
+        });
+      }
+      if (!appShopId || shops.length !== 1) {
         throw new BadRequestException(
-          'app_shop_id must resolve to exactly one active shop for the webhook application',
+          'Webhook shop must resolve to exactly one active shop for the webhook application',
         );
       }
+      const resolvedPayload: DidiOrderWebhookPayload & { appShopId: string } = {
+        ...payload,
+        appShopId,
+      };
 
       stage = 'idempotency';
       await this.prisma.didiOrderWebhookRequest.update({
         where: { id: requestLog.id },
         data: { stage },
       });
-      const event = await this.claimEvent(application.id, shops[0].id, payload);
+      const event = await this.claimEvent(application.id, shops[0].id, resolvedPayload);
       eventId = event.id;
       await this.prisma.didiOrderWebhookRequest.update({
         where: { id: requestLog.id },
@@ -209,20 +293,13 @@ export class DidiOrderWebhooksService {
           where: { id: requestLog.id },
           data: { stage },
         });
-        let appSecret: string;
-        try {
-          appSecret = decrypt(application.appSecret, this.encryptionKey);
-        } catch {
-          throw new Error('Application credential could not be decrypted');
-        }
-        auditSecrets.push(appSecret);
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), DIDI_ORDER_CONFIRM_TIMEOUT_MS);
         try {
           const authToken = await getAuthToken(
             application.appId,
-            appSecret,
-            payload.appShopId,
+            applicationSecret(),
+            appShopId,
             controller.signal,
           );
           auditSecrets.push(authToken);
@@ -278,7 +355,7 @@ export class DidiOrderWebhooksService {
         accepted: true,
         deduplicated: false,
         orderId: payload.orderId,
-        appShopId: payload.appShopId,
+        appShopId,
         status: 'accepted' as const,
       };
     } catch (error) {
@@ -313,10 +390,29 @@ export class DidiOrderWebhooksService {
     });
   }
 
+  private async resolveRemoteAppShopId(
+    applicationId: string,
+    appId: string,
+    appSecret: string,
+    shopId: string,
+  ) {
+    const signal = AbortSignal.timeout(DIDI_ORDER_SHOP_RESOLUTION_TIMEOUT_MS);
+    const remoteShops = await this.shopListCoordinator.withShopListRateLimit(
+      applicationId,
+      () => fetchShopIdMap(appId, appSecret, [shopId], {
+        signal,
+        maxPages: DIDI_ORDER_SHOP_RESOLUTION_MAX_PAGES,
+        maxRateLimitRetries: DIDI_ORDER_SHOP_RESOLUTION_RATE_LIMIT_RETRIES,
+      }),
+      signal,
+    );
+    return remoteShops.get(shopId);
+  }
+
   private async claimEvent(
     applicationId: string,
     shopId: string,
-    payload: DidiOrderWebhookPayload,
+    payload: DidiOrderWebhookPayload & { appShopId: string },
   ): Promise<ClaimedEvent> {
     try {
       const created = await this.prisma.didiOrderWebhookEvent.create({
@@ -464,6 +560,16 @@ function requiredAppShopId(value: unknown, label: string) {
     throw new BadRequestException(`${label} is invalid`);
   }
   return normalized;
+}
+
+function optionalAppShopId(value: unknown, label: string) {
+  if (value === null || value === undefined || value === '') return undefined;
+  return requiredAppShopId(value, label);
+}
+
+function optionalIntegerId(value: unknown, label: string) {
+  if (value === null || value === undefined || value === '') return undefined;
+  return requiredIntegerId(value, label);
 }
 
 function requiredTimestamp(value: unknown) {

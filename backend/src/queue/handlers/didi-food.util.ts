@@ -181,13 +181,23 @@ export async function fetchShopIdMap(
   appId: string,
   appSecret: string,
   targetShopIds?: readonly string[],
+  options: {
+    signal?: AbortSignal;
+    maxPages?: number;
+    maxRateLimitRetries?: number;
+  } = {},
 ): Promise<Map<string, string>> {
   const pageSize = 100;
   const allShops: { shopId: string; appShopId: string }[] = [];
   const unresolved = targetShopIds ? new Set(targetShopIds) : null;
   let pageNo = 1;
+  let rateLimitRetries = 0;
 
   while (true) {
+    if (pageNo > (options.maxPages ?? Number.POSITIVE_INFINITY)) {
+      throw new Error('POST /v1/shop/shop/list exceeded the bounded page limit');
+    }
+    if (options.signal?.aborted) throw options.signal.reason;
     const timestamp = String(Math.floor(Date.now() / 1000));
     const params: Record<string, string | number> = { app_id: appId, page_no: pageNo, page_size: pageSize, timestamp };
     params.sign = generateSignature(params, appSecret);
@@ -197,15 +207,22 @@ export async function fetchShopIdMap(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
+      signal: options.signal,
     });
 
     const body = parseJsonKeepingIds(await res.text());
     if (body.errno === 10005) {
-      // Rate limit: 1 call per 20 s window — wait and retry this page once
-      await sleep(COOLDOWN_SHOPLIST_MS);
+      if (rateLimitRetries >= (options.maxRateLimitRetries ?? Number.POSITIVE_INFINITY)) {
+        throw new Error(
+          `${endpoint} remained rate limited after ${rateLimitRetries + 1} attempt(s)`,
+        );
+      }
+      rateLimitRetries += 1;
+      await sleepWithAbort(COOLDOWN_SHOPLIST_MS, options.signal);
       continue;
     }
-    if (body.errno !== 0) {
+    rateLimitRetries = 0;
+    if (!res.ok || body.errno !== 0) {
       throw new Error(
         `${endpoint} failed on page ${pageNo}: ${body.errmsg ?? `HTTP ${res.status}`} (errno=${body.errno ?? 'unknown'})`,
       );
@@ -221,11 +238,38 @@ export async function fetchShopIdMap(
     const total: number = body.data?.total ?? 0;
     if (unresolved?.size === 0 || allShops.length >= total || shops.length < pageSize) break;
 
+    if (pageNo >= (options.maxPages ?? Number.POSITIVE_INFINITY)) {
+      throw new Error('POST /v1/shop/shop/list exceeded the bounded page limit');
+    }
     pageNo++;
-    await sleep(COOLDOWN_SHOPLIST_MS);
+    await sleepWithAbort(COOLDOWN_SHOPLIST_MS, options.signal);
   }
 
   const map = new Map<string, string>();
-  for (const s of allShops) map.set(s.shopId, s.appShopId);
+  for (const s of allShops) {
+    const existing = map.get(s.shopId);
+    if (existing !== undefined && existing !== s.appShopId) {
+      throw new Error(
+        'POST /v1/shop/shop/list returned conflicting app_shop_id values for one shop_id',
+      );
+    }
+    map.set(s.shopId, s.appShopId);
+  }
   return map;
+}
+
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, ms);
+    const abort = () => {
+      clearTimeout(timeout);
+      reject(signal.reason);
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
 }
