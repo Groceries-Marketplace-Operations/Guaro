@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import { useQueryClient } from '@tanstack/react-query';
 import type { Account } from '../types';
 import { authApi } from '../api';
+import { isLocalProductionMode, stopLocalProductionSession } from './local-production';
 
 interface AuthCtx {
   account: Account | null;
@@ -20,6 +21,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
 
   useEffect(() => {
+    if (isLocalProductionMode) {
+      authApi.me()
+        .then((r) => {
+          setToken(null);
+          setAccount(r.data);
+        })
+        .catch(() => {
+          setToken(null);
+          setAccount(null);
+          void stopLocalProductionSession().catch(() => {
+            // The server-side TTL remains the final fail-safe.
+          });
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
+
     const stored = localStorage.getItem('token');
     if (!stored) { setLoading(false); return; }
     authApi.me()
@@ -34,6 +52,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback((t: string, a: Account) => {
+    if (isLocalProductionMode) {
+      // Local-production authentication is owned by the loopback proxy. Never
+      // accept or persist a browser-provided JWT in this mode.
+      setToken(null);
+      setAccount(a);
+      return;
+    }
     qc.clear(); // clear all cached data from previous user
     localStorage.setItem('token', t);
     localStorage.setItem('account', JSON.stringify(a));
@@ -42,6 +67,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     qc.clear(); // clear all cached data on logout
+    if (isLocalProductionMode) {
+      setToken(null);
+      setAccount(null);
+      void stopLocalProductionSession().catch(() => {
+        // Closing the terminal still triggers the launcher's finally/revoke path.
+      });
+      return;
+    }
     localStorage.removeItem('token');
     localStorage.removeItem('account');
     setToken(null); setAccount(null);

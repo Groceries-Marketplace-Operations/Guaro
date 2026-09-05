@@ -1,6 +1,7 @@
 import {
   ArgumentsHost, Body, Catch, Controller, ExceptionFilter,
-  ForbiddenException, Get, HttpException, Post, Req, Res, UseFilters, UseGuards,
+  ForbiddenException, Get, Header, HttpException, Post, Req, Res,
+  UnauthorizedException, UseFilters, UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Response } from 'express';
@@ -42,14 +43,26 @@ export class AuthController {
   }
 
   @Get('me')
+  @Header('Cache-Control', 'no-store')
   @UseGuards(JwtAuthGuard)
   async me(@CurrentUser() user: JwtUser) {
     const account = await this.authService.findAccountById(user.id);
-    if (!account) return user;
+    if (!account) throw new UnauthorizedException('Account is no longer active');
+    const permissions = await this.permissionAccess.permissionsForUser(account);
+    const response = {
+      id: account.id,
+      name: account.name,
+      email: account.email,
+      roles: account.roles,
+      sectionId: account.sectionId,
+      adminModules: account.adminModules,
+      bpoPermissions: account.bpoPermissions,
+      permissions,
+    };
+    if (user.authMethod === 'local_cli') return response;
     // Re-issue JWT so role/permission changes take effect without requiring logout
     const token = this.authService.issueToken(account);
-    const permissions = await this.permissionAccess.permissionsForUser(account);
-    return { id: account.id, name: account.name, email: account.email, roles: account.roles, sectionId: account.sectionId, adminModules: account.adminModules, bpoPermissions: account.bpoPermissions, permissions, token };
+    return { ...response, token };
   }
 
   // Only available in development — issues JWT by email without going through Google

@@ -11,6 +11,7 @@
     "start": "node dist/main",
     "start:dev": "node --use-system-ca ./node_modules/@nestjs/cli/bin/nest.js start --watch",
     "start:debug": "node --use-system-ca ./node_modules/@nestjs/cli/bin/nest.js start --debug --watch",
+    "auth:local-prod": "node dist/auth/local-production-access.cli.js",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "prisma:migrate": "prisma migrate dev --schema=../prisma/schema.prisma",
     "prisma:generate": "prisma generate --schema=../prisma/schema.prisma",

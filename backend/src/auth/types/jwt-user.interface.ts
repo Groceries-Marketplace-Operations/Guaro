@@ -7,4 +7,7 @@ export interface JwtUser {
   sectionId: string | null;
   adminModules: string[];
   bpoPermissions: string[];
+  authMethod?: 'local_cli';
+  jti?: string;
+  exp?: number;
 }

@@ -4,6 +4,10 @@ import { useAuth } from '../auth/AuthContext';
 import { authApi } from '../api';
 import { useT } from '../i18n';
 import ThemeSelector from '../components/ui/ThemeSelector';
+import {
+  isLocalProductionMode,
+  localProductionSessionExpiresAt,
+} from '../auth/local-production';
 
 type DevAccount = {
   id: string;
@@ -138,7 +142,9 @@ export default function Login() {
   const t = useT();
   const [devEmail, setDevEmail] = useState('');
   const [devAccounts, setDevAccounts] = useState<DevAccount[]>([]);
-  const [devAccountsLoading, setDevAccountsLoading] = useState(import.meta.env.DEV);
+  const [devAccountsLoading, setDevAccountsLoading] = useState(
+    import.meta.env.DEV && !isLocalProductionMode,
+  );
   const [devError, setDevError] = useState('');
   const [devLoading, setDevLoading] = useState(false);
 
@@ -147,7 +153,7 @@ export default function Login() {
   }, [account, loading, nav]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!import.meta.env.DEV || isLocalProductionMode) return;
     authApi.devAccounts()
       .then(response => {
         const accounts = response.data as DevAccount[];
@@ -163,10 +169,12 @@ export default function Login() {
   }, []);
 
   const googleLogin = () => {
+    if (isLocalProductionMode) return;
     window.location.href = `${import.meta.env.VITE_API_URL ?? 'http://localhost:3000'}/auth/google`;
   };
 
   const localLogin = async () => {
+    if (isLocalProductionMode) return;
     setDevLoading(true);
     setDevError('');
     try {
@@ -191,6 +199,9 @@ export default function Login() {
     (groups[key] ??= []).push(item);
     return groups;
   }, {});
+  const localProductionExpiration = localProductionSessionExpiresAt
+    ? new Date(localProductionSessionExpiresAt).toLocaleString()
+    : '';
 
   return (
     <div className="login-page">
@@ -209,12 +220,27 @@ export default function Login() {
         <h1>{t('pages.login.title')}</h1>
         <p className="sub">{t('pages.login.subtitle')}</p>
 
-        <button className="btn-google" onClick={googleLogin}>
-          <GoogleIcon />
-          {t('pages.login.continueWithGoogle')}
-        </button>
+        {isLocalProductionMode ? (
+          <section className="local-production-login" role="status" aria-live="polite">
+            <span>PRODUCCIÓN</span>
+            <strong>{loading ? 'Validando sesión temporal…' : 'La sesión temporal no está disponible'}</strong>
+            <p>
+              {loading
+                ? 'El JWT permanece dentro del proxy local; el navegador no lo recibe ni lo almacena.'
+                : 'Cierra esta terminal y ejecuta de nuevo el launcher para solicitar una sesión por SSH.'}
+            </p>
+            {localProductionExpiration && (
+              <small>Expiración máxima: {localProductionExpiration}</small>
+            )}
+          </section>
+        ) : (
+          <button className="btn-google" onClick={googleLogin}>
+            <GoogleIcon />
+            {t('pages.login.continueWithGoogle')}
+          </button>
+        )}
 
-        {import.meta.env.DEV && (
+        {import.meta.env.DEV && !isLocalProductionMode && (
           <div style={{ marginTop: 24, display: 'grid', gap: 10 }}>
             <label htmlFor="dev-account" style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>
               Usuario local
@@ -252,11 +278,13 @@ export default function Login() {
           </div>
         )}
 
-        <p style={{ marginTop: 32, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          {t('pages.login.domainNote').replace('@didi-labs.com', '')}
-          <strong>@didi-labs.com</strong>
-          {' accounts.'}
-        </p>
+        {!isLocalProductionMode && (
+          <p style={{ marginTop: 32, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            {t('pages.login.domainNote').replace('@didi-labs.com', '')}
+            <strong>@didi-labs.com</strong>
+            {' accounts.'}
+          </p>
+        )}
       </div>
 
       <div className="login-aside">

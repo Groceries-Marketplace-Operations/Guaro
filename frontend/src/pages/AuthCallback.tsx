@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { authApi } from '../api';
+import { isLocalProductionMode } from '../auth/local-production';
 
 export default function AuthCallback() {
   const [params] = useSearchParams();
@@ -12,6 +13,11 @@ export default function AuthCallback() {
   useEffect(() => {
     if (ran.current) return;
     ran.current = true;
+
+    if (isLocalProductionMode) {
+      nav('/login', { replace: true });
+      return;
+    }
 
     const token = params.get('token');
     if (!token) { nav('/login', { replace: true }); return; }

@@ -37,6 +37,11 @@ enum DidiStoreBindingAction {
   unbind
 }
 
+enum LocalProductionAccessAuditAction {
+  grant
+  revoke
+}
+
 enum DidiStoreBindingItemStatus {
   pending
   processing
@@ -414,6 +419,8 @@ model Account {
   accessPermissionOverrides                  AccountPermissionOverride[]
   accessSectionScopes                        AccountSectionScope[]
   accessControlAudits                        AccessControlAudit[]                 @relation("AccessControlAuditActor")
+  localProductionAccessSessions              LocalProductionAccessSession[]       @relation("LocalProductionAccessSessionTarget")
+  localProductionAccessAudits                LocalProductionAccessAudit[]         @relation("LocalProductionAccessAuditTarget")
   storeOnboardingControls                    StoreOnboardingControl[]             @relation("StoreOnboardingControlUpdater")
   storeOnboardingControlRevisions            StoreOnboardingControlRevision[]     @relation("StoreOnboardingControlRevisionActor")
   storeOnboardingRolloutDrafts               StoreOnboardingRolloutRevision[]     @relation("StoreOnboardingRolloutCreator")
@@ -609,6 +616,44 @@ model AccessControlAudit {
   @@index([createdAt])
   @@index([scopeType, scopeKey])
   @@map("access_control_audit")
+}
+
+model LocalProductionAccessSession {
+  id              String    @id @db.VarChar(64)
+  targetAccountId String    @map("target_account_id") @db.Uuid
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  targetAccount Account                      @relation("LocalProductionAccessSessionTarget", fields: [targetAccountId], references: [id], onDelete: Restrict)
+  audits        LocalProductionAccessAudit[] @relation("LocalProductionAccessAuditSessionTarget")
+
+  @@unique([id, targetAccountId])
+  @@index([targetAccountId, revokedAt, expiresAt])
+  @@index([expiresAt])
+  @@map("local_production_access_session")
+}
+
+model LocalProductionAccessAudit {
+  id              String                           @id @default(uuid()) @db.Uuid
+  targetAccountId String                           @map("target_account_id") @db.Uuid
+  targetEmail     String                           @map("target_email") @db.VarChar(320)
+  sessionId       String                           @map("session_id") @db.VarChar(64)
+  action          LocalProductionAccessAuditAction
+  sshPrincipal    String                           @map("ssh_principal") @db.VarChar(200)
+  operatorLabel   String                           @map("operator_label") @db.VarChar(200)
+  reason          String                           @db.VarChar(500)
+  detail          Json
+  createdAt       DateTime                         @default(now()) @map("created_at") @db.Timestamptz
+
+  targetAccount Account                      @relation("LocalProductionAccessAuditTarget", fields: [targetAccountId], references: [id], onDelete: Restrict)
+  session       LocalProductionAccessSession @relation("LocalProductionAccessAuditSessionTarget", fields: [sessionId, targetAccountId], references: [id, targetAccountId], onDelete: Restrict)
+
+  @@unique([sessionId, action])
+  @@index([sessionId, createdAt])
+  @@index([targetAccountId, createdAt])
+  @@index([createdAt])
+  @@map("local_production_access_audit")
 }
 
 model Handler {

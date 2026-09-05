@@ -5,6 +5,8 @@ import Sidebar from './Sidebar';
 import NaranjaMascot from '../mascot/NaranjaMascot';
 import { SidebarContext } from './SidebarContext';
 import { useT } from '../../i18n';
+import { isLocalProductionMode } from '../../auth/local-production';
+import LocalProductionBanner from './LocalProductionBanner';
 
 const MOBILE_QUERY = '(max-width: 760px)';
 
@@ -146,7 +148,7 @@ export default function AppLayout() {
 
   return (
     <SidebarContext.Provider value={sidebarContext}>
-      <div className={`app-shell${desktopCollapsed ? ' is-sidebar-collapsed' : ''}${mobileOpen ? ' is-sidebar-mobile-open' : ''}`}>
+      <div className={`app-shell${desktopCollapsed ? ' is-sidebar-collapsed' : ''}${mobileOpen ? ' is-sidebar-mobile-open' : ''}${isLocalProductionMode ? ' is-local-production' : ''}`}>
         <Sidebar />
         {isMobile && mobileOpen && (
           <button
@@ -158,6 +160,7 @@ export default function AppLayout() {
         )}
         <Outlet />
         <NaranjaMascot />
+        <LocalProductionBanner email={account?.email} />
       </div>
     </SidebarContext.Provider>
   );
