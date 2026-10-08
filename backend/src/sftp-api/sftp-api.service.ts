@@ -5,7 +5,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SftpApiDto } from './sftp-api.dto';
 import { resolveSftpApiApplications } from './sftp-api.credentials';
-import { columnIndex, MAPPING_FIELDS, Mode, nextSchedule, Schedule } from './sftp-api.util';
+import { columnIndex, MAPPING_FIELDS, Mode, nextSchedule, regexMatches, Schedule } from './sftp-api.util';
 
 export const RULE_SELECT = {
   id: true, brandId: true, brand: { select: { brandName: true, brandId: true } },
@@ -86,8 +86,9 @@ export class SftpApiService {
 
   private validate(dto: SftpApiDto) {
     try {
-      new RegExp(dto.fileRegex);
-      new RegExp(dto.shopRegex);
+      // Compile through the same bounded path used to match SFTP filenames.
+      regexMatches(dto.fileRegex, []);
+      regexMatches(dto.shopRegex, []);
       if (['"', '\r', '\n', '\0'].includes(dto.delimiter)) throw new Error('Separador inválido');
       if (new Set(dto.schedules.map(s => s.time)).size !== dto.schedules.length) throw new Error('No repitas horarios de lectura');
       for (const [field, column] of Object.entries(dto.mapping)) {

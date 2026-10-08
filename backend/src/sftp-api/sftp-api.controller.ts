@@ -1,6 +1,6 @@
 ﻿import { Body, Controller, DefaultValuePipe, Get, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { Permissions } from '../access-control/permissions.decorator';
-import { Delete } from '@nestjs/common';
+import { BadRequestException, Delete } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -13,7 +13,10 @@ import { SftpApiService } from './sftp-api.service';
 @Permissions('integrations.sftp_api')
 export class SftpApiController {
   constructor(private readonly service: SftpApiService) {}
-  @Get('brands/options') brands(@Query('q') q?: string) { return this.service.brandOptions((q ?? '').slice(0, 100)); }
+  @Get('brands/options') brands(@Query('q') q?: unknown) {
+    if (q !== undefined && typeof q !== 'string') throw new BadRequestException('q debe ser un texto');
+    return this.service.brandOptions(typeof q === 'string' ? q.slice(0, 100) : '');
+  }
   @Get('applications/options') @Permissions('integrations.sftp_api.configure')
   applications(@Query('brandId', ParseUUIDPipe) brandId: string) { return this.service.applicationOptions(brandId); }
   @Get() list() { return this.service.list(); }

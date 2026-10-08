@@ -26,8 +26,10 @@ export function nextSchedule(schedules: Schedule[], after = new Date()) {
 }
 
 export function regexMatches(pattern: string, names: string[]): (string[] | null)[] {
-  // User-defined expressions run with a time budget, including catastrophic backtracking.
-  return runInNewContext('names.map(name => { const m = name.match(new RegExp(pattern)); return m ? Array.from(m) : null; })',
+  // Patterns are intentionally configurable, not literal search strings. Keep both
+  // compilation and matching within the time budget; never interpolate into code.
+  if (typeof pattern !== 'string' || pattern.length > 500) throw new Error('El regex debe ser un texto de hasta 500 caracteres');
+  return runInNewContext('const regex = new RegExp(pattern); names.map(name => { const m = name.match(regex); return m ? Array.from(m) : null; })',
     { names, pattern }, { timeout: 1000 }) as (string[] | null)[];
 }
 

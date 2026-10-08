@@ -75,3 +75,9 @@ npm run build
 ```
 
 Las pruebas de procesamiento simulan SFTP y la API: no modifican tiendas reales. Cubren Full, Delta, mapeo, dinero, CSV, horarios MX, auditoría cifrada, aislamiento de fallos por tienda, límites de antigüedad, interrupciones, deduplicación por nombre y reprocesamiento después de borrar registros.
+
+## Revisión de CodeQL
+
+El buscador valida que `q` sea un texto antes de truncarlo: parámetros repetidos o estructurados reciben HTTP 400. Los regex son configurables de forma intencional; se limitan a 500 caracteres y tanto su compilación como sus coincidencias pasan por el mismo límite de ejecución de un segundo, sin interpolar patrones en código. Escapar los metacaracteres impediría configurar filtros y grupos de captura.
+
+La alerta de MD5 en `didi-header-sign` se conserva visible para revisión: corresponde al esquema de firma que utiliza la integración DiDi Grocery, sobre HTTPS. Sustituirlo por SHA-256 sin soporte del proveedor cambiaría la firma enviada. No se ha desactivado la regla de CodeQL ni descartado la alerta; cualquier excepción de compatibilidad requiere revisión. El cifrado de auditorías usa AES-256-GCM y los hashes de archivos usan SHA-256.

@@ -70,6 +70,16 @@ test('regex preserves capture groups and terminates pathological patterns', () =
   assert.equal(regexMatches('(\\d{4})\\.csv$', ['test_0043.csv'])[0]![1], '0043');
   assert.throws(() => regexMatches('(a+)+$', ['a'.repeat(100) + '!']), /timed out/);
 });
+
+test('regex compilation validates empty batches and enforces the configuration length limit', () => {
+  assert.throws(() => regexMatches('[', []), /regular expression/i);
+  assert.throws(() => regexMatches('a'.repeat(501), []), /500/);
+  assert.throws(() => regexMatches(['a'] as any, []), /texto/);
+  assert.equal(regexMatches('a'.repeat(500), []).length, 0);
+  // Regex metacharacters remain functional; these are patterns, not literal text.
+  assert.equal(regexMatches('^(?:store|shop)_(\\d+)\\.csv$', ['store_0043.csv', 'other.csv'])[0]![1], '0043');
+  assert.equal(regexMatches('^(?:store|shop)_(\\d+)\\.csv$', ['other.csv'])[0], null);
+});
 test('nested API responses redact credentials', () => {
   assert.deepEqual(redact({ data: { auth_token: 'secret', list: [{ app_secret: 'secret', stock: 3 }] } }), { data: { auth_token: '<redacted>', list: [{ app_secret: '<redacted>', stock: 3 }] } });
 });

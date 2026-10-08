@@ -6,6 +6,20 @@ import { validate } from 'class-validator';
 import { resolveSftpApiApplications } from '../src/sftp-api/sftp-api.credentials';
 import { SftpApiService, RULE_SELECT } from '../src/sftp-api/sftp-api.service';
 import { SftpApiDto } from '../src/sftp-api/sftp-api.dto';
+import { SftpApiController } from '../src/sftp-api/sftp-api.controller';
+
+test('brand search rejects repeated or structured query values before calling the service', () => {
+  const searches: string[] = [];
+  const controller = new SftpApiController({ brandOptions: (q: string) => { searches.push(q); return []; } } as any);
+  for (const value of [['a', 'b'], { name: 'a' }, null, 42]) {
+    assert.throws(() => controller.brands(value), { status: 400 });
+  }
+  assert.equal(searches.length, 0);
+  controller.brands();
+  controller.brands('store');
+  controller.brands('a'.repeat(101));
+  assert.deepEqual(searches, ['', 'store', 'a'.repeat(100)]);
+});
 
 const dto = {
   brandId: '10000000-0000-4000-8000-000000000001',
@@ -33,6 +47,16 @@ function harness() {
   const service = new SftpApiService(prisma, { getJob: async () => null, add: async () => {} } as any);
   return { service, prisma, saved, application, sftpApplication };
 }
+
+test('save rejects invalid regex syntax and oversized patterns before writing', async () => {
+  const h = harness();
+  for (const field of ['fileRegex', 'shopRegex']) {
+    for (const pattern of ['[', 'a'.repeat(501)]) {
+      await assert.rejects(h.service.save({ ...dto, [field]: pattern }, 'actor'), { status: 400 });
+    }
+  }
+  assert.equal(h.saved.length, 0);
+});
 
 test('save stores required catalog relations and never duplicates credentials', async () => {
   const h = harness();

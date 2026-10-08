@@ -155,6 +155,10 @@ export class SftpApiProcessor extends WorkerHost {
             let result: Record<string, any>;
             try {
               await this.ensureRunning(id);
+              // Compatibility with the existing DiDi Grocery signing protocol:
+              // MD5 of the exact JSON body + app secret, sent only over HTTPS.
+              // Not used for storage encryption (AES-GCM) or file hashes (SHA-256).
+              // Changing this requires a provider-supported signing protocol.
               response = await fetch(DIDI_BASE + endpoint, { method: 'POST', signal: AbortSignal.timeout(60_000),
                 headers: { 'content-type': 'application/json; charset=utf-8', 'didi-header-sign': createHash('md5').update(body + secret).digest('hex') }, body });
               result = parseJsonKeepingIds(await response.text());
