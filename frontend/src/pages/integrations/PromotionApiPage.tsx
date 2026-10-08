@@ -85,7 +85,7 @@ export default function PromotionApiPage() {
     <main className="main-content">
       <div className="page-header"><div className="page-header-info">
         <h1>Carga de promociones por API</h1>
-        <p>Construye y valida actividades Grocery antes de enviarlas a 99Food.</p>
+        <p>Construye y valida actividades Grocery antes de enviarlas a DiDi Food.</p>
       </div></div>
       <div className="alert alert-info" style={{ marginBottom: 18 }}>
         Endpoint oficial: <code>{contract?.endpoint ?? 'POST /v1/promo/promo/uploadGrocery'}</code>. El modo simulación valida todo localmente y nunca solicita un auth_token.
@@ -102,8 +102,8 @@ export default function PromotionApiPage() {
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn btn-primary" disabled={execute.isPending} onClick={() => execute.mutate('dry_run')}>Validar / simular</button>
           <button className="btn btn-ghost" disabled={execute.isPending || !contract?.liveEnabled} onClick={() => {
-            if (window.confirm('Esta acción enviará promociones reales a 99Food. ¿Continuar?')) execute.mutate('live');
-          }}>Enviar a 99Food</button>
+            if (window.confirm('Esta acción enviará promociones reales a DiDi Food. ¿Continuar?')) execute.mutate('live');
+          }}>Enviar a DiDi Food</button>
           {message && <span>{message}</span>}
         </div>
       </section>

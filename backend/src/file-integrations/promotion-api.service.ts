@@ -4,11 +4,11 @@ import { Prisma, PromotionApiMode } from '@prisma/client';
 import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { catalogMutationResourceKey, OperationalLeaseService } from '../prisma/operational-lease.service';
-import { fetchWithEndpointContext, getAuthToken, parseJsonKeepingIds } from '../queue/handlers/didi-food.util';
+import { DIDI_BASE, fetchWithEndpointContext, getAuthToken, parseJsonKeepingIds } from '../queue/handlers/didi-food.util';
 import { ExecutePromotionDto } from './dto/execute-promotion.dto';
 
 const ENDPOINT = 'POST /v1/promo/promo/uploadGrocery';
-const URL = 'https://openapi.99food.com/v1/promo/promo/uploadGrocery';
+const URL = `${DIDI_BASE}/v1/promo/promo/uploadGrocery`;
 
 interface PromoItem {
   app_item_id?: unknown;

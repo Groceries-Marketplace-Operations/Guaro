@@ -90,7 +90,7 @@ export default function Sidebar() {
   const integrationPermissions = [
     'integrations.forced_open', 'integrations.auto_stores_fetch', 'integrations.auto_menu_fetch',
     'integrations.auto_turn_off', 'integrations.emergencies', 'integrations.promotions_sftp',
-    'integrations.custom', 'integrations.promotion_api',
+    'integrations.custom', 'integrations.promotion_api', 'integrations.sftp_api',
   ];
   const configPermissions = ['config.handlers', 'config.webhooks', 'config.invitations', 'config.users'];
   const canCreate = can('tasks.create') && !isDirector;
@@ -204,6 +204,9 @@ export default function Sidebar() {
           </NavLink>}
           {can('integrations.promotions_sftp') && <NavLink to="/integrations/complex-promotions-sftp" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconLayers /> Promociones SFTP
+          </NavLink>}
+          {can('integrations.sftp_api') && <NavLink to="/integrations/sftp-api" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconApp /> SFTP to API
           </NavLink>}
           {can('integrations.custom') && <NavLink to="/integrations/custom" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconSettings /> Custom integrations

@@ -38,7 +38,7 @@ const ACCESS_AREAS = {
     visibilityPermissions: [
       'integrations.forced_open', 'integrations.auto_stores_fetch', 'integrations.auto_menu_fetch',
       'integrations.auto_turn_off', 'integrations.emergencies', 'integrations.promotions_sftp',
-      'integrations.custom', 'integrations.promotion_api',
+      'integrations.custom', 'integrations.promotion_api', 'integrations.sftp_api',
     ],
     permissions: [
       'integrations.forced_open', 'integrations.forced_open.configure', 'integrations.forced_open.execute',
@@ -49,6 +49,7 @@ const ACCESS_AREAS = {
       'integrations.promotions_sftp', 'integrations.promotions_sftp.configure', 'integrations.promotions_sftp.execute',
       'integrations.custom', 'integrations.custom.configure', 'integrations.custom.execute',
       'integrations.promotion_api', 'integrations.promotion_api.execute',
+      'integrations.sftp_api', 'integrations.sftp_api.configure', 'integrations.sftp_api.execute',
     ],
   },
 } as const;
