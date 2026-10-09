@@ -41,6 +41,7 @@ import AccessDenied from './pages/AccessDenied';
 import RoleAccessPage from './pages/admin/RoleAccessPage';
 import StoreOnboardingPage from './pages/integrations/StoreOnboardingPage';
 import { ThemeProvider } from './theme/ThemeContext';
+import SftpApiPage from './pages/integrations/SftpApiPage';
 import AppShopInventoryPage from './pages/admin/AppShopInventoryPage';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
@@ -101,6 +102,8 @@ export default function App() {
               <Route path="integrations/auto-menu-fetch" element={protectedPage('integrations.auto_menu_fetch', <AutoFetchPage kind="menu" />)} />
               <Route path="integrations/emergencies" element={protectedPage('integrations.emergencies', <StoreEmergenciesPage />)} />
               <Route path="integrations/complex-promotions-sftp" element={protectedPage('integrations.promotions_sftp', <FileIntegrationsPage kind="complex_promotion_reader" />)} />
+              <Route path="integrations/sftp-api" element={protectedPage('integrations.sftp_api', <SftpApiPage />)} />
+              <Route path="integrations/sftp-api/:id" element={protectedPage('integrations.sftp_api', <SftpApiPage />)} />
               <Route path="integrations/custom" element={protectedPage('integrations.custom', <FileIntegrationsPage kind="price_filter" />)} />
               <Route path="integrations/promotion-api" element={protectedPage('integrations.promotion_api', <PromotionApiPage />)} />
               <Route path="integrations/store-onboarding" element={<StoreOnboardingPage />} />

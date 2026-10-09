@@ -718,6 +718,7 @@ model StepWebhook {
 
 // ---------------------------- Catalog -------------------------------------
 model Application {
+  sftpApiRules SftpApiRule[]
   id                         String                  @id @default(uuid()) @db.Uuid
   appId                      String                  @unique @map("app_id")
   appName                    String                  @map("app_name")
@@ -804,6 +805,7 @@ model ApplicationShopInventoryShop {
 }
 
 model SftpApplication {
+  sftpApiRules SftpApiRule[]
   id          String    @id @default(uuid()) @db.Uuid
   name        String
   host        String
@@ -831,6 +833,7 @@ model SftpApplication {
 }
 
 model Brand {
+  sftpApiRules SftpApiRule[]
   id              String           @id @default(uuid()) @db.Uuid
   brandId         String           @unique @map("brand_id")
   brandName       String           @map("brand_name")
@@ -872,6 +875,103 @@ model Brand {
   @@index([ownerId])
   @@index([applicationId])
   @@map("brand")
+}
+
+model SftpApiRule {
+  id String @id @default(uuid()) @db.Uuid
+  brandId String @unique @map("brand_id") @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  sftpApplicationId String @map("sftp_application_id") @db.Uuid
+  fileRegex String @map("file_regex")
+  maxFileAgeMinutes Int @default(30) @map("max_file_age_minutes")
+  delimiter String @default("|")
+  hasHeader Boolean @default(false) @map("has_header")
+  shopSource String @default("filename") @map("shop_source")
+  shopRegex String @map("shop_regex")
+  mapping Json
+  schedules Json
+  active Boolean @default(false)
+  nextRunAt DateTime? @map("next_run_at") @db.Timestamptz
+  lastReadAt DateTime? @map("last_read_at") @db.Timestamptz
+  lastUploadAt DateTime? @map("last_upload_at") @db.Timestamptz
+  createdById String @map("created_by_id") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  sftpApplication SftpApplication @relation(fields: [sftpApplicationId], references: [id], onDelete: Restrict)
+  runs SftpApiRun[]
+  processedFiles SftpApiProcessedFile[]
+  @@index([applicationId])
+  @@index([sftpApplicationId])
+  @@index([active, nextRunAt])
+  @@map("sftp_api_rule")
+}
+
+model SftpApiRun {
+  id String @id @default(uuid()) @db.Uuid
+  ruleId String @map("rule_id") @db.Uuid
+  mode String
+  trigger String
+  actorId String? @map("actor_id") @db.Uuid
+  status String @default("pending")
+  snapshot Json
+  error String?
+  filesRead Int @default(0) @map("files_read")
+  filesSkipped Int @default(0) @map("files_skipped")
+  startedAt DateTime? @map("started_at") @db.Timestamptz
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  rule SftpApiRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  uploads SftpApiUpload[]
+  processedFiles SftpApiProcessedFile[]
+  @@index([ruleId, createdAt])
+  @@index([status])
+  @@map("sftp_api_run")
+}
+
+model SftpApiProcessedFile {
+  id String @id @default(uuid()) @db.Uuid
+  ruleId String @map("rule_id") @db.Uuid
+  runId String @map("run_id") @db.Uuid
+  fileName String @map("file_name")
+  modifiedAt DateTime? @map("modified_at") @db.Timestamptz
+  fileHash String? @map("file_hash")
+  status String @default("processing")
+  error String? @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  processedAt DateTime? @map("processed_at") @db.Timestamptz
+  rule SftpApiRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  run SftpApiRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  @@unique([ruleId, fileName])
+  @@index([ruleId, createdAt])
+  @@index([runId, status])
+  @@map("sftp_api_processed_file")
+}
+
+model SftpApiUpload {
+  id String @id @default(uuid()) @db.Uuid
+  runId String @map("run_id") @db.Uuid
+  shopId String @map("shop_id")
+  fileName String @map("file_name")
+  fileHash String @map("file_hash")
+  configHash String @map("config_hash")
+  endpoint String
+  itemCount Int @map("item_count")
+  payload Json
+  encryptedBody String @map("encrypted_body") @db.Text
+  response Json?
+  httpStatus Int? @map("http_status")
+  taskId String? @map("task_id")
+  status String @default("sending")
+  error String?
+  sentAt DateTime @default(now()) @map("sent_at") @db.Timestamptz
+  sentAtMx String @map("sent_at_mx")
+  durationMs Int? @map("duration_ms")
+  run SftpApiRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  @@index([runId, sentAt])
+  @@index([fileHash, configHash, shopId, status])
+  @@map("sftp_api_upload")
 }
 
 model BrandWebhook {

@@ -1,3 +1,4 @@
+import { SftpApiModule } from './sftp-api/sftp-api.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
@@ -54,6 +55,7 @@ const devModules = process.env.NODE_ENV !== 'production' ? [DevModule] : [];
     AdminModule,
     SftpApplicationsModule,
     FileIntegrationsModule,
+    SftpApiModule,
     StoreOnboardingModule,
     DidiOrderWebhooksModule,
     ApplicationShopInventoryModule,

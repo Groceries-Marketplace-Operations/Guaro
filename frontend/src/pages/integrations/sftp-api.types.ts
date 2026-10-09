@@ -1,0 +1,17 @@
+﻿import axios from 'axios';
+export type Mode = 'full' | 'delta';
+export type Schedule = { time: string; mode: Mode };
+export type ApiApplication = { id: string; appName: string; appId: string; country: string; deletedAt?: string | null };
+export type SftpApplication = { id: string; name: string; host: string; port: number; username: string; rootPath: string | null; active?: boolean; deletedAt?: string | null };
+export type ApplicationOptions = { applications: ApiApplication[]; sftpApplications: SftpApplication[] };
+export type Config = { brandId: string; applicationId: string; sftpApplicationId: string; fileRegex: string; maxFileAgeMinutes: number; delimiter: string; hasHeader: boolean; shopSource: 'filename' | 'column'; shopRegex: string; mapping: Record<string, string>; schedules: Schedule[]; active: boolean };
+export type Rule = Config & { id: string; brand: { brandName: string; brandId: string }; application: ApiApplication; sftpApplication: SftpApplication; lastReadAt: string | null; lastUploadAt: string | null; nextRunAt: string | null; runs?: Run[] };
+export type Run = { id: string; mode: Mode; status: string; trigger: string; createdAt: string; startedAt: string | null; finishedAt: string | null; filesRead: number; filesSkipped: number; error: string | null; _count: { uploads: number } };
+export type Upload = { id: string; shopId: string; fileName: string; fileHash: string; endpoint: string; itemCount: number; status: string; sentAt: string; sentAtMx: string; httpStatus: number | null; taskId: string | null; durationMs: number | null; error: string | null; payload?: unknown; response?: unknown };
+export type ProcessedFile = { id: string; fileName: string; status: string; error: string | null; modifiedAt: string | null; processedAt: string | null; createdAt: string };
+export type Page<T> = { data: T[]; total: number; page: number };
+export const BASE = '/integrations/sftp-api';
+export const labels: Record<string, string> = { processing: 'Procesando', processed: 'Procesado', superseded: 'Sustituido por archivo reciente', pending: 'En cola', running: 'En curso', accepted: 'Aceptado por API', succeeded: 'Completado', failed: 'Error', partial_failure: 'Con errores', needs_review: 'Requiere revisión', no_files: 'Sin archivos', unknown: 'Por confirmar', sending: 'Enviando' };
+export const date = (value?: string | null) => value ? new Intl.DateTimeFormat('es-MX', { timeZone: 'America/Mexico_City', dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value)) : 'Sin registro';
+export const message = (error: unknown): string => axios.isAxiosError(error) ? (Array.isArray(error.response?.data?.message) ? error.response?.data.message.join('. ') : error.response?.data?.message || error.message) : 'No se pudo completar la operación';
+export const defaults: Config = { brandId: '', applicationId: '', sftpApplicationId: '', maxFileAgeMinutes: 30, fileRegex: '\\.csv$', delimiter: '|', hasHeader: false, shopSource: 'filename', shopRegex: '(\\d{4})\\.csv$', mapping: { app_shop_id: '', app_item_id: 'A', upc: 'A', item_name: 'A', activity_price: 'E', stock: 'G', price: 'I', status: '' }, schedules: [{ time: '08:00', mode: 'full' }, { time: '12:00', mode: 'delta' }], active: false };
