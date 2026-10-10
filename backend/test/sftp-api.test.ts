@@ -10,6 +10,24 @@ const config: ParseConfig = { delimiter: '|', hasHeader: false, shopSource: 'fil
   mapping: { app_item_id: 'A', upc: 'A', item_name: 'B', activity_price: 'E', stock: 'G', price: 'I' } };
 const row = '001234567890|Leche|||18.50||7.9||20.125';
 
+test('delta accepts standard, fully quoted and mixed records without changing IDs', () => {
+  const cfg: ParseConfig = { delimiter: '|', hasHeader: true, shopSource: 'column', shopRegex: '', mapping: { app_shop_id: 'A', app_item_id: 'B', stock: 'F' } };
+  const standard = 'A19|009800125104|20600|20600|20600|12|        |';
+  const expected = parseFile('didiformato\n' + standard, 'A19.CSV', cfg, 'delta');
+  assert.deepEqual(parseFile('didiformato\r\n"' + standard + '"\r\n', 'A19.CSV', cfg, 'delta'), expected);
+  const mixed = parseFile('didiformato\n' + standard + '\n"' + standard.replace('009800125104', '009800125111') + '"', 'A19.CSV', cfg, 'delta');
+  assert.equal(mixed.get('A19')!.size, 2);
+  assert.equal(mixed.get('A19')!.get('009800125104')!.stock, 12);
+});
+
+test('standard quoted fields preserve embedded delimiters, quotes and newlines', () => {
+  const content = row.replace('Leche', '"Leche | ""entera""\n1L"');
+  const standard = parseFile(content, '0043.csv', config, 'full');
+  assert.equal(standard.get('0043')!.get('001234567890')!.item_name, 'Leche | "entera"\n1L');
+  const wrapped = '"' + content.replace(/"/g, '""') + '"';
+  assert.deepEqual(parseFile(wrapped, '0043.csv', config, 'full'), standard);
+});
+
 test('full preserves store/UPC leading zeros, rounds money exactly and floors stock', () => {
   const stores = parseFile('\ufeff' + row, 'DJ_0043.csv', config, 'full');
   const item = stores.get('0043')!.get('001234567890')!;
@@ -41,7 +59,7 @@ test('CSV supports headers, quotes, delimiters in names, and multiple stores fro
   assert.equal(parsed.get('0044')!.get('002')!.status, 2);
 });
 test('invalid files fail before building any upload', () => {
-  for (const content of ['', row + '\n' + row, row.replace('7.9', '-1'), row.replace('20.125', '0'), '"unterminated']) {
+  for (const content of ['', row.replace('7.9', '-1'), row.replace('20.125', '0'), '"unterminated']) {
     assert.throws(() => parseFile(content, '0043.csv', config, 'full'));
   }
   assert.throws(() => parseFile(row, 'unknown.csv', config, 'full'), /capturar/);
@@ -51,6 +69,43 @@ test('money rejects unsafe and negative amounts and rounds decimal ties', () => 
   assert.equal(minorUnits('19.999'), 2000);
   assert.throws(() => minorUnits('-1'));
   assert.throws(() => minorUnits('9999999999999999999'));
+});
+
+test('duplicates select the cheapest effective price and its stock in Full and Delta', () => {
+  for (const mode of ['full', 'delta'] as const) {
+    const reports: string[] = [];
+    const cheaper = row.replace('18.50', '15.00').replace('7.9', '3');
+    const result = parseFile([row, cheaper, row].join('\n'), '0043.csv', config, mode, reports);
+    const item = result.get('0043')!.get('001234567890')!;
+    assert.equal(item.stock, 3);
+    assert.equal(result.get('0043')!.size, 1);
+    assert.equal(reports.length, 2);
+    assert.match(reports[0], /fila 2/);
+    if (mode === 'delta') assert.deepEqual(Object.keys(item).sort(), ['app_item_id', 'stock']);
+    else assert.equal(item.activity_price, 1500);
+  }
+});
+
+test('first 30000 unique IDs are retained per shop, later duplicates can lower their price', () => {
+  const reports: string[] = [];
+  const rows = Array.from({ length: 30001 }, (_, i) => `A|${i}|20|8`);
+  rows.push('A|0|10|2', 'B|30000|20|9');
+  const cfg: ParseConfig = { delimiter: '|', hasHeader: false, shopSource: 'column', shopRegex: '', mapping: { app_shop_id: 'A', app_item_id: 'B', price: 'C', stock: 'D' } };
+  const result = parseFile(rows.join('\n'), 'file.csv', cfg, 'delta', reports);
+  assert.equal(result.get('A')!.size, 30000);
+  assert.equal(result.get('A')!.has('30000'), false);
+  assert.equal(result.get('A')!.get('0')!.stock, 2);
+  assert.equal(result.get('B')!.size, 1);
+  assert.ok(reports.some(r => r.includes('1 filas descartadas')));
+  assert.ok(reports.some(r => r.includes('Duplicado 0')));
+});
+
+test('delta with no comparable prices keeps first duplicate and reports it', () => {
+  const reports: string[] = [];
+  const cfg = { ...config, mapping: { app_item_id: 'A', stock: 'B' } };
+  const result = parseFile('001|8\n001|2', '0043.csv', cfg, 'delta', reports);
+  assert.equal(result.get('0043')!.get('001')!.stock, 8);
+  assert.match(reports[0], /sin precios comparables/);
 });
 test('categories cover all products in batches of at most 3000', () => {
   const items = Array.from({ length: 3001 }, (_, i) => ({ app_item_id: String(i), stock: 1 }));

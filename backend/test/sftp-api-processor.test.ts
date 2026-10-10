@@ -64,8 +64,9 @@ function harness(mode: 'full' | 'delta', options: { fail?: boolean; reject?: boo
     },
     $transaction: async (actions: any[]) => Promise.all(actions),
   };
-  const processor = new SftpApiProcessor(prisma, { getOrThrow: () => key } as any);
-  return { processor, prisma, run, rule, uploads, posts, application, sftpApplication, connections, requests, paths, files, records };
+  const limits: string[] = [];
+  const processor = new SftpApiProcessor(prisma, { getOrThrow: () => key } as any, { acquire: async (app: string, shop: string, check: () => Promise<void>) => { await check(); limits.push(app + ':' + shop); return async () => { limits.push('cooldown'); }; } } as any);
+  return { processor, prisma, run, rule, uploads, posts, application, sftpApplication, connections, requests, paths, files, records, limits };
 }
 
 for (const failure of ['rejectShop', 'authFailShop', 'uncertainShop'] as const) {
@@ -193,19 +194,33 @@ test('full sends signed menu+stock and stores exact encrypted body and redacted 
     assert.match(h.uploads[0].sentAtMx, /America\/Mexico_City/);
   } finally { mock.restoreAll(); }
 });
-test('delta submits only stock_list and chunks 101 items into 100+1', async () => {
-  const h = harness('delta', { content: Array.from({ length: 101 }, (_, i) => `${i}||||||${i}`).join('\n') });
+test('delta submits only stock_list and chunks 2001 items into 2000+1', async () => {
+  const h = harness('delta', { content: Array.from({ length: 2001 }, (_, i) => `${i}||||||${i}`).join('\n') });
   try {
     await h.processor.process({ data: { runId: 'run' } } as any);
     assert.equal(h.run.status, 'succeeded');
     assert.equal(h.posts.length, 2);
     assert.deepEqual(Object.keys(h.posts[0]).sort(), ['auth_token', 'stock_list']);
-    assert.equal(h.posts[0].stock_list.length, 100);
+    assert.equal(h.posts[0].stock_list.length, 2000);
+    assert.deepEqual(h.limits, ['app:0043', 'cooldown', 'app:0043', 'cooldown']);
     assert.equal(h.posts[1].stock_list.length, 1);
     assert.deepEqual(h.posts[0].stock_list[0], { app_item_id: '0', stock: 0 });
-    assert.ok(h.uploads.every(u => u.endpoint.endsWith('/setStock')));
+    assert.ok(h.uploads.every(u => u.endpoint.endsWith('/setstockSync')));
   } finally { mock.restoreAll(); }
 });
+test('duplicate report is saved while the cheapest row is sent successfully', async () => {
+  const h = harness('delta', { content: '001|Leche|||18||7||20\n001|Leche|||15||2||20' });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, 'succeeded');
+    assert.equal(h.posts[0].stock_list.length, 1);
+    assert.equal(h.posts[0].stock_list[0].stock, 2);
+    assert.equal(h.records[0].status, 'processed');
+    assert.match(h.records[0].error, /Duplicado 001/);
+    assert.match(h.records[0].error, /fila 2/);
+  } finally { mock.restoreAll(); }
+});
+
 test('already recorded filenames are skipped before downloading or authenticating', async () => {
   const h = harness('delta', { previous: true });
   try { await h.processor.process({ data: { runId: 'run' } } as any); assert.equal(h.posts.length, 0); assert.equal(h.paths.get.length, 0); assert.equal(h.requests.length, 0); assert.equal(h.run.status, 'no_files'); }
@@ -230,7 +245,7 @@ test('invalid file does not authenticate or submit partial menus', async () => {
   finally { mock.restoreAll(); }
 });
 test('business rejection is recorded and stops subsequent stock batches', async () => {
-  const h = harness('delta', { reject: true, content: Array.from({ length: 101 }, (_, i) => `${i}||||||${i}`).join('\n') });
+  const h = harness('delta', { reject: true, content: Array.from({ length: 2001 }, (_, i) => `${i}||||||${i}`).join('\n') });
   try { await h.processor.process({ data: { runId: 'run' } } as any); assert.equal(h.run.status, 'partial_failure'); assert.equal(h.uploads[0].status, 'failed'); assert.equal(h.posts.length, 1); }
   finally { mock.restoreAll(); }
 });

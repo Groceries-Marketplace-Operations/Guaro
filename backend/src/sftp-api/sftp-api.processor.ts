@@ -12,17 +12,18 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DIDI_BASE, parseJsonKeepingIds } from '../queue/handlers/didi-food.util';
 import { resolveSftpApiApplications } from './sftp-api.credentials';
 import { groceryPayload, Item, Mode, mxDate, parseFile, ParseConfig, redact, regexMatches } from './sftp-api.util';
+import { SftpApiStockLimiter, STOCK_BATCH_SIZE } from './sftp-api-stock-limiter';
 
 const FULL_ENDPOINT = '/v3/item/item/uploadGrocery';
-const STOCK_ENDPOINT = '/v1/item/item/setStock';
+const STOCK_ENDPOINT = '/v1/item/item/setstockSync';
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-type Parsed = { name: string; hash: string; modified: number; stores: Map<string, Map<string, Item>> };
+type Parsed = { name: string; hash: string; modified: number; stores: Map<string, Map<string, Item>>; reports: string[] };
 
 @Injectable()
 @Processor('sftp-api', { concurrency: 2 })
 export class SftpApiProcessor extends WorkerHost {
-  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService) { super(); }
+  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService, private readonly stockLimiter: SftpApiStockLimiter) { super(); }
 
   async process(job: Job<{ runId: string }>) {
     const id = job.data.runId;
@@ -97,12 +98,13 @@ export class SftpApiProcessor extends WorkerHost {
           if (after.size !== entry.size || after.modifyTime !== entry.modifyTime || bytes !== entry.size) throw new Error(`${entry.name} cambió durante la lectura`);
           const buffer = Buffer.concat(chunks);
           const content = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
-          const stores = parseFile(content, entry.name, rule as unknown as ParseConfig, run.mode as Mode);
+          const reports: string[] = [];
+          const stores = parseFile(content, entry.name, rule as unknown as ParseConfig, run.mode as Mode, reports);
           const fileHash = hash(buffer);
-          await this.prisma.sftpApiProcessedFile.update({ where: { ruleId_fileName: { ruleId: rule.id, fileName: entry.name } }, data: { fileHash } });
+          await this.prisma.sftpApiProcessedFile.update({ where: { ruleId_fileName: { ruleId: rule.id, fileName: entry.name } }, data: { fileHash, error: reports.join('\n') || null } });
           await this.prisma.sftpApiRun.update({ where: { id }, data: { filesRead: { increment: 1 } } });
           await this.prisma.sftpApiRule.update({ where: { id: rule.id }, data: { lastReadAt: new Date() } });
-          parsed.push({ name: entry.name, hash: fileHash, modified: entry.modifyTime, stores });
+          parsed.push({ name: entry.name, hash: fileHash, modified: entry.modifyTime, stores, reports });
         } catch (error) {
           failed++;
           await this.completeFile(rule.id, entry.name, 'failed', safeError(error));
@@ -124,7 +126,7 @@ export class SftpApiProcessor extends WorkerHost {
           const items = [...map.values()];
           const batches: Item[][] = [];
           if (run.mode === 'full') batches.push(items);
-          else for (let offset = 0; offset < items.length; offset += 100) batches.push(items.slice(offset, offset + 100));
+          else for (let offset = 0; offset < items.length; offset += STOCK_BATCH_SIZE) batches.push(items.slice(offset, offset + STOCK_BATCH_SIZE));
           let token: string | undefined;
           for (const batch of batches) {
             await this.ensureRunning(id);
@@ -145,6 +147,7 @@ export class SftpApiProcessor extends WorkerHost {
             const endpoint = run.mode === 'full' ? FULL_ENDPOINT : STOCK_ENDPOINT;
             const payload = { auth_token: token, ...(run.mode === 'full' ? groceryPayload(shop, batch) : { stock_list: batch }) };
             const body = JSON.stringify(payload);
+            const cooldown = run.mode === 'delta' ? await this.stockLimiter.acquire(application.appId, shop, () => this.ensureRunning(id)) : undefined;
             const sentAt = new Date();
             // The exact request is encrypted; UI/export receive the same JSON with the token masked.
             const audit = await this.prisma.sftpApiUpload.create({ data: {
@@ -168,6 +171,8 @@ export class SftpApiProcessor extends WorkerHost {
               failed++; fileUncertain = true;
               fileErrors.push(`Tienda ${shop}: respuesta no confirmada; revisa el reporte antes de reprocesar`);
               break;
+            } finally {
+              await cooldown?.();
             }
             const ok = response.ok && result.errno === 0;
             const taskId = result.data?.taskID ?? result.data?.taskId ?? result.taskID;
@@ -187,7 +192,7 @@ export class SftpApiProcessor extends WorkerHost {
             }
           }
         }
-        await this.completeFile(rule.id, file.name, fileUncertain ? 'needs_review' : fileErrors.length ? 'partial_failure' : attempted ? 'processed' : 'superseded', fileErrors.join('\n') || undefined);
+        await this.completeFile(rule.id, file.name, fileUncertain ? 'needs_review' : fileErrors.length ? 'partial_failure' : attempted ? 'processed' : 'superseded', [...fileErrors, ...file.reports].join('\n') || undefined);
       }
       await this.prisma.sftpApiRun.update({ where: { id }, data: { filesSkipped: skipped } });
       await this.finish(id, failed ? 'partial_failure' : run.mode === 'full' ? 'accepted' : 'succeeded', failed ? `${failed} errores de archivo o tienda; las demás tiendas continuaron. Consulta los reportes.` : undefined);
@@ -202,7 +207,7 @@ export class SftpApiProcessor extends WorkerHost {
   }
 
   private async completeFile(ruleId: string, fileName: string, status: string, error?: string) {
-    await this.prisma.sftpApiProcessedFile.update({ where: { ruleId_fileName: { ruleId, fileName } }, data: { status, error: error?.slice(0, 12000) ?? null, processedAt: new Date() } });
+    await this.prisma.sftpApiProcessedFile.update({ where: { ruleId_fileName: { ruleId, fileName } }, data: { status, error: error ?? null, processedAt: new Date() } });
   }
 
   private async auth(appId: string, secret: string, shop: string): Promise<string> {
