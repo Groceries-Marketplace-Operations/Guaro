@@ -47,19 +47,33 @@ export function minorUnits(raw: string) {
   return Number(value);
 }
 
-export function parseFile(content: string, fileName: string, config: ParseConfig, mode: Mode) {
+export function parseFile(content: string, fileName: string, config: ParseConfig, mode: Mode, reports: string[] = []) {
   const rows = parseDelimitedRows(content, config.delimiter);
   if (config.hasHeader) rows.shift();
   if (!rows.length) throw new Error('El archivo no contiene productos');
   const fileShop = config.shopSource === 'filename' ? regexMatches(config.shopRegex, [fileName])[0]?.[1] : undefined;
   if (config.shopSource === 'filename' && !fileShop) throw new Error('El regex de tienda debe capturar el app_shop_id en su primer grupo');
   const stores = new Map<string, Map<string, Item>>();
+  const selections = new Map<string, { price?: number; row: number }>();
+  const discarded = new Map<string, number>();
   rows.forEach((row, index) => {
     try {
+      // Some exporters wrap the entire delimited record in one CSV field.
+      // Only unwrap single-field records; normal quoted fields remain intact.
+      if (row.length === 1 && row[0].includes(config.delimiter)) {
+        const inner = parseDelimitedRows(row[0], config.delimiter);
+        if (inner.length === 1 && inner[0].length > 1) row = inner[0];
+      }
       const field = (name: string) => config.mapping[name] ? (row[columnIndex(config.mapping[name])] ?? '').trim() : '';
       const shop = config.shopSource === 'filename' ? fileShop! : field('app_shop_id');
       const id = field('app_item_id');
       if (!shop || !id || shop.length > 100 || id.length > 100) throw new Error('Falta app_shop_id o app_item_id válido');
+      if (!stores.has(shop)) stores.set(shop, new Map());
+      const items = stores.get(shop)!;
+      if (!items.has(id) && items.size >= 30_000) {
+        discarded.set(shop, (discarded.get(shop) ?? 0) + 1);
+        return;
+      }
       const rawStock = field('stock');
       if (!/^\+?\d+(?:\.\d+)?$/.test(rawStock)) throw new Error('Stock inválido');
       const stock = Math.floor(Number(rawStock));
@@ -80,13 +94,35 @@ export function parseFile(content: string, fileName: string, config: ParseConfig
           if (promo > 0 && promo < price && (price - promo) * 100 >= price) item.activity_price = promo;
         }
       }
-      if (!stores.has(shop)) stores.set(shop, new Map());
-      const items = stores.get(shop)!;
-      if (items.has(id)) throw new Error(`Producto duplicado ${id} en tienda ${shop}`);
+      let comparisonPrice: number | undefined;
+      if (mode === 'full') comparisonPrice = item.activity_price ?? item.price;
+      else {
+        // Prices select the duplicate's stock; Delta never sends these prices.
+        try {
+          const regular = minorUnits(field('price'));
+          if (regular > 0) {
+            comparisonPrice = regular;
+            if (config.mapping.activity_price && field('activity_price')) {
+              const promo = minorUnits(field('activity_price'));
+              if (promo > 0 && promo < regular && (regular - promo) * 100 >= regular) comparisonPrice = promo;
+            }
+          }
+        } catch { /* Invalid optional prices do not invalidate stock updates. */ }
+      }
+      const selectionKey = JSON.stringify([shop, id]);
+      const previous = selections.get(selectionKey);
+      const rowNumber = index + (config.hasHeader ? 2 : 1);
+      if (previous) {
+        const comparable = comparisonPrice !== undefined && previous.price !== undefined;
+        const replace = comparable && comparisonPrice! < previous.price!;
+        reports.push(`Duplicado ${id}, tienda ${shop}: filas ${previous.row} y ${rowNumber}. Se conserva fila ${replace ? rowNumber : previous.row} (${comparable ? 'precio menor o igual' : 'sin precios comparables; se conserva la primera'}).`);
+        if (!replace) return;
+      }
       items.set(id, item);
-      if (items.size > 30_000) throw new Error('La tienda supera 30,000 productos');
+      selections.set(selectionKey, { price: comparisonPrice, row: rowNumber });
     } catch (error) { throw new Error(`Fila ${index + (config.hasHeader ? 2 : 1)}: ${(error as Error).message}`); }
   });
+  for (const [shop, count] of discarded) reports.push(`Tienda ${shop}: ${count} filas descartadas por el límite de 30,000 productos únicos. Se conservan los primeros 30,000 IDs; sus duplicados se comparan por precio.`);
   return stores;
 }
 

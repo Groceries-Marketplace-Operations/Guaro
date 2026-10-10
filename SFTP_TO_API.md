@@ -13,7 +13,9 @@ Las columnas usan letras Excel (A, B, …, AA). El ID de tienda puede venir de u
 El UPC es un identificador de texto obligatorio: admite letras y dígitos, sin imponer un formato numérico ni un límite de 14 dígitos. Se conservan ceros iniciales, mayúsculas, minúsculas y sufijos; solo se eliminan espacios al inicio y al final.
 
 - **Full**: `/v3/item/item/uploadGrocery`, `merge_policy: 1`. Reemplaza menú e incluye stock. Entre los archivos nuevos elegibles selecciona el más reciente por tienda según modificación SFTP y nombre; los anteriores quedan registrados como sustituidos. Genera el menú Grocery y categorías Despensa, hasta 3,000 productos por categoría y 30,000 por tienda.
-- **Delta**: `/v1/item/item/setStock`. Envía exclusivamente `app_item_id` y `stock`, en lotes de 100. Procesa archivos nuevos de más antiguo a más reciente. Al fallar un lote se detienen los lotes restantes de esa tienda en ese archivo y continúan las demás tiendas y archivos.
+- **Delta**: `/v1/item/item/setstockSync`. Envía exclusivamente `app_item_id` y `stock`, en lotes de hasta 2,000. Redis coordina el límite por aplicación y tienda entre archivos, ejecuciones y workers: se espera al menos un minuto después de completar una petición, también si falla. Las demás tiendas tienen límites independientes. Procesa archivos nuevos de más antiguo a más reciente. Al fallar un lote se detienen los lotes restantes de esa tienda en ese archivo y continúan las demás tiendas y archivos.
+
+También se admiten registros completos envueltos en comillas: si el lector obtiene una sola columna que contiene separadores, vuelve a interpretar ese registro como una fila delimitada. Las filas estándar con varias columnas, incluidas columnas entrecomilladas, conservan su lectura habitual. La opción de encabezado sigue controlando si se omite la primera fila (por ejemplo, `didiformato`).
 - Los precios se convierten de pesos a centavos con redondeo decimal; el stock fraccionario se redondea hacia abajo. El precio de oferta es opcional y se incluye cuando el descuento es al menos 1%. El estado por defecto es 1 con stock y 2 sin stock, o se puede mapear una columna.
 - Todas las lecturas programadas se calculan en `America/Mexico_City`, independientemente de la zona horaria del servidor. Tras una interrupción del servicio se recupera una ejecución vencida y se continúa con el próximo horario futuro; no se reproducen todos los horarios perdidos.
 
@@ -43,7 +45,9 @@ La cola BullMQ `sftp-api` usa ejecuciones persistidas primero en PostgreSQL. Cad
 
 Si una tienda falla al autenticarse, la API rechaza su envío o la respuesta no se puede confirmar, se registra el reporte y se continúa con otras tiendas. La ejecución termina **Con errores** y los horarios permanecen activos; el registro del archivo impide repetirlo automáticamente. Una interrupción del worker o un fallo general después de preparar un envío conserva la auditoría, deja la ejecución **Requiere revisión** y pausa los horarios, como medida de recuperación del proceso completo.
 
-Se valida cada archivo completo antes del primer envío. Un archivo vacío, con productos duplicados, datos inválidos o modificaciones durante la descarga queda registrado con error; los demás archivos continúan. Límites por lectura: 500 archivos nuevos, 100 MB en total y 25 MB por archivo. Las expresiones regulares tienen un límite de ejecución de un segundo.
+Se conservan los primeros 30,000 IDs de producto únicos por tienda y archivo, tanto en Full como en Delta. Las filas de IDs adicionales se descartan y se reporta su cantidad. Si se repite un ID seleccionado, incluso después del límite, se conserva la fila con menor precio efectivo (oferta válida o precio regular), incluido su stock. En empate se conserva la primera; si Delta no tiene precios comparables, también se conserva la primera y se informa. Delta sigue enviando solo ID y stock. Los duplicados, sus filas y la selección quedan en el detalle del archivo registrado, sin convertir la ejecución en error.
+
+Se valida la selección antes del primer envío. Un archivo vacío, con datos seleccionados inválidos o modificaciones durante la descarga queda registrado con error; los demás archivos continúan. Límites por lectura: 500 archivos nuevos, 100 MB en total y 25 MB por archivo. Las expresiones regulares tienen un límite de ejecución de un segundo.
 
 ## Instalación
 
@@ -68,7 +72,7 @@ No se incluyen credenciales ni marcas de ejemplo en la base. La primera conexió
 
 ```powershell
 cd backend
-node --test --require ts-node/register --require tsconfig-paths/register test/sftp-api.test.ts test/sftp-api-processor.test.ts test/sftp-api-service.test.ts
+node --test --require ts-node/register --require tsconfig-paths/register test/sftp-api.test.ts test/sftp-api-processor.test.ts test/sftp-api-service.test.ts test/sftp-api-stock-limiter.test.ts
 npm run build
 cd ../frontend
 npm run build
