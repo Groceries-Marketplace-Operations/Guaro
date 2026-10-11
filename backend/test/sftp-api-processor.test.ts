@@ -239,6 +239,16 @@ test('interrupted worker is marked for review without replaying remote calls', a
   try { await h.processor.process({ data: { runId: 'run' } } as any); assert.equal(h.run.status, 'needs_review'); assert.equal(h.posts.length, 0); }
   finally { mock.restoreAll(); }
 });
+test('invalid UPC symbols are saved in the file report and prevent sending that file', async () => {
+  const h = harness('full', { content: 'ABC-123|Leche|||18||7||20' });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.records[0].status, 'failed');
+    assert.match(h.records[0].error, /Fila 1: UPC inválido/);
+    assert.equal(h.requests.length, 0);
+  } finally { mock.restoreAll(); }
+});
+
 test('invalid file does not authenticate or submit partial menus', async () => {
   const h = harness('full', { content: 'bad|incomplete' });
   try { await h.processor.process({ data: { runId: 'run' } } as any); assert.equal(h.run.status, 'partial_failure'); assert.equal(h.records[0].status, 'failed'); assert.equal(h.uploads.length, 0); assert.equal(h.posts.length, 0); }

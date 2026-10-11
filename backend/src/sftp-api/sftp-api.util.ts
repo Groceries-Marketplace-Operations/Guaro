@@ -80,8 +80,12 @@ export function parseFile(content: string, fileName: string, config: ParseConfig
       if (!Number.isSafeInteger(stock)) throw new Error('Stock fuera de rango');
       const item: Item = { app_item_id: id, stock };
       if (mode === 'full') {
-        const upc = field('upc');
+        const rawUpc = field('upc');
+        // Special exports append .0 to numeric or alphanumeric UPCs. Keep
+        // text and leading zeros intact; do not alter product IDs.
+        const upc = /^[A-Za-z0-9]+\.0$/.test(rawUpc) ? rawUpc.slice(0, -2) : rawUpc;
         if (!upc) throw new Error('UPC obligatorio');
+        if (!/^[A-Za-z0-9]+$/.test(upc)) throw new Error('UPC inválido: solo se permiten letras A-Z y números 0-9, sin símbolos (excepto el sufijo final .0)');
         const name = field('item_name');
         if (!name || name.length > 50) throw new Error('item_name debe tener entre 1 y 50 caracteres');
         const price = minorUnits(field('price'));

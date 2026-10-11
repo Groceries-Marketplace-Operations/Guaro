@@ -36,14 +36,39 @@ test('full preserves store/UPC leading zeros, rounds money exactly and floors st
   assert.equal(payload.merge_policy, 1);
   assert.deepEqual(payload.categories[0].app_item_ids, ['001234567890']);
 });
-test('full accepts textual UPCs and preserves letters, leading zeros and suffixes in the payload', () => {
-  for (const upc of ['001ABCdef', 'LECHE', 'PRODUCTO0000123456789', '001234567890', 'ABC.0']) {
+test('full removes the alphanumeric UPC .0 suffix without changing product IDs', () => {
+  for (const [input, expected] of [
+    ['7702010225109.0', '7702010225109'],
+    ['000123456789.0', '000123456789'],
+    ['12345678901234567890.0', '12345678901234567890'],
+    [' 00123.0 ', '00123'],
+    ['00123', '00123'],
+    ['0123A.0', '0123A'], ['00A123.0', '00A123'], ['A0A123.0', 'A0A123'],
+    ['ABC.0', 'ABC'], ['abc123.0', 'abc123'],
+  ]) {
+    const content = row.replace('001234567890', input);
+    const item = [...parseFile(content, '0043.csv', config, 'full').get('0043')!.values()][0];
+    assert.equal(item.upc, expected);
+    assert.equal(typeof item.upc, 'string');
+    assert.equal(item.app_item_id, input.trim());
+    assert.equal(groceryPayload('0043', [item]).items[0].upc, expected);
+  }
+});
+
+test('full accepts alphanumeric UPCs and preserves letters and leading zeros in the payload', () => {
+  for (const upc of ['001ABCdef', 'LECHE', 'PRODUCTO0000123456789', '001234567890']) {
     const content = row.replace('001234567890', upc);
     const item = [...parseFile(content, '0043.csv', config, 'full').get('0043')!.values()][0];
     assert.equal(item.upc, upc);
     assert.equal(groceryPayload('0043', [item]).items[0].upc, upc);
   }
   assert.throws(() => parseFile(row, '0043.csv', { ...config, mapping: { ...config.mapping, upc: 'J' } }, 'full'), /UPC obligatorio/);
+});
+
+test('UPC symbols are reported with the row number, including other decimal formats', () => {
+  for (const upc of ['.0', 'ABC.0.0', 'ABC-123.0', '123.5', '123.00', '1.23E+12', 'ABC-123', 'ABC_123', 'ABC/123', 'ABC 123', 'ABC@123']) {
+    assert.throws(() => parseFile(row.replace('001234567890', upc), '0043.csv', config, 'full'), /Fila 1: UPC inválido/);
+  }
 });
 
 test('delta only reads ID and stock, ignoring invalid or missing price/menu fields', () => {
