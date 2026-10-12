@@ -3,17 +3,18 @@ DC = docker compose -f docker-compose.prod.yml
 # ── Deploy ────────────────────────────────────────────────────────────────────
 deploy:
 	git pull
-	$(DC) build --no-cache backend frontend
+	$(DC) build backend
+	$(DC) build frontend
 	$(DC) up -d
 
 deploy-backend:
 	git pull
-	$(DC) build --no-cache backend
+	$(DC) build backend
 	$(DC) up -d backend
 
 deploy-frontend:
 	git pull
-	$(DC) build --no-cache frontend
+	$(DC) build frontend
 	$(DC) up -d frontend
 
 # ── Database ──────────────────────────────────────────────────────────────────

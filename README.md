@@ -1842,6 +1842,8 @@ git push origin HEAD:main
 
 No ejecutar además un despliegue manual mientras GitHub Actions está desplegando. Verificar en GitHub que **CI** y **Deploy** finalicen en verde.
 
+El comando remoto dispone de 60 minutos (70 minutos para el job completo). Backend y frontend se construyen secuencialmente y reutilizan caché; los contenedores se reemplazan únicamente después de completar ambas imágenes. La limpieza normal elimina artefactos sin uso de más de siete días y conserva caché reciente. Si el disco alcanza 80% antes del despliegue, se mantiene la limpieza de emergencia de artefactos sin uso. Una primera construcción sin caché puede seguir siendo lenta; estos límites no garantizan una duración fija. El Dockerfile instala OpenSSL tanto al compilar como al ejecutar Prisma.
+
 > **Preflight obligatorio de integraciones:** el workflow reconstruye y reinicia el backend incluso si el cambio es sólo documental. Antes de hacer push a `main`, revisar Cross App Menu Copy/Forced Handshake y Auto Open. Menu Copy activo debe terminar o cancelarse en una ventana controlada. Auto Open conserva checkpoints por marca y se recupera automáticamente al iniciar; aun así, revisar el modo LIVE y los contadores antes y después del despliegue.
 
 ### Producción — Makefile (operación manual de contingencia)

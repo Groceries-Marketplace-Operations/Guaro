@@ -2,6 +2,7 @@
 
 # ── Stage 1: build ────────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
+RUN apk add --no-cache openssl
 WORKDIR /app
 
 # Prisma schema (root-level)
@@ -9,7 +10,7 @@ COPY prisma ./prisma/
 
 # Backend deps
 COPY backend/package*.json ./
-RUN npm ci
+RUN npm ci --no-audit --no-fund
 
 # Generate Prisma client
 RUN npx prisma generate --schema=./prisma/schema.prisma
@@ -24,7 +25,7 @@ RUN apk add --no-cache openssl
 WORKDIR /app
 
 COPY backend/package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma

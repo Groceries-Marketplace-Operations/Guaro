@@ -10,3 +10,5 @@ examples
 *.dump
 *.sql.gz
 .DS_Store
+**/.env
+**/.env.*
