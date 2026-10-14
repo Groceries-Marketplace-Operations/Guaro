@@ -47,6 +47,11 @@ export function minorUnits(raw: string) {
   return Number(value);
 }
 
+function normalizeProductCode(value: string) {
+  // Remove only the special export suffix; preserve text and leading zeros.
+  return /^[A-Za-z0-9]+\.0$/.test(value) ? value.slice(0, -2) : value;
+}
+
 export function parseFile(content: string, fileName: string, config: ParseConfig, mode: Mode, reports: string[] = []) {
   const rows = parseDelimitedRows(content, config.delimiter);
   if (config.hasHeader) rows.shift();
@@ -66,7 +71,7 @@ export function parseFile(content: string, fileName: string, config: ParseConfig
       }
       const field = (name: string) => config.mapping[name] ? (row[columnIndex(config.mapping[name])] ?? '').trim() : '';
       const shop = config.shopSource === 'filename' ? fileShop! : field('app_shop_id');
-      const id = field('app_item_id');
+      const id = normalizeProductCode(field('app_item_id'));
       if (!shop || !id || shop.length > 100 || id.length > 100) throw new Error('Falta app_shop_id o app_item_id válido');
       if (!stores.has(shop)) stores.set(shop, new Map());
       const items = stores.get(shop)!;
@@ -80,13 +85,10 @@ export function parseFile(content: string, fileName: string, config: ParseConfig
       if (!Number.isSafeInteger(stock)) throw new Error('Stock fuera de rango');
       const item: Item = { app_item_id: id, stock };
       if (mode === 'full') {
-        const rawUpc = field('upc');
-        // Special exports append .0 to numeric or alphanumeric UPCs. Keep
-        // text and leading zeros intact; do not alter product IDs.
-        const upc = /^[A-Za-z0-9]+\.0$/.test(rawUpc) ? rawUpc.slice(0, -2) : rawUpc;
+        const upc = normalizeProductCode(field('upc'));
         if (!upc) throw new Error('UPC obligatorio');
         if (!/^[A-Za-z0-9]+$/.test(upc)) throw new Error('UPC inválido: solo se permiten letras A-Z y números 0-9, sin símbolos (excepto el sufijo final .0)');
-        const name = field('item_name');
+        const name = normalizeProductCode(field('item_name'));
         if (!name || name.length > 50) throw new Error('item_name debe tener entre 1 y 50 caracteres');
         const price = minorUnits(field('price'));
         if (!price) throw new Error('El precio debe ser mayor a cero');

@@ -36,7 +36,7 @@ test('full preserves store/UPC leading zeros, rounds money exactly and floors st
   assert.equal(payload.merge_policy, 1);
   assert.deepEqual(payload.categories[0].app_item_ids, ['001234567890']);
 });
-test('full removes the alphanumeric UPC .0 suffix without changing product IDs', () => {
+test('full normalizes UPC, product ID and code-like names consistently', () => {
   for (const [input, expected] of [
     ['7702010225109.0', '7702010225109'],
     ['000123456789.0', '000123456789'],
@@ -46,11 +46,13 @@ test('full removes the alphanumeric UPC .0 suffix without changing product IDs',
     ['0123A.0', '0123A'], ['00A123.0', '00A123'], ['A0A123.0', 'A0A123'],
     ['ABC.0', 'ABC'], ['abc123.0', 'abc123'],
   ]) {
-    const content = row.replace('001234567890', input);
+    const content = row.replace('001234567890', input).replace('Leche', input);
     const item = [...parseFile(content, '0043.csv', config, 'full').get('0043')!.values()][0];
     assert.equal(item.upc, expected);
     assert.equal(typeof item.upc, 'string');
-    assert.equal(item.app_item_id, input.trim());
+    assert.equal(item.app_item_id, expected);
+    assert.equal(item.item_name, expected);
+    assert.deepEqual(groceryPayload('0043', [item]).categories[0].app_item_ids, [expected]);
     assert.equal(groceryPayload('0043', [item]).items[0].upc, expected);
   }
 });
@@ -74,6 +76,31 @@ test('UPC symbols are reported with the row number, including other decimal form
 test('delta only reads ID and stock, ignoring invalid or missing price/menu fields', () => {
   const delta = parseFile('009|0', '0043.csv', { ...config, mapping: { app_item_id: 'A', stock: 'B' } }, 'delta');
   assert.deepEqual([...delta.get('0043')!.values()], [{ app_item_id: '009', stock: 0 }]);
+});
+
+test('delta normalizes numeric and alphanumeric IDs without losing leading zeros', () => {
+  for (const id of ['7800155057217', '00A123', '000123']) {
+    const cfg = { ...config, mapping: { app_item_id: 'A', stock: 'B' } };
+    assert.deepEqual([...parseFile(`${id}.0|62`, '0043.csv', cfg, 'delta').get('0043')!.values()], [{ app_item_id: id, stock: 62 }]);
+  }
+});
+
+test('normalization resolves duplicates before choosing the lowest price in either mode', () => {
+  for (const mode of ['full', 'delta'] as const) {
+    const reports: string[] = [];
+    const content = row + '\n' + row.replace('001234567890', '001234567890.0').replace('18.50', '15.00').replace('7.9', '2');
+    const items = parseFile(content, '0043.csv', config, mode, reports).get('0043')!;
+    assert.equal(items.size, 1);
+    assert.equal(items.get('001234567890')!.stock, 2);
+    assert.match(reports[0], /Duplicado 001234567890/);
+  }
+});
+
+test('descriptive names and unrelated decimal formats remain unchanged', () => {
+  for (const name of ['Leche 1.0', 'Producto ABC-123.0', '123.5', 'ABC.0.0']) {
+    const item = [...parseFile(row.replace('Leche', name), '0043.csv', config, 'full').get('0043')!.values()][0];
+    assert.equal(item.item_name, name);
+  }
 });
 test('CSV supports headers, quotes, delimiters in names, and multiple stores from a column', () => {
   const parsed = parseFile('store,id,name,stock,price\r\n0043,001,"Leche, entera",2,10\r\n0044,002,"Pan ""integral""",0,20', 'input.csv', {
