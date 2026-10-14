@@ -221,6 +221,23 @@ test('duplicate report is saved while the cheapest row is sent successfully', as
   } finally { mock.restoreAll(); }
 });
 
+for (const mode of ['full', 'delta'] as const) {
+  test(`${mode}: outgoing product IDs are normalized consistently with menu references`, async () => {
+    const h = harness(mode, { content: '007509546695891.0|007509546695891.0|||18||7||20' });
+    try {
+      await h.processor.process({ data: { runId: 'run' } } as any);
+      assert.equal(h.posts.length, 1);
+      const item = mode === 'full' ? h.posts[0].items[0] : h.posts[0].stock_list[0];
+      assert.equal(item.app_item_id, '007509546695891');
+      if (mode === 'full') {
+        assert.equal(item.upc, '007509546695891');
+        assert.equal(item.item_name, '007509546695891');
+        assert.deepEqual(h.posts[0].categories[0].app_item_ids, ['007509546695891']);
+      }
+    } finally { mock.restoreAll(); }
+  });
+}
+
 test('already recorded filenames are skipped before downloading or authenticating', async () => {
   const h = harness('delta', { previous: true });
   try { await h.processor.process({ data: { runId: 'run' } } as any); assert.equal(h.posts.length, 0); assert.equal(h.paths.get.length, 0); assert.equal(h.requests.length, 0); assert.equal(h.run.status, 'no_files'); }
