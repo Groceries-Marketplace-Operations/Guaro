@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState, type ChangeEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
@@ -41,6 +41,60 @@ const PlayIcon = () => (
 
 type ActionType = 'complete' | 'block' | 'fail' | null;
 
+const CREATE_STORES_ACTION = 'capture_created_store_details';
+const CREATE_STORES_RESULT_KIND = 'create_new_stores_completion';
+const CREATE_STORES_IMPORT_MAX_BYTES = 2 * 1024 * 1024;
+const CREATE_STORES_MAX_ROWS = 1000;
+const CREATE_STORES_SHOP_ID_PATTERN = /^57\d{17}$/;
+
+interface CreateStoreRow {
+  clientId: string;
+  appShopId: string;
+  shopId: string;
+  storeName: string;
+  coverage: string;
+}
+
+let createStoreRowSequence = 0;
+
+function createEmptyStoreRow(): CreateStoreRow {
+  createStoreRowSequence += 1;
+  return {
+    clientId: `create-store-row-${createStoreRowSequence}`,
+    appShopId: '',
+    shopId: '',
+    storeName: '',
+    coverage: '',
+  };
+}
+
+function normalizeWorkflowName(value: string | null | undefined): string {
+  return value?.trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US') ?? '';
+}
+
+function isCreateStoresStep(task: Task | undefined, step: StepInstance | null): boolean {
+  if (!step?.stepDefinition) return false;
+  if (step.stepDefinition.action === CREATE_STORES_ACTION) return true;
+
+  return normalizeWorkflowName(task?.taskType?.name) === 'create new stores'
+    && normalizeWorkflowName(step.stepDefinition.name) === 'create stores';
+}
+
+function isCreateStoresCompletionResult(result: unknown): boolean {
+  return !!result
+    && typeof result === 'object'
+    && (result as { kind?: unknown }).kind === CREATE_STORES_RESULT_KIND;
+}
+
+function createStoreRowsAreValid(rows: CreateStoreRow[]): boolean {
+  return rows.length > 0 && rows.every(row => (
+    row.appShopId.trim()
+    && CREATE_STORES_SHOP_ID_PATTERN.test(row.shopId.trim())
+    && row.storeName.trim()
+    && row.coverage.trim()
+  ));
+}
+
 function formValueDisplay(fv: FormValue): string {
   if (fv.brand) return `${fv.brand.brandName} (${fv.brand.brandId})`;
   if (fv.shop) return `${fv.shop.shopId} / ${fv.shop.appShopId}`;
@@ -76,6 +130,11 @@ export default function TaskDetail() {
   const [action, setAction] = useState<ActionType>(null);
   const [activeStep, setActiveStep] = useState<StepInstance | null>(null);
   const [note, setNote] = useState('');
+  const [createStoreRows, setCreateStoreRows] = useState<CreateStoreRow[]>(() => [createEmptyStoreRow()]);
+  const [importingCreateStores, setImportingCreateStores] = useState(false);
+  const [downloadingCreateStoresTemplate, setDownloadingCreateStoresTemplate] = useState(false);
+  const [importedCreateStoresFile, setImportedCreateStoresFile] = useState<{ name: string; count: number } | null>(null);
+  const createStoresImportRequestRef = useRef(0);
   const [failureReason, setFailureReason] = useState('bpo_timed_out');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -98,6 +157,116 @@ export default function TaskDetail() {
   });
   const bpoAccounts: Account[] = bpoAccountsResult?.data ?? [];
 
+  const openStepAction = (step: StepInstance, nextAction: Exclude<ActionType, null>) => {
+    setActiveStep(step);
+    setAction(nextAction);
+    setErr('');
+    if (nextAction === 'complete') {
+      setCreateStoreRows([createEmptyStoreRow()]);
+      setImportedCreateStoresFile(null);
+    }
+  };
+
+  const closeActionModal = () => {
+    createStoresImportRequestRef.current += 1;
+    setAction(null);
+    setActiveStep(null);
+    setNote('');
+    setErr('');
+    setCreateStoreRows([createEmptyStoreRow()]);
+    setImportedCreateStoresFile(null);
+    setImportingCreateStores(false);
+  };
+
+  const updateCreateStoreRow = (
+    clientId: string,
+    field: Exclude<keyof CreateStoreRow, 'clientId'>,
+    value: string,
+  ) => {
+    setCreateStoreRows(rows => rows.map(row => (
+      row.clientId === clientId ? { ...row, [field]: value } : row
+    )));
+  };
+
+  const handleCreateStoresImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !activeStep) return;
+
+    if (!file.name.toLocaleLowerCase('en-US').endsWith('.xlsx')) {
+      setErr(t('pages.taskDetail.createStoresImportInvalidType'));
+      return;
+    }
+    if (file.size > CREATE_STORES_IMPORT_MAX_BYTES) {
+      setErr(t('pages.taskDetail.createStoresImportTooLarge'));
+      return;
+    }
+
+    setImportingCreateStores(true);
+    setErr('');
+    const requestId = createStoresImportRequestRef.current + 1;
+    createStoresImportRequestRef.current = requestId;
+    try {
+      const response = await tasksApi.importCreatedStores(id!, activeStep.id, file);
+      if (createStoresImportRequestRef.current !== requestId) return;
+      if (!Array.isArray(response.data.stores) || response.data.stores.length === 0) {
+        setErr(t('pages.taskDetail.createStoresImportEmpty'));
+        return;
+      }
+      if (response.data.stores.length > CREATE_STORES_MAX_ROWS) {
+        setErr(t('pages.taskDetail.createStoresImportTooManyRows'));
+        return;
+      }
+
+      const importedRows = response.data.stores.map(store => ({
+        ...createEmptyStoreRow(),
+        appShopId: String(store.appShopId ?? ''),
+        shopId: String(store.shopId ?? ''),
+        storeName: String(store.storeName ?? ''),
+        coverage: String(store.coverage ?? ''),
+      }));
+      const wouldReplaceEnteredData = createStoreRows.some(row => (
+        row.appShopId.trim() || row.shopId.trim() || row.storeName.trim() || row.coverage.trim()
+      ));
+      if (wouldReplaceEnteredData && !window.confirm(t('pages.taskDetail.createStoresImportConfirmReplace'))) {
+        return;
+      }
+      setCreateStoreRows(importedRows);
+      setImportedCreateStoresFile({ name: file.name, count: importedRows.length });
+    } catch (ex: unknown) {
+      if (createStoresImportRequestRef.current !== requestId) return;
+      const e = ex as { response?: { data?: { message?: string | string[] } } };
+      const message = e.response?.data?.message;
+      setErr(Array.isArray(message)
+        ? message.join(' ')
+        : message ?? t('pages.taskDetail.createStoresImportError'));
+    } finally {
+      if (createStoresImportRequestRef.current === requestId) {
+        setImportingCreateStores(false);
+      }
+    }
+  };
+
+  const handleCreateStoresTemplateDownload = async () => {
+    setDownloadingCreateStoresTemplate(true);
+    setErr('');
+    try {
+      const response = await tasksApi.downloadCreateStoresTemplate();
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'plantilla-tiendas-creadas.xlsx';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setErr(t('pages.taskDetail.createStoresTemplateError'));
+    } finally {
+      setDownloadingCreateStoresTemplate(false);
+    }
+  };
+
   const handleManualAssign = async (stepId: string) => {
     if (!manualAssignBpo) return;
     setSaving(true); setErr('');
@@ -114,13 +283,35 @@ export default function TaskDetail() {
 
   const handleAction = async () => {
     if (!activeStep || !action) return;
+    const requiresStoreDetails = action === 'complete' && isCreateStoresStep(task, activeStep);
+    if (requiresStoreDetails && !createStoreRowsAreValid(createStoreRows)) {
+      setErr(t('pages.taskDetail.createStoresValidation'));
+      return;
+    }
+
     setSaving(true); setErr('');
     try {
-      if (action === 'complete') await tasksApi.completeStep(id!, activeStep.id, { note });
+      if (action === 'complete') {
+        const completionPayload = requiresStoreDetails
+          ? {
+              result: {
+                kind: CREATE_STORES_RESULT_KIND,
+                version: 1,
+                stores: createStoreRows.map(row => ({
+                  appShopId: row.appShopId.trim(),
+                  shopId: row.shopId.trim(),
+                  storeName: row.storeName.trim(),
+                  coverage: row.coverage.trim(),
+                })),
+              },
+            }
+          : { note };
+        await tasksApi.completeStep(id!, activeStep.id, completionPayload);
+      }
       if (action === 'block')    await tasksApi.blockStep(id!, activeStep.id, { note });
       if (action === 'fail')     await tasksApi.failStep(id!, activeStep.id, { failureReason, note });
       qc.invalidateQueries({ queryKey: ['task', id] });
-      setAction(null); setNote(''); setActiveStep(null);
+      closeActionModal();
     } catch (ex: unknown) {
       const e = ex as { response?: { data?: { message?: string } } };
       setErr(e.response?.data?.message ?? 'Error');
@@ -291,15 +482,15 @@ export default function TaskDetail() {
                         (s.assignedToId === account?.id || canManualAssign) && (
                         <div className="flex gap-2">
                           <button className="btn btn-sm btn-primary" title={t('pages.taskDetail.btnComplete')}
-                            onClick={() => { setActiveStep(s); setAction('complete'); }}>
+                            onClick={() => openStepAction(s, 'complete')}>
                             <CheckIcon />
                           </button>
                           <button className="btn btn-sm btn-ghost" title={t('pages.taskDetail.btnBlock')}
-                            onClick={() => { setActiveStep(s); setAction('block'); }}>
+                            onClick={() => openStepAction(s, 'block')}>
                             <AlertIcon />
                           </button>
                           <button className="btn btn-sm btn-danger" title={t('pages.taskDetail.btnFail')}
-                            onClick={() => { setActiveStep(s); setAction('fail'); }}>
+                            onClick={() => openStepAction(s, 'fail')}>
                             <XIcon />
                           </button>
                         </div>
@@ -312,17 +503,22 @@ export default function TaskDetail() {
                             <RefreshIcon /> {t('pages.taskDetail.retry')}
                           </button>
                           <button className="btn btn-sm btn-danger" title={t('pages.taskDetail.btnFail')}
-                            onClick={() => { setActiveStep(s); setAction('fail'); }}>
+                            onClick={() => openStepAction(s, 'fail')}>
                             <XIcon />
                           </button>
                         </div>
                       )}
-                      {s.status === 'done' && (s.result as { fileKey?: string } | null)?.fileKey && (
+                      {s.status === 'done' && (
+                        (s.result as { fileKey?: string } | null)?.fileKey
+                        || (isCreateStoresStep(task, s) && isCreateStoresCompletionResult(s.result))
+                      ) && (
                         <button
                           className="btn btn-sm btn-primary"
                           onClick={() => handleDownload(s.id, 'xlsx')}
                         >
-                          ↓ {t('pages.taskDetail.downloadFile')}
+                          ↓ {isCreateStoresStep(task, s) && isCreateStoresCompletionResult(s.result)
+                            ? t('pages.taskDetail.downloadStoreData')
+                            : t('pages.taskDetail.downloadFile')}
                         </button>
                       )}
                       {s.status === 'done' && (s.result as { jsonFileKey?: string } | null)?.jsonFileKey && (
@@ -432,12 +628,18 @@ export default function TaskDetail() {
       {action && activeStep && (
         <Modal
           title={action === 'complete' ? t('pages.taskDetail.modalCompleteStep') : action === 'block' ? t('pages.taskDetail.modalBlockStep') : t('pages.taskDetail.modalFailStep')}
-          onClose={() => { setAction(null); setActiveStep(null); setNote(''); setErr(''); }}
+          onClose={closeActionModal}
+          size={action === 'complete' && isCreateStoresStep(task, activeStep) ? 'wide' : 'default'}
           footer={<>
-            <button className="btn btn-ghost" onClick={() => { setAction(null); setActiveStep(null); }}>{t('common.cancel')}</button>
+            <button className="btn btn-ghost" onClick={closeActionModal}>{t('common.cancel')}</button>
             <button
               className={`btn ${action === 'fail' ? 'btn-danger' : action === 'block' ? 'btn-ghost' : 'btn-primary'}`}
-              onClick={handleAction} disabled={saving}
+              onClick={handleAction}
+              disabled={saving || (
+                action === 'complete'
+                && isCreateStoresStep(task, activeStep)
+                && (importingCreateStores || !createStoreRowsAreValid(createStoreRows))
+              )}
             >
               {saving ? t('common.saving') : action === 'complete' ? t('pages.taskDetail.btnComplete') : action === 'block' ? t('pages.taskDetail.btnBlock') : t('pages.taskDetail.btnFail')}
             </button>
@@ -455,10 +657,160 @@ export default function TaskDetail() {
               </select>
             </div>
           )}
-          <div className="form-group">
-            <label className="form-label">{action !== 'fail' ? t('pages.taskDetail.noteOptional') : t('pages.taskDetail.noteLabel')}</label>
-            <textarea className="form-textarea" placeholder={t('pages.taskDetail.notePlaceholder')} value={note} onChange={e => setNote(e.target.value)} />
-          </div>
+          {action === 'complete' && isCreateStoresStep(task, activeStep) ? (
+            <div className="create-stores-editor">
+              <div className="create-stores-editor__intro">
+                <h3>{t('pages.taskDetail.createStoresTitle')}</h3>
+                <p>{t('pages.taskDetail.createStoresDescription')}</p>
+              </div>
+
+              <section className="create-stores-import" aria-labelledby="create-stores-import-title">
+                <div className="create-stores-import__copy">
+                  <h4 id="create-stores-import-title">{t('pages.taskDetail.createStoresImportTitle')}</h4>
+                  <p>{t('pages.taskDetail.createStoresImportDescription')}</p>
+                  <div className="create-stores-import__columns" aria-label={t('pages.taskDetail.createStoresImportColumnsLabel')}>
+                    <span>AppShopID</span>
+                    <span>ShopID</span>
+                    <span>{t('pages.taskDetail.createStoresStoreName')}</span>
+                    <span>Coverage</span>
+                  </div>
+                </div>
+                <div className="create-stores-import__actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={handleCreateStoresTemplateDownload}
+                    disabled={downloadingCreateStoresTemplate || importingCreateStores}
+                  >
+                    {downloadingCreateStoresTemplate
+                      ? t('pages.taskDetail.createStoresTemplateDownloading')
+                      : t('pages.taskDetail.createStoresTemplateDownload')}
+                  </button>
+                  <label className={`btn btn-primary create-stores-import__upload${importingCreateStores ? ' is-disabled' : ''}`}>
+                    {importingCreateStores
+                      ? t('pages.taskDetail.createStoresImporting')
+                      : t('pages.taskDetail.createStoresImportButton')}
+                    <input
+                      className="sr-only"
+                      type="file"
+                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      disabled={importingCreateStores}
+                      onChange={handleCreateStoresImport}
+                    />
+                  </label>
+                </div>
+                {importedCreateStoresFile && (
+                  <p className="create-stores-import__success" role="status">
+                    {t('pages.taskDetail.createStoresImportSuccess', {
+                      count: String(importedCreateStoresFile.count),
+                      file: importedCreateStoresFile.name,
+                    })}
+                  </p>
+                )}
+              </section>
+
+              <div className="create-stores-editor__divider">
+                <span>{t('pages.taskDetail.createStoresManualEntry')}</span>
+              </div>
+
+              <div className="create-stores-editor__rows">
+                {createStoreRows.map((row, index) => (
+                  <section className="create-store-row" key={row.clientId}>
+                    <div className="create-store-row__header">
+                      <h4>{t('pages.taskDetail.createStoresRow', { number: String(index + 1) })}</h4>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost create-store-row__remove"
+                        disabled={createStoreRows.length === 1}
+                        onClick={() => setCreateStoreRows(rows => rows.filter(item => item.clientId !== row.clientId))}
+                      >
+                        {t('pages.taskDetail.createStoresRemoveRow')}
+                      </button>
+                    </div>
+                    <div className="create-store-row__fields">
+                      <div className="form-group">
+                        <label className="form-label" htmlFor={`${row.clientId}-app-shop-id`}>
+                          {t('pages.taskDetail.createStoresAppShopId')}
+                        </label>
+                        <input
+                          id={`${row.clientId}-app-shop-id`}
+                          className="form-input"
+                          value={row.appShopId}
+                          onChange={e => updateCreateStoreRow(row.clientId, 'appShopId', e.target.value)}
+                          autoComplete="off"
+                          maxLength={200}
+                          required
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label" htmlFor={`${row.clientId}-shop-id`}>
+                          {t('pages.taskDetail.createStoresShopId')}
+                        </label>
+                        <input
+                          id={`${row.clientId}-shop-id`}
+                          className="form-input"
+                          value={row.shopId}
+                          onChange={e => updateCreateStoreRow(row.clientId, 'shopId', e.target.value)}
+                          autoComplete="off"
+                          inputMode="numeric"
+                          pattern="57[0-9]{17}"
+                          maxLength={19}
+                          required
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label" htmlFor={`${row.clientId}-store-name`}>
+                          {t('pages.taskDetail.createStoresStoreName')}
+                        </label>
+                        <input
+                          id={`${row.clientId}-store-name`}
+                          className="form-input"
+                          value={row.storeName}
+                          onChange={e => updateCreateStoreRow(row.clientId, 'storeName', e.target.value)}
+                          autoComplete="off"
+                          maxLength={300}
+                          required
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label" htmlFor={`${row.clientId}-coverage`}>
+                          {t('pages.taskDetail.createStoresCoverage')}
+                        </label>
+                        <input
+                          id={`${row.clientId}-coverage`}
+                          className="form-input"
+                          value={row.coverage}
+                          onChange={e => updateCreateStoreRow(row.clientId, 'coverage', e.target.value)}
+                          autoComplete="off"
+                          maxLength={500}
+                          required
+                        />
+                      </div>
+                    </div>
+                  </section>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-ghost create-stores-editor__add"
+                disabled={createStoreRows.length >= CREATE_STORES_MAX_ROWS}
+                onClick={() => setCreateStoreRows(rows => [...rows, createEmptyStoreRow()])}
+              >
+                + {t('pages.taskDetail.createStoresAddRow')}
+              </button>
+              {!createStoreRowsAreValid(createStoreRows) && (
+                <p className="create-stores-editor__validation" role="status">
+                  {t('pages.taskDetail.createStoresValidation')}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="form-group">
+              <label className="form-label">{action !== 'fail' ? t('pages.taskDetail.noteOptional') : t('pages.taskDetail.noteLabel')}</label>
+              <textarea className="form-textarea" placeholder={t('pages.taskDetail.notePlaceholder')} value={note} onChange={e => setNote(e.target.value)} />
+            </div>
+          )}
         </Modal>
       )}
     </>

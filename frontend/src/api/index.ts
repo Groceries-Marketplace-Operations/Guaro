@@ -222,6 +222,16 @@ export const tasksApi = {
   create: (data: object) => client.post('/tasks', data),
   completeStep: (taskId: string, stepId: string, data: object) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/complete`, data),
+  importCreatedStores: (taskId: string, stepId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return client.post<{
+      stores: { appShopId: string; shopId: string; storeName: string; coverage: string }[];
+      rowCount?: number;
+    }>(`/tasks/${taskId}/steps/${stepId}/import-created-stores`, formData);
+  },
+  downloadCreateStoresTemplate: () =>
+    client.get<Blob>('/tasks/templates/create-stores.xlsx', { responseType: 'blob' }),
   blockStep: (taskId: string, stepId: string, data: object) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/block`, data),
   failStep: (taskId: string, stepId: string, data: object) =>

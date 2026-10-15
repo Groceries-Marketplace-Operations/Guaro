@@ -24,6 +24,7 @@ import {
 
 export const DIDI_ORDER_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 export const DIDI_ORDER_WEBHOOK_STALE_PROCESSING_MS = 2 * 60 * 1000;
+export const DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS = 10_000;
 const DIDI_ORDER_CONFIRM_TIMEOUT_MS = 30_000;
 const DIDI_ORDER_SHOP_RESOLUTION_TIMEOUT_MS = 55_000;
 const DIDI_ORDER_SHOP_RESOLUTION_MAX_PAGES = 3;
@@ -47,6 +48,7 @@ interface ClaimedEvent {
   status: 'processing' | 'accepted' | 'failed';
   appShopId: string;
   didiShopId: string | null;
+  acceptedCount: number;
   claimed: boolean;
 }
 
@@ -77,7 +79,7 @@ export function buildDidiOrderConfirmBody(authToken: string, orderId: string) {
   return `{"auth_token":${JSON.stringify(authToken)},"order_id":${orderId}}`;
 }
 
-export function parseDidiOrderWebhookPayload(rawBody: Buffer): DidiOrderWebhookPayload {
+function parseDidiOrderWebhookEnvelope(rawBody: Buffer) {
   if (rawBody.length === 0) throw new BadRequestException('Webhook body is required');
   if (rawBody.length > DIDI_ORDER_WEBHOOK_MAX_BODY_BYTES) {
     throw new PayloadTooLargeException('Webhook body exceeds the 1 MiB limit');
@@ -90,9 +92,14 @@ export function parseDidiOrderWebhookPayload(rawBody: Buffer): DidiOrderWebhookP
     throw new BadRequestException('Webhook body must be valid JSON');
   }
   const root = asRecord(parsed, 'Webhook body');
-  const type = requiredString(root.type, 'type');
-  if (type !== 'orderNew') throw new BadRequestException('type must be orderNew');
+  // This is deliberately an exact top-level property check. Searching the raw
+  // text or nested objects would allow an unrelated `type: orderNew` value to
+  // bypass the event filter.
+  if (root.type !== 'orderNew') throw new BadRequestException('type must be orderNew');
+  return root;
+}
 
+function parseDidiOrderWebhookRoot(root: Record<string, unknown>): DidiOrderWebhookPayload {
   const appId = requiredIntegerId(root.app_id, 'app_id');
   const rootAppShopId = optionalAppShopId(root.app_shop_id, 'app_shop_id');
   const sourceTimestamp = requiredTimestamp(root.timestamp);
@@ -126,9 +133,13 @@ export function parseDidiOrderWebhookPayload(rawBody: Buffer): DidiOrderWebhookP
     ...(appShopId ? { appShopId } : {}),
     ...(shopId ? { shopId } : {}),
     orderId,
-    type,
+    type: 'orderNew',
     sourceTimestamp,
   };
+}
+
+export function parseDidiOrderWebhookPayload(rawBody: Buffer): DidiOrderWebhookPayload {
+  return parseDidiOrderWebhookRoot(parseDidiOrderWebhookEnvelope(rawBody));
 }
 
 @Injectable()
@@ -163,9 +174,15 @@ export class DidiOrderWebhooksService {
       select: { id: true, appId: true, appSecret: true },
     });
     if (!application) throw new NotFoundException('Order webhook not found');
+    if (!rawBody) throw new BadRequestException('Raw webhook body is unavailable');
+
+    // Validate the event discriminator before creating any audit row. Only
+    // top-level orderNew deliveries are retained by the Order Webhooks area.
+    // The parsed object is reused below so the untrusted JSON is decoded once.
+    const webhookRoot = parseDidiOrderWebhookEnvelope(rawBody);
     const requestStartedAt = Date.now();
     const requestLog = await this.prisma.didiOrderWebhookRequest.create({
-      data: { applicationId: application.id },
+      data: { applicationId: application.id, type: 'orderNew' },
       select: { id: true },
     });
     let stage: DidiOrderWebhookRequestStage = 'received';
@@ -175,9 +192,8 @@ export class DidiOrderWebhooksService {
     const auditSecrets: string[] = [];
 
     try {
-      if (!rawBody) throw new BadRequestException('Raw webhook body is unavailable');
       stage = 'validation';
-      const payload = parseDidiOrderWebhookPayload(rawBody);
+      const payload = parseDidiOrderWebhookRoot(webhookRoot);
       if (payload.appId !== application.appId) {
         throw new BadRequestException('Payload app_id does not match webhook application');
       }
@@ -311,7 +327,7 @@ export class DidiOrderWebhooksService {
           eventId,
         });
         return {
-          accepted: event.status === 'accepted',
+          accepted: event.acceptedCount > 0,
           deduplicated: true,
           orderId: payload.orderId,
           appShopId: event.appShopId,
@@ -348,32 +364,30 @@ export class DidiOrderWebhooksService {
       } catch (error) {
         remote = error instanceof DidiOrderConfirmError ? error : null;
         failureDetail = safeError(error, auditSecrets);
-        await this.prisma.didiOrderWebhookEvent.update({
-          where: { id: event.id },
-          data: {
-            status: 'failed',
-            failedAt: new Date(),
-            remoteHttpStatus: remote?.httpStatus ?? null,
-            remoteErrno: remote?.errno ?? null,
-            remoteErrmsg: sanitizeAuditText(remote?.errmsg),
-            errorMessage: failureDetail,
+        await this.prisma.didiOrderWebhookEvent.updateMany({
+          where: {
+            id: event.id,
+            status: 'processing',
+            acceptedCount: event.acceptedCount,
           },
+          // A failed attempt for slot two must not erase the already durable
+          // first acceptance. The request log records the failure and another
+          // delivery may retry only the still-unused second slot.
+          data: event.acceptedCount > 0
+            ? { status: 'accepted' }
+            : {
+                status: 'failed',
+                failedAt: new Date(),
+                remoteHttpStatus: remote?.httpStatus ?? null,
+                remoteErrno: remote?.errno ?? null,
+                remoteErrmsg: sanitizeAuditText(remote?.errmsg),
+                errorMessage: failureDetail,
+              },
         });
         throw new BadGatewayException('DiDi order confirmation failed');
       }
 
-      await this.prisma.didiOrderWebhookEvent.update({
-        where: { id: event.id },
-        data: {
-          status: 'accepted',
-          acceptedAt: new Date(),
-          failedAt: null,
-          remoteHttpStatus: confirmed.httpStatus,
-          remoteErrno: confirmed.errno,
-          remoteErrmsg: sanitizeAuditText(confirmed.errmsg),
-          errorMessage: null,
-        },
-      });
+      await this.markEventAccepted(event, confirmed);
       await this.completeRequest(requestLog.id, requestStartedAt, {
         stage: 'completed',
         outcome: 'accepted',
@@ -421,6 +435,30 @@ export class DidiOrderWebhooksService {
         completedAt: new Date(),
       },
     });
+  }
+
+  private async markEventAccepted(event: ClaimedEvent, confirmed: ConfirmResult) {
+    const updated = await this.prisma.$queryRaw<Array<{ acceptedCount: number }>>(Prisma.sql`
+      UPDATE "didi_order_webhook_event"
+      SET
+        "status" = 'accepted'::"DidiOrderWebhookStatus",
+        "accepted_count" = "accepted_count" + 1,
+        "accepted_at" = CURRENT_TIMESTAMP,
+        "failed_at" = NULL,
+        "remote_http_status" = ${confirmed.httpStatus},
+        "remote_errno" = ${confirmed.errno},
+        "remote_errmsg" = ${sanitizeAuditText(confirmed.errmsg)},
+        "error_message" = NULL,
+        "updated_at" = CURRENT_TIMESTAMP
+      WHERE "id" = ${event.id}::uuid
+        AND "status" = 'processing'::"DidiOrderWebhookStatus"
+        AND "accepted_count" = ${event.acceptedCount}
+        AND "accepted_count" < 2
+      RETURNING "accepted_count" AS "acceptedCount"
+    `);
+    if (updated.length !== 1) {
+      throw new Error('Order webhook acceptance slot was lost before completion');
+    }
   }
 
   private async resolveRemoteAppShopId(
@@ -499,7 +537,13 @@ export class DidiOrderWebhooksService {
           sourceTimestamp: payload.sourceTimestamp,
           remoteShopValidated,
         },
-        select: { id: true, status: true, appShopId: true, didiShopId: true },
+        select: {
+          id: true,
+          status: true,
+          appShopId: true,
+          didiShopId: true,
+          acceptedCount: true,
+        },
       });
       return { ...created, claimed: true };
     } catch (error) {
@@ -520,6 +564,7 @@ export class DidiOrderWebhooksService {
         status: true,
         appShopId: true,
         didiShopId: true,
+        acceptedCount: true,
         startedAt: true,
         shop: { select: { shopId: true } },
       },
@@ -535,38 +580,62 @@ export class DidiOrderWebhooksService {
     if (existingDidiShopId !== didiShopId) {
       throw new BadRequestException('order_id was previously received for another shop_id');
     }
-    if (existing.status === 'accepted') return { ...existing, claimed: false };
+    if (existing.acceptedCount >= 2) return { ...existing, claimed: false };
 
-    const staleBefore = new Date(Date.now() - DIDI_ORDER_WEBHOOK_STALE_PROCESSING_MS);
-    const reclaimableWhere = existing.status === 'failed'
-      ? { id: existing.id, status: 'failed' as const }
-      : { id: existing.id, status: 'processing' as const, startedAt: { lt: staleBefore } };
-    const reclaimed = await this.prisma.didiOrderWebhookEvent.updateMany({
-      where: reclaimableWhere,
-      data: {
-        status: 'processing',
-        attempts: { increment: 1 },
+    if (existing.status === 'accepted') {
+      const secondAcceptance = await this.claimSecondAcceptance(
+        existing.id,
         shopId,
         didiShopId,
         remoteShopValidated,
-        sourceTimestamp: payload.sourceTimestamp,
-        startedAt: new Date(),
-        acceptedAt: null,
-        failedAt: null,
-        remoteHttpStatus: null,
-        remoteErrno: null,
-        remoteErrmsg: null,
-        errorMessage: null,
-      },
-    });
-    if (reclaimed.count === 1) {
-      return {
-        id: existing.id,
-        status: 'processing',
-        appShopId: existing.appShopId,
-        didiShopId,
-        claimed: true,
-      };
+        payload.sourceTimestamp,
+      );
+      if (secondAcceptance) return secondAcceptance;
+
+      // A request can lose this compare-and-swap either because ten seconds
+      // have not elapsed yet or because a concurrent request claimed slot two.
+      // Re-read below so the deduplicated response reflects the winner.
+    } else {
+      const staleBefore = new Date(Date.now() - DIDI_ORDER_WEBHOOK_STALE_PROCESSING_MS);
+      const reclaimableWhere = existing.status === 'failed'
+        ? {
+            id: existing.id,
+            status: 'failed' as const,
+            acceptedCount: { lt: 2 },
+          }
+        : {
+            id: existing.id,
+            status: 'processing' as const,
+            acceptedCount: { lt: 2 },
+            startedAt: { lt: staleBefore },
+          };
+      const reclaimed = await this.prisma.didiOrderWebhookEvent.updateMany({
+        where: reclaimableWhere,
+        data: {
+          status: 'processing',
+          attempts: { increment: 1 },
+          shopId,
+          didiShopId,
+          remoteShopValidated,
+          sourceTimestamp: payload.sourceTimestamp,
+          startedAt: new Date(),
+          failedAt: null,
+          remoteHttpStatus: null,
+          remoteErrno: null,
+          remoteErrmsg: null,
+          errorMessage: null,
+        },
+      });
+      if (reclaimed.count === 1) {
+        return {
+          id: existing.id,
+          status: 'processing',
+          appShopId: existing.appShopId,
+          didiShopId,
+          acceptedCount: existing.acceptedCount,
+          claimed: true,
+        };
+      }
     }
 
     existing = await this.prisma.didiOrderWebhookEvent.findUnique({
@@ -576,12 +645,53 @@ export class DidiOrderWebhooksService {
         status: true,
         appShopId: true,
         didiShopId: true,
+        acceptedCount: true,
         startedAt: true,
         shop: { select: { shopId: true } },
       },
     });
     if (!existing) throw new Error('Idempotency record disappeared while claiming');
     return { ...existing, claimed: false };
+  }
+
+  private async claimSecondAcceptance(
+    eventId: string,
+    shopId: string | null,
+    didiShopId: string,
+    remoteShopValidated: boolean,
+    sourceTimestamp: string,
+  ): Promise<ClaimedEvent | null> {
+    const claimed = await this.prisma.$queryRaw<Array<{
+      id: string;
+      status: 'processing';
+      appShopId: string;
+      didiShopId: string | null;
+      acceptedCount: number;
+    }>>(Prisma.sql`
+      UPDATE "didi_order_webhook_event"
+      SET
+        "status" = 'processing'::"DidiOrderWebhookStatus",
+        "attempts" = "attempts" + 1,
+        "shop_id" = ${shopId}::uuid,
+        "didi_shop_id" = ${didiShopId},
+        "remote_shop_validated" = ${remoteShopValidated},
+        "source_timestamp" = ${sourceTimestamp},
+        "started_at" = CURRENT_TIMESTAMP,
+        "updated_at" = CURRENT_TIMESTAMP
+      WHERE "id" = ${eventId}::uuid
+        AND "status" = 'accepted'::"DidiOrderWebhookStatus"
+        AND "accepted_count" = 1
+        AND "accepted_at" IS NOT NULL
+        AND "accepted_at" <= CURRENT_TIMESTAMP
+          - (${DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS} * INTERVAL '1 millisecond')
+      RETURNING
+        "id",
+        "status",
+        "app_shop_id" AS "appShopId",
+        "didi_shop_id" AS "didiShopId",
+        "accepted_count" AS "acceptedCount"
+    `);
+    return claimed[0] ? { ...claimed[0], claimed: true } : null;
   }
 
   private async confirmOrder(

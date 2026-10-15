@@ -58,6 +58,7 @@ export interface StepDefinition {
   id: string;
   name: string;
   order: number;
+  action?: string | null;
   executionType: ExecutionType;
   assignmentStrategy: AssignmentStrategy;
   handlerId?: string;

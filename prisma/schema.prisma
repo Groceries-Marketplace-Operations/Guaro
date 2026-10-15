@@ -1035,6 +1035,7 @@ model DidiOrderWebhookEvent {
   type                String
   status              DidiOrderWebhookStatus @default(processing)
   attempts            Int                    @default(1)
+  acceptedCount       Int                    @default(0) @map("accepted_count")
   remoteShopValidated Boolean                @default(false) @map("remote_shop_validated")
   sourceTimestamp     String?                @map("source_timestamp")
   remoteHttpStatus    Int?                   @map("remote_http_status")

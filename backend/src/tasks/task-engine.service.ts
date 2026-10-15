@@ -20,10 +20,18 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { StoreOnboardingLifecycleService } from '../store-onboarding/store-onboarding-lifecycle.service';
+import {
+  formatCreateStoresNote,
+  parseCreateStoresCompletion,
+  requiresCreateStoresCompletion,
+} from './create-stores-completion';
 
 type Tx = Prisma.TransactionClient;
 type LockedStep = Prisma.StepInstanceGetPayload<{
-  include: { stepDefinition: { include: { candidates: true } }; task: true };
+  include: {
+    stepDefinition: { include: { candidates: true } };
+    task: { include: { taskType: { select: { name: true } } } };
+  };
 }>;
 const HANDLER_FENCE_TIMEOUT_MS = 2 * 60 * 60 * 1000 + 5 * 60 * 1000;
 
@@ -132,6 +140,17 @@ export class TaskEngineService {
       if (step.status !== StepStatus.in_progress) {
         throw new BadRequestException('Step must be in_progress to be completed');
       }
+      let normalizedResult = result;
+      let normalizedNote = note;
+      if (requiresCreateStoresCompletion(
+        step.stepDefinition.action,
+        step.task.taskType.name,
+        step.stepDefinition.name,
+      )) {
+        const completion = parseCreateStoresCompletion(result);
+        normalizedResult = completion;
+        normalizedNote = formatCreateStoresNote(completion);
+      }
       const now = new Date();
       const currentPeriod = step.startedAt
         ? Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)
@@ -141,8 +160,8 @@ export class TaskEngineService {
         data: {
           status: StepStatus.done,
           completedAt: now,
-          result: result as Prisma.InputJsonValue ?? Prisma.JsonNull,
-          note: note ?? null,
+          result: normalizedResult as Prisma.InputJsonValue ?? Prisma.JsonNull,
+          note: normalizedNote ?? null,
           workedSeconds: (step.workedSeconds ?? 0) + currentPeriod,
         },
       });
@@ -589,7 +608,10 @@ export class TaskEngineService {
     await tx.$queryRaw`SELECT "id" FROM "step_instance" WHERE "id" = ${stepInstanceId}::uuid FOR UPDATE`;
     return tx.stepInstance.findUnique({
       where: { id: stepInstanceId },
-      include: { stepDefinition: { include: { candidates: true } }, task: true },
+      include: {
+        stepDefinition: { include: { candidates: true } },
+        task: { include: { taskType: { select: { name: true } } } },
+      },
     });
   }
 

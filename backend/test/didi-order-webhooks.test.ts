@@ -1,5 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { test } from 'node:test';
 import {
   BadGatewayException,
@@ -13,6 +15,7 @@ import { redactSensitiveRequestUrl } from '../src/common/filters/global-error.fi
 import {
   buildDidiOrderConfirmBody,
   DIDI_ORDER_WEBHOOK_MAX_BODY_BYTES,
+  DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS,
   DIDI_ORDER_WEBHOOK_STALE_PROCESSING_MS,
   DidiOrderWebhooksService,
   parseDidiOrderWebhookPayload,
@@ -89,6 +92,16 @@ test('raw webhook parsing rejects mismatched nested identifiers and non-order ev
     () => parseDidiOrderWebhookPayload(payload({ type: 'orderUpdate' })),
     BadRequestException,
   );
+  assert.throws(
+    () => parseDidiOrderWebhookPayload(payload({ type: ' orderNew ' })),
+    BadRequestException,
+  );
+  assert.throws(
+    () => parseDidiOrderWebhookPayload(Buffer.from(
+      '{"app_id":1,"data":{"type":"orderNew"}}',
+    )),
+    BadRequestException,
+  );
 });
 
 test('raw webhook parsing preserves shop_id when app_shop_id is absent', () => {
@@ -129,12 +142,26 @@ test('confirm body emits the validated int64 as an exact JSON numeric literal', 
   assert.throws(() => buildDidiOrderConfirmBody('token', '1,"admin":true'));
 });
 
+test('second-acceptance migration backfills accepted events and constrains the dedicated counter', () => {
+  const migration = readFileSync(resolve(
+    __dirname,
+    '../../prisma/migrations/20261014235000_didi_order_webhook_second_acceptance/migration.sql',
+  ), 'utf8');
+  assert.match(migration, /ADD COLUMN "accepted_count" INTEGER NOT NULL DEFAULT 0/);
+  assert.match(migration, /SET "accepted_count" = 1\s+WHERE "status" = 'accepted'/);
+  assert.match(migration, /CHECK \("accepted_count" >= 0 AND "accepted_count" <= 2\)/);
+  assert.match(migration, /CHECK \("type" = 'orderNew'\) NOT VALID/);
+  assert.match(migration, /VALIDATE CONSTRAINT "didi_order_webhook_event_order_new_type_check"/);
+});
+
 interface ExistingEvent {
   id: string;
   status: 'processing' | 'accepted' | 'failed';
   appShopId: string;
   didiShopId: string | null;
   startedAt: Date;
+  acceptedAt?: Date | null;
+  acceptedCount?: number;
 }
 
 function receiver(options: {
@@ -143,12 +170,22 @@ function receiver(options: {
   existing?: ExistingEvent;
   createUniqueConflict?: boolean;
 } = {}) {
-  let existing = options.existing;
+  let existing = options.existing
+    ? {
+        ...options.existing,
+        acceptedAt: options.existing.acceptedAt
+          ?? (options.existing.status === 'accepted' ? new Date() : null),
+        acceptedCount: options.existing.acceptedCount
+          ?? (options.existing.status === 'accepted' ? 1 : 0),
+      }
+    : undefined;
   const updates: Array<Record<string, unknown>> = [];
   const requestUpdates: Array<Record<string, unknown>> = [];
+  const requestCreates: Array<Record<string, unknown>> = [];
   const eventCreates: Array<Record<string, unknown>> = [];
   const applicationFindCalls: unknown[] = [];
   const shopFindCalls: unknown[] = [];
+  const rawQueries: string[] = [];
   let shopFindIndex = 0;
   const prisma = {
     application: {
@@ -169,7 +206,10 @@ function receiver(options: {
       },
     },
     didiOrderWebhookRequest: {
-      create: async () => ({ id: 'request-1' }),
+      create: async (input: { data: Record<string, unknown> }) => {
+        requestCreates.push(input.data);
+        return { id: `request-${requestCreates.length}` };
+      },
       update: async (input: { data: Record<string, unknown> }) => {
         requestUpdates.push(input.data);
         return { id: 'request-1', ...input.data };
@@ -185,12 +225,15 @@ function receiver(options: {
           appShopId: APP_SHOP_ID,
           didiShopId: String(input.data.didiShopId),
           startedAt: new Date(),
+          acceptedAt: null,
+          acceptedCount: 0,
         };
         return {
           id: existing.id,
           status: existing.status,
           appShopId: existing.appShopId,
           didiShopId: existing.didiShopId,
+          acceptedCount: existing.acceptedCount,
         };
       },
       findUnique: async () => existing
@@ -199,10 +242,21 @@ function receiver(options: {
             shop: existing.didiShopId === null ? { shopId: REMOTE_SHOP_ID } : null,
           }
         : null,
-      updateMany: async (input: { where: { status: string; startedAt?: { lt: Date } } }) => {
+      updateMany: async (input: {
+        where: { status: string; startedAt?: { lt: Date }; acceptedCount?: number | { lt: number } };
+        data: Record<string, unknown>;
+      }) => {
         if (!existing || existing.status !== input.where.status) return { count: 0 };
         if (input.where.startedAt && existing.startedAt >= input.where.startedAt.lt) return { count: 0 };
-        existing = { ...existing, status: 'processing', startedAt: new Date() };
+        if (typeof input.where.acceptedCount === 'number'
+          && existing.acceptedCount !== input.where.acceptedCount) return { count: 0 };
+        if (typeof input.where.acceptedCount === 'object'
+          && (existing.acceptedCount ?? 0) >= input.where.acceptedCount.lt) return { count: 0 };
+        const nextStatus = typeof input.data.status === 'string'
+          ? input.data.status as ExistingEvent['status']
+          : existing.status;
+        existing = { ...existing, status: nextStatus, startedAt: new Date() };
+        updates.push(input.data);
         return { count: 1 };
       },
       update: async (input: { data: Record<string, unknown> }) => {
@@ -213,15 +267,54 @@ function receiver(options: {
         return existing;
       },
     },
+    $queryRaw: async (query: { strings?: readonly string[] }) => {
+      const sql = query.strings?.join('?') ?? '';
+      rawQueries.push(sql);
+      if (!existing) return [];
+      if (sql.includes('"accepted_count" = "accepted_count" + 1')) {
+        if (existing.status !== 'processing' || (existing.acceptedCount ?? 0) >= 2) return [];
+        existing = {
+          ...existing,
+          status: 'accepted',
+          acceptedCount: (existing.acceptedCount ?? 0) + 1,
+          acceptedAt: new Date(),
+        };
+        updates.push({
+          status: 'accepted',
+          acceptedCount: existing.acceptedCount,
+          remoteErrno: 0,
+        });
+        return [{ acceptedCount: existing.acceptedCount }];
+      }
+      if (sql.includes('"accepted_at" <= CURRENT_TIMESTAMP')) {
+        const eligibleBefore = Date.now() - DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS;
+        if (existing.status !== 'accepted'
+          || existing.acceptedCount !== 1
+          || !existing.acceptedAt
+          || existing.acceptedAt.getTime() > eligibleBefore) return [];
+        existing = { ...existing, status: 'processing', startedAt: new Date() };
+        return [{
+          id: existing.id,
+          status: 'processing',
+          appShopId: existing.appShopId,
+          didiShopId: existing.didiShopId,
+          acceptedCount: existing.acceptedCount,
+        }];
+      }
+      return [];
+    },
   };
   const config = { getOrThrow: () => KEY };
   return {
     value: new DidiOrderWebhooksService(prisma as never, config as never),
     updates,
     requestUpdates,
+    requestCreates,
     eventCreates,
     applicationFindCalls,
     shopFindCalls,
+    rawQueries,
+    currentEvent: () => existing,
   };
 }
 
@@ -632,7 +725,7 @@ test('shop-list fallback has bounded rate-limit retries and rejects non-2xx resp
   }
 });
 
-test('an accepted duplicate and a live processing duplicate never resend', async () => {
+test('an accepted duplicate before ten seconds and a live processing duplicate never resend', async () => {
   const originalFetch = globalThis.fetch;
   let fetches = 0;
   globalThis.fetch = (async () => {
@@ -682,6 +775,140 @@ test('an accepted duplicate and a live processing duplicate never resend', async
     globalThis.fetch = originalFetch;
   }
   assert.equal(fetches, 0);
+});
+
+test('the same order is accepted a second time after ten seconds, then all later deliveries deduplicate', async () => {
+  const subject = receiver({
+    createUniqueConflict: true,
+    existing: {
+      id: 'event-second',
+      status: 'accepted',
+      appShopId: APP_SHOP_ID,
+      didiShopId: REMOTE_SHOP_ID,
+      startedAt: new Date(Date.now() - 20_000),
+      acceptedAt: new Date(Date.now() - DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS - 1_000),
+      acceptedCount: 1,
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  let confirmations = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirmations += 1;
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const second = await subject.value.receive(TOKEN, payload());
+    assert.equal(second.accepted, true);
+    assert.equal(second.deduplicated, false);
+    assert.equal(subject.currentEvent()?.acceptedCount, 2);
+    assert.ok(subject.rawQueries.some(sql =>
+      sql.includes('"accepted_at" <= CURRENT_TIMESTAMP')
+      && sql.includes("INTERVAL '1 millisecond'")));
+
+    const third = await subject.value.receive(TOKEN, payload());
+    assert.deepEqual(third, {
+      accepted: true,
+      deduplicated: true,
+      orderId: ORDER_ID,
+      appShopId: APP_SHOP_ID,
+      status: 'accepted',
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(confirmations, 1);
+});
+
+test('concurrent deliveries eligible for the second acceptance have exactly one CAS winner', async () => {
+  const subject = receiver({
+    createUniqueConflict: true,
+    existing: {
+      id: 'event-concurrent-second',
+      status: 'accepted',
+      appShopId: APP_SHOP_ID,
+      didiShopId: REMOTE_SHOP_ID,
+      startedAt: new Date(Date.now() - 20_000),
+      acceptedAt: new Date(Date.now() - DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS - 1_000),
+      acceptedCount: 1,
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  let confirmations = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirmations += 1;
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const results = await Promise.all([
+      subject.value.receive(TOKEN, payload()),
+      subject.value.receive(TOKEN, payload()),
+    ]);
+    assert.equal(results.filter(result => !result.deduplicated).length, 1);
+    assert.equal(results.filter(result => result.deduplicated).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(confirmations, 1);
+  assert.equal(subject.currentEvent()?.acceptedCount, 2);
+});
+
+test('a failed second confirmation preserves the first acceptance and a later delivery retries slot two', async () => {
+  const subject = receiver({
+    createUniqueConflict: true,
+    existing: {
+      id: 'event-retry-second',
+      status: 'accepted',
+      appShopId: APP_SHOP_ID,
+      didiShopId: REMOTE_SHOP_ID,
+      startedAt: new Date(Date.now() - 20_000),
+      acceptedAt: new Date(Date.now() - DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS),
+      acceptedCount: 1,
+    },
+  });
+  const firstAcceptedAt = subject.currentEvent()?.acceptedAt;
+  const originalFetch = globalThis.fetch;
+  let confirmations = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirmations += 1;
+    return new Response(JSON.stringify(confirmations === 1
+      ? { errno: 10005, errmsg: 'temporary failure' }
+      : { errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    await assert.rejects(subject.value.receive(TOKEN, payload()), BadGatewayException);
+    assert.equal(subject.currentEvent()?.status, 'accepted');
+    assert.equal(subject.currentEvent()?.acceptedCount, 1);
+    assert.equal(subject.currentEvent()?.acceptedAt, firstAcceptedAt);
+
+    const retried = await subject.value.receive(TOKEN, payload());
+    assert.equal(retried.accepted, true);
+    assert.equal(retried.deduplicated, false);
+    assert.equal(subject.currentEvent()?.acceptedCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(confirmations, 2);
 });
 
 test('a duplicate order_id for another DiDi shop_id is rejected before confirmation', async () => {
@@ -800,12 +1027,51 @@ test('receiver refuses app mismatch and ambiguous shop resolution before remote 
   assert.equal(fetches, 0);
 });
 
-test('valid-token validation failures are audited, while no body or token is persisted', async () => {
+test('non-orderNew deliveries are rejected before any request/event persistence and do not consume the order', async () => {
   const subject = receiver();
-  await assert.rejects(
-    subject.value.receive(TOKEN, payload({ type: 'orderUpdate' })),
-    BadRequestException,
-  );
+  for (const body of [
+    payload({ type: 'orderUpdate' }),
+    payload({ type: 'OrderNew' }),
+    payload({ type: ' orderNew ' }),
+    Buffer.from(`{"app_id":${APP_ID},"data":{"type":"orderNew","order_id":${ORDER_ID}}}`),
+    Buffer.from(`{"app_id":${APP_ID},"note":"contains type orderNew text"}`),
+    Buffer.from('{not-json'),
+  ]) {
+    await assert.rejects(subject.value.receive(TOKEN, body), BadRequestException);
+  }
+  assert.equal(subject.requestCreates.length, 0);
+  assert.equal(subject.requestUpdates.length, 0);
+  assert.equal(subject.eventCreates.length, 0);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const accepted = await subject.value.receive(TOKEN, payload());
+    assert.equal(accepted.accepted, true);
+    assert.equal(accepted.deduplicated, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(subject.requestCreates.length, 1);
+  assert.equal(subject.eventCreates.length, 1);
+  assert.equal(subject.currentEvent()?.acceptedCount, 1);
+});
+
+test('malformed orderNew deliveries are audited without storing raw body or token', async () => {
+  const subject = receiver();
+  const malformedOrderNew = Buffer.from('{"type":"orderNew","app_id":"bad"}');
+  await assert.rejects(subject.value.receive(TOKEN, malformedOrderNew), BadRequestException);
+  assert.equal(subject.requestCreates.length, 1);
+  assert.equal(subject.requestCreates[0]?.type, 'orderNew');
   const audit = subject.requestUpdates.at(-1);
   assert.equal(audit?.stage, 'validation');
   assert.equal(audit?.outcome, 'rejected');

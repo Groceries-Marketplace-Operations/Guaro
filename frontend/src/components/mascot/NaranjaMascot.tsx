@@ -4,6 +4,25 @@ import { MASCOT_EVENT } from './mascot-events';
 import type { MascotEventDetail, MascotSubject } from './mascot-events';
 
 const initialEvent: MascotEventDetail = { state: 'idle', operation: 'save', subject: 'change' };
+const MASCOT_MINIMIZED_STORAGE_KEY = 'guaro.ui.naranja.minimized.v1';
+
+function readMinimizedPreference() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(MASCOT_MINIMIZED_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function storeMinimizedPreference(minimized: boolean) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(MASCOT_MINIMIZED_STORAGE_KEY, String(minimized));
+  } catch {
+    // The control remains reversible for this session when storage is blocked.
+  }
+}
 
 function message(detail: MascotEventDetail, spanish: boolean) {
   const { state, operation, subject } = detail;
@@ -39,7 +58,9 @@ export default function NaranjaMascot() {
   const { lang } = useLang();
   const [event, setEvent] = useState(initialEvent);
   const [expanded, setExpanded] = useState(false);
+  const [minimized, setMinimized] = useState(readMinimizedPreference);
   const sequence = useRef(0);
+  const minimizedRef = useRef(minimized);
   const spanish = lang === 'es';
 
   useEffect(() => {
@@ -49,7 +70,7 @@ export default function NaranjaMascot() {
       sequence.current += 1;
       const current = sequence.current;
       setEvent(detail);
-      setExpanded(true);
+      if (!minimizedRef.current) setExpanded(true);
       if (detail.state !== 'working') {
         window.setTimeout(() => {
           if (sequence.current !== current) return;
@@ -63,23 +84,69 @@ export default function NaranjaMascot() {
   }, []);
 
   const copy = useMemo(() => message(event, spanish), [event, spanish]);
+  const hideLabel = spanish ? 'Ocultar Naranja' : 'Hide Naranja';
+  const showLabel = spanish ? 'Mostrar Naranja' : 'Show Naranja';
+
+  const hideMascot = () => {
+    minimizedRef.current = true;
+    setMinimized(true);
+    setExpanded(false);
+    storeMinimizedPreference(true);
+  };
+
+  const showMascot = () => {
+    minimizedRef.current = false;
+    setMinimized(false);
+    storeMinimizedPreference(false);
+  };
 
   return (
-    <aside className={`naranja-mascot is-${event.state} ${expanded ? 'is-expanded' : ''}`} aria-live="polite" aria-label="Naranja, asistente del sistema">
-      {expanded && (
-        <div className="naranja-speech">
-          <strong>Naranja</strong>
-          <span>{copy}</span>
-          {event.state === 'working' && <i className="naranja-dots"><b /><b /><b /></i>}
-        </div>
+    <aside
+      className={`naranja-mascot is-${event.state} ${expanded ? 'is-expanded' : ''}${minimized ? ' is-minimized' : ''}`}
+      aria-live="polite"
+      aria-label={spanish ? 'Naranja, asistente del sistema' : 'Naranja, system assistant'}
+    >
+      {minimized ? (
+        <button
+          type="button"
+          className="naranja-restore"
+          onClick={showMascot}
+          aria-label={`${showLabel}. ${copy}`}
+          title={showLabel}
+        >
+          <img src={`${import.meta.env.BASE_URL}mascot/naranja-robot-v2.png`} alt="" aria-hidden="true" />
+          <span className="naranja-status" aria-hidden="true" />
+        </button>
+      ) : (
+        <>
+          {expanded && (
+            <div className="naranja-speech">
+              <strong>Naranja</strong>
+              <span>{copy}</span>
+              {event.state === 'working' && <i className="naranja-dots"><b /><b /><b /></i>}
+            </div>
+          )}
+          <button
+            type="button"
+            className="naranja-hide"
+            onClick={hideMascot}
+            aria-label={hideLabel}
+            title={hideLabel}
+          >
+            <span aria-hidden="true">−</span>
+          </button>
+          <button type="button" className="naranja-character" onClick={() => setExpanded(value => !value)} aria-expanded={expanded} title={spanish ? 'Abrir Naranja' : 'Open Naranja'}>
+            <span className="naranja-aura" aria-hidden="true" />
+            <img
+              src={`${import.meta.env.BASE_URL}mascot/naranja-robot-v2.png`}
+              alt={spanish ? 'Naranja, mascota asistente' : 'Naranja, assistant mascot'}
+            />
+            <span className="naranja-thruster" aria-hidden="true"><i /><i /><i /></span>
+            <span className="naranja-status" />
+            {event.state === 'success' && <span className="naranja-confetti" aria-hidden="true"><i /><i /><i /><i /><i /></span>}
+          </button>
+        </>
       )}
-      <button type="button" className="naranja-character" onClick={() => setExpanded(value => !value)} aria-expanded={expanded} title={spanish ? 'Abrir Naranja' : 'Open Naranja'}>
-        <span className="naranja-aura" aria-hidden="true" />
-        <img src={`${import.meta.env.BASE_URL}mascot/naranja-robot-v2.png`} alt="Naranja, mascota asistente" />
-        <span className="naranja-thruster" aria-hidden="true"><i /><i /><i /></span>
-        <span className="naranja-status" />
-        {event.state === 'success' && <span className="naranja-confetti" aria-hidden="true"><i /><i /><i /><i /><i /></span>}
-      </button>
     </aside>
   );
 }

@@ -659,6 +659,7 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
   padding: 28px; width: 100%; max-width: 480px;
   max-height: 90vh; overflow-y: auto;
 }
+.modal--wide { max-width: 1040px; }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 20px;
@@ -1553,6 +1554,18 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
 
 /* Naranja global action mascot ------------------------------------------- */
 .naranja-mascot { position: fixed; right: 22px; bottom: 18px; z-index: 950; display: flex; align-items: flex-end; gap: 10px; pointer-events: none; }
+.naranja-hide { position: absolute; z-index: 6; top: -5px; right: -5px; display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-raised); color: var(--text-secondary); box-shadow: var(--shadow-sm); cursor: pointer; pointer-events: auto; transition: background .16s ease, color .16s ease, transform .16s ease; }
+.naranja-hide:hover { background: var(--surface-hover); color: var(--text-primary); transform: translateY(-1px); }
+.naranja-hide:focus-visible, .naranja-restore:focus-visible { outline: 3px solid rgba(255,105,0,.45); outline-offset: 3px; }
+.naranja-hide span { font-size: 1rem; font-weight: 800; line-height: 1; transform: translateY(-1px); }
+.naranja-mascot.is-minimized { right: 12px; bottom: 12px; }
+.naranja-restore { position: relative; display: grid; width: 46px; height: 46px; padding: 4px; overflow: visible; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 15px; background: color-mix(in srgb, var(--surface-raised) 94%, var(--accent)); box-shadow: var(--shadow-md); cursor: pointer; pointer-events: auto; transition: background .16s ease, box-shadow .16s ease, transform .16s ease; }
+.naranja-restore:hover { background: var(--surface-raised); box-shadow: 0 10px 24px rgba(89,39,0,.2); transform: translateY(-2px); }
+.naranja-restore img { width: 36px; height: 36px; object-fit: contain; filter: drop-shadow(0 5px 5px rgba(89,39,0,.22)); animation: naranja-idle-flight 3.2s ease-in-out infinite; }
+.naranja-restore .naranja-status { right: -4px; bottom: -4px; width: 13px; height: 13px; border-width: 2px; }
+.naranja-mascot.is-working .naranja-restore img { animation: naranja-working-flight .72s ease-in-out infinite alternate; }
+.naranja-mascot.is-success .naranja-restore img { animation: naranja-success .7s cubic-bezier(.2,.9,.35,1.3); }
+.naranja-mascot.is-error .naranja-restore img { animation: naranja-error .45s ease-in-out 2; }
 .naranja-character { position: relative; width: 96px; height: 104px; padding: 0; overflow: visible; border: 0; background: transparent; cursor: pointer; pointer-events: auto; animation: naranja-roam 6.5s ease-in-out infinite; }
 .naranja-character:focus-visible { outline: 3px solid rgba(255,105,0,.45); outline-offset: 4px; border-radius: 50%; }
 .naranja-character:hover img { filter: drop-shadow(0 16px 15px rgba(89,39,0,.3)) brightness(1.06); }
@@ -1593,13 +1606,13 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
 @keyframes naranja-error { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-5px) rotate(-2deg); } 75% { transform: translateX(5px) rotate(2deg); } }
 @keyframes naranja-speech-in { from { transform: translateY(6px) scale(.97); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
 @keyframes naranja-confetti { from { opacity: 1; transform: translate(0,0) rotate(0); } to { opacity: 0; transform: translate(var(--x, 0),var(--y, -45px)) rotate(180deg); } }
-@media (max-width: 760px) { .naranja-mascot { right: 12px; bottom: 12px; } .naranja-character { width: 78px; height: 84px; } }
+@media (max-width: 760px) { .naranja-mascot { right: 12px; bottom: 12px; } .naranja-character { width: 78px; height: 84px; } .naranja-hide { top: -7px; right: -7px; } }
 @media (max-width: 1500px) {
   .new-task-workspace { grid-template-columns: minmax(0, 640px); }
   .validation-assistant { position: static; grid-row: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .validation-assistant-avatar, .validation-assistant-ring, .validation-assistant-avatar img, .assistant-typing i, .naranja-character, .naranja-character img, .naranja-aura, .naranja-thruster i, .naranja-status, .naranja-confetti i, .naranja-dots b { animation: none !important; }
+  .validation-assistant-avatar, .validation-assistant-ring, .validation-assistant-avatar img, .assistant-typing i, .naranja-character, .naranja-character img, .naranja-restore img, .naranja-aura, .naranja-thruster i, .naranja-status, .naranja-confetti i, .naranja-dots b { animation: none !important; }
 }
 
 /* Emergency audit detail ------------------------------------------------- */

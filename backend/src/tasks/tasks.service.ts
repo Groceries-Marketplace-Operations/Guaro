@@ -7,6 +7,15 @@ import { JwtUser } from '../auth/types/jwt-user.interface';
 import { TaskValidationService } from './task-validation.service';
 import { SectionAccessService } from '../sections/section-access.service';
 import { StoreOnboardingLifecycleService } from '../store-onboarding/store-onboarding-lifecycle.service';
+import {
+  buildCreateStoresWorkbook,
+  isCreateStoresCompletionResult,
+  isAllowedCreateStoresXlsxMime,
+  MAX_CREATE_STORES_IMPORT_BYTES,
+  parseCreateStoresCompletion,
+  parseCreateStoresWorkbook,
+  requiresCreateStoresCompletion,
+} from './create-stores-completion';
 
 const TASK_INCLUDE = {
   taskType: { select: { id: true, name: true, sectionId: true } },
@@ -15,7 +24,16 @@ const TASK_INCLUDE = {
   stepInstances: {
     orderBy: { stepDefinition: { order: 'asc' as const } },
     include: {
-      stepDefinition: { select: { id: true, name: true, order: true, executionType: true, assignmentStrategy: true } },
+      stepDefinition: {
+        select: {
+          id: true,
+          name: true,
+          order: true,
+          executionType: true,
+          assignmentStrategy: true,
+          action: true,
+        },
+      },
       assignedTo: { select: { id: true, name: true, email: true } },
     },
   },
@@ -341,10 +359,28 @@ export class TasksService {
     stepId: string,
     viewer: { roles: AccountRole[]; accountId: string; sectionId: string | null },
     format: 'xlsx' | 'json' = 'xlsx',
-  ): Promise<{ fileKey: string; mimeType: string }> {
+  ): Promise<{ fileKey: string; mimeType: string; content?: Buffer }> {
     const task = await this.findOne(taskId, viewer);
     const step = task.stepInstances.find((item) => item.id === stepId);
     if (!step) throw new NotFoundException('Step not found in this task');
+
+    if (
+      format === 'xlsx'
+      && step.status === StepStatus.done
+      && requiresCreateStoresCompletion(
+        step.stepDefinition?.action,
+        task.taskType?.name,
+        step.stepDefinition?.name,
+      )
+      && isCreateStoresCompletionResult(step.result)
+    ) {
+      const completion = parseCreateStoresCompletion(step.result);
+      return {
+        fileKey: `created-stores-${task.id}.xlsx`,
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        content: await buildCreateStoresWorkbook(completion),
+      };
+    }
 
     const result = step.result as { fileKey?: unknown; jsonFileKey?: unknown } | null;
     const fileKey = format === 'json' ? result?.jsonFileKey : result?.fileKey;
@@ -530,6 +566,41 @@ export class TasksService {
     if (!requester.roles.some(role => role === AccountRole.admin || role === AccountRole.super_admin)) {
       throw new ForbiddenException('Only admins can assign or reassign BPOs');
     }
+  }
+
+  async importCreatedStores(
+    taskId: string,
+    stepId: string,
+    file: Express.Multer.File,
+    requester: JwtUser,
+  ) {
+    const viewer = await this.assertCanActOnStep(taskId, stepId, requester);
+    const task = await this.findOne(taskId, viewer);
+    const step = task.stepInstances.find(item => item.id === stepId);
+    if (!step) throw new NotFoundException('Step not found in this task');
+    if (!requiresCreateStoresCompletion(
+      step.stepDefinition?.action,
+      task.taskType?.name,
+      step.stepDefinition?.name,
+    )) {
+      throw new BadRequestException('XLSX store import is only available for the Create Stores step');
+    }
+    if (step.status !== StepStatus.in_progress) {
+      throw new BadRequestException('Step must be in_progress to import created stores');
+    }
+
+    const validExtension = file?.originalname
+      ? file.originalname.toLocaleLowerCase('en-US').endsWith('.xlsx')
+      : false;
+    const validMime = isAllowedCreateStoresXlsxMime(file?.mimetype);
+    if (!validExtension || !validMime || !Buffer.isBuffer(file?.buffer)) {
+      throw new BadRequestException('Only .xlsx files are allowed');
+    }
+    if (file.size > MAX_CREATE_STORES_IMPORT_BYTES || file.buffer.length > MAX_CREATE_STORES_IMPORT_BYTES) {
+      throw new BadRequestException('The XLSX file exceeds the 2 MB limit');
+    }
+
+    return parseCreateStoresWorkbook(file.buffer);
   }
 
   async completeStep(taskId: string, stepId: string, result: unknown, note: string | undefined, requester: JwtUser) {

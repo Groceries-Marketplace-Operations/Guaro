@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundE
 import { Response } from 'express';
 import * as ExcelJS from 'exceljs';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
+import { diskStorage, memoryStorage } from 'multer';
 import { readFile, unlink } from 'fs/promises';
 import { mkdirSync } from 'fs';
 import { extname, join } from 'path';
@@ -22,6 +22,12 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { FailStepDto } from './dto/fail-step.dto';
 import { TasksService } from './tasks.service';
 import { TaskValidationService } from './task-validation.service';
+import {
+  buildCreateStoresImportTemplate,
+  CREATE_STORES_XLSX_MIME,
+  isAllowedCreateStoresXlsxMime,
+  MAX_CREATE_STORES_IMPORT_BYTES,
+} from './create-stores-completion';
 
 @Controller('tasks')
 @Permissions('tasks.view')
@@ -135,6 +141,16 @@ export class TasksController {
     response.send(Buffer.from(buffer));
   }
 
+  @Get('templates/create-stores.xlsx')
+  @Permissions('tasks.execute')
+  @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  async createStoresTemplate(@Res() response: Response) {
+    const buffer = await buildCreateStoresImportTemplate();
+    response.setHeader('Content-Type', CREATE_STORES_XLSX_MIME);
+    response.setHeader('Content-Disposition', 'attachment; filename="tequila-created-stores-template.xlsx"');
+    response.send(buffer);
+  }
+
   @Get('assignable-bpos')
   @Permissions('tasks.assign')
   @Roles(AccountRole.admin, AccountRole.super_admin)
@@ -190,6 +206,29 @@ export class TasksController {
     @CurrentUser() u: JwtUser,
   ) {
     return this.tasksService.completeStep(id, stepId, dto.result, dto.note, u);
+  }
+
+  @Post(':id/steps/:stepId/import-created-stores')
+  @Permissions('tasks.execute')
+  @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: MAX_CREATE_STORES_IMPORT_BYTES, files: 1 },
+    fileFilter: (_, file, cb) => {
+      const validExtension = extname(file.originalname).toLocaleLowerCase('en-US') === '.xlsx';
+      const validMime = isAllowedCreateStoresXlsxMime(file.mimetype);
+      const valid = validExtension && validMime;
+      cb(valid ? null : new BadRequestException('Only .xlsx files are allowed'), valid);
+    },
+  }))
+  importCreatedStores(
+    @Param('id') id: string,
+    @Param('stepId') stepId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() u: JwtUser,
+  ) {
+    if (!file) throw new BadRequestException('An XLSX file is required');
+    return this.tasksService.importCreatedStores(id, stepId, file, u);
   }
 
   @Patch(':id/steps/:stepId/fail')
@@ -260,18 +299,22 @@ export class TasksController {
     if (format !== undefined && format !== 'xlsx' && format !== 'json') {
       throw new BadRequestException('Export format must be xlsx or json');
     }
-    const { fileKey, mimeType } = await this.tasksService.getStepExport(
+    const { fileKey, mimeType, content } = await this.tasksService.getStepExport(
       id,
       stepId,
       { roles: u.roles, accountId: u.id, sectionId: u.sectionId },
       format ?? 'xlsx',
     );
-    const filepath = join(process.cwd(), 'uploads', 'exports', fileKey);
     let data: Buffer;
-    try {
-      data = await readFile(filepath);
-    } catch {
-      throw new NotFoundException('File not found or already downloaded');
+    if (content) {
+      data = content;
+    } else {
+      const filepath = join(process.cwd(), 'uploads', 'exports', fileKey);
+      try {
+        data = await readFile(filepath);
+      } catch {
+        throw new NotFoundException('File not found or already downloaded');
+      }
     }
     return {
       fileKey,
