@@ -363,13 +363,11 @@ export class DidiOrderWebhooksService {
       let candidate: ShopAcceptanceCandidate;
       try {
         candidate = payload.shopId && payload.appShopId
-          ? {
-            appShopId: payload.appShopId,
-            didiShopId: payload.shopId,
-            localShopId: null,
-            remoteShopValidated: false,
-            shopResolutionSource: DidiOrderWebhookShopResolutionSource.payload,
-          }
+          ? await this.resolvePayloadShopCandidate(
+            application.id,
+            payload.shopId,
+            payload.appShopId,
+          )
           : await this.resolveInitialShopCandidate(
             application.id,
             application.appId,
@@ -1110,6 +1108,39 @@ export class DidiOrderWebhooksService {
       requiredAppShopId(remoteAppShopId, 'Resolved app_shop_id'),
       DidiOrderWebhookShopResolutionSource.remote,
     );
+  }
+
+  private async resolvePayloadShopCandidate(
+    applicationId: string,
+    didiShopId: string,
+    appShopId: string,
+  ): Promise<ShopAcceptanceCandidate> {
+    const localMatches = await this.prisma.shop.findMany({
+      where: {
+        shopId: didiShopId,
+        appShopId,
+        deletedAt: null,
+        brand: { applicationId, deletedAt: null },
+      },
+      select: { id: true, shopId: true, appShopId: true },
+      take: 2,
+    });
+    if (localMatches.length > 1) {
+      throw new BadRequestException(
+        'Webhook shop maps to more than one active local shop for the application',
+      );
+    }
+    return {
+      // The external identifiers used for authentication and confirmation
+      // always remain the exact values received in the orderNew payload.
+      appShopId,
+      didiShopId,
+      localShopId: localMatches[0]?.id ?? null,
+      remoteShopValidated: false,
+      shopResolutionSource: localMatches.length === 1
+        ? DidiOrderWebhookShopResolutionSource.local
+        : DidiOrderWebhookShopResolutionSource.payload,
+    };
   }
 
   private async resolveLocalAlternativeShopCandidate(

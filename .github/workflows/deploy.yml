@@ -450,6 +450,23 @@ jobs:
               -e PGOPTIONS='-c max_parallel_maintenance_workers=0' guaro-db \
               sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
               < prisma/deploy/didi_order_webhook_indexes_online.sql
+            # Pre-apply the retry-safe payload-resolution constraint while the
+            # current backend is still serving. On an established database,
+            # this keeps a transient lock timeout out of Prisma's migration
+            # ledger so the whole deployment can be retried automatically.
+            # A fresh database has no prerequisite column yet, so Prisma owns
+            # the normal ordered bootstrap path below.
+            payload_resolution_ready="$(
+              printf '%s\n' \
+                "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('public.didi_order_webhook_event') AND attname = 'shop_resolution_source' AND NOT attisdropped) THEN 1 ELSE 0 END;" \
+                | docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
+                    sh -c 'psql -X -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+            )"
+            if [ "$payload_resolution_ready" -eq 1 ]; then
+              docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
+                sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+                < prisma/migrations/20261016023000_didi_order_webhook_payload_resolution_check/migration.sql
+            fi
             # Record the replay-safe migrations with the loaded image. All
             # production index statements are now no-ops, while fresh
             # development databases retain a self-contained fallback.

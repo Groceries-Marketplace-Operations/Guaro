@@ -209,6 +209,30 @@ test('resolution-source migrations stay compatible with the previous writer duri
   assert.doesNotMatch(consistencyMigration, /ADD CONSTRAINT/i);
 });
 
+test('payload-resolution migration permits an unvalidated payload without weakening other sources', () => {
+  const migration = readFileSync(resolve(
+    __dirname,
+    '../../prisma/migrations/20261016023000_didi_order_webhook_payload_resolution_check/migration.sql',
+  ), 'utf8');
+  assert.match(
+    migration,
+    /"shop_id" IS NOT NULL[\s\S]+"didi_shop_id" IS NOT NULL[\s\S]+"remote_shop_validated" = true[\s\S]+"shop_resolution_source" = 'payload'/,
+  );
+  assert.match(migration, /shop_resolution_payload_check[\s\S]+NOT VALID/);
+  assert.match(migration, /BEGIN;[\s\S]+SET LOCAL lock_timeout = '5s'/);
+  assert.match(migration, /SET LOCAL statement_timeout = '2min'/);
+  assert.equal(migration.match(/^BEGIN;$/gm)?.length, 3);
+  assert.equal(migration.match(/^COMMIT;$/gm)?.length, 3);
+  assert.equal(migration.match(/^SET LOCAL lock_timeout = '5s';$/gm)?.length, 3);
+  assert.match(migration, /VALIDATE CONSTRAINT "didi_order_webhook_event_shop_resolution_payload_check"/);
+  assert.match(migration, /DROP CONSTRAINT IF EXISTS "didi_order_webhook_event_shop_resolution_check"/);
+  assert.match(
+    migration,
+    /RENAME CONSTRAINT "didi_order_webhook_event_shop_resolution_payload_check"[\s\S]+TO "didi_order_webhook_event_shop_resolution_check"/,
+  );
+  assert.doesNotMatch(migration, /SET\s+"remote_shop_validated"/i);
+});
+
 test('confirmation budget migration is metadata-only and defers table validation', () => {
   const migration = readFileSync(resolve(
     __dirname,
@@ -802,8 +826,14 @@ test('receiver resolves a missing app_shop_id from the application shop list', a
   assert.equal(resolutionAudit?.appShopId, APP_SHOP_ID);
 });
 
-test('receiver uses a complete webhook shop pair before local, inventory, or remote lookup', async () => {
-  const subject = receiver({ shopResponses: [[], [SHOP_ID]] });
+test('receiver enriches a complete webhook shop pair with its exact active local mapping', async () => {
+  const subject = receiver({
+    shopRecordResponses: [[{
+      id: SHOP_ID,
+      shopId: REMOTE_SHOP_ID,
+      appShopId: APP_SHOP_ID,
+    }]],
+  });
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
   globalThis.fetch = (async (input: string | URL | Request) => {
@@ -827,11 +857,24 @@ test('receiver uses a complete webhook shop pair before local, inventory, or rem
     globalThis.fetch = originalFetch;
   }
   assert.equal(calls.filter(url => url.endsWith('/v1/shop/shop/list')).length, 0);
-  assert.equal(subject.shopFindCalls.length, 0);
+  assert.deepEqual(subject.shopFindCalls, [{
+    where: {
+      shopId: REMOTE_SHOP_ID,
+      appShopId: APP_SHOP_ID,
+      deletedAt: null,
+      brand: { applicationId: APPLICATION_ID, deletedAt: null },
+    },
+    select: { id: true, shopId: true, appShopId: true },
+    take: 2,
+  }]);
   assert.equal(subject.inventoryFindCalls.length, 0);
+  assert.equal(subject.eventCreates[0]?.shopId, SHOP_ID);
+  assert.equal(subject.eventCreates[0]?.didiShopId, REMOTE_SHOP_ID);
+  assert.equal(subject.eventCreates[0]?.appShopId, APP_SHOP_ID);
+  assert.equal(subject.eventCreates[0]?.remoteShopValidated, false);
   assert.equal(
     subject.eventCreates[0]?.shopResolutionSource,
-    DidiOrderWebhookShopResolutionSource.payload,
+    DidiOrderWebhookShopResolutionSource.local,
   );
 });
 
@@ -893,7 +936,7 @@ test('receiver confirms a remotely verified shop even when it is absent locally'
 });
 
 test('receiver confirms a complete payload pair without requiring a local Shop', async () => {
-  const subject = receiver({ shopResponses: [[], []] });
+  const subject = receiver({ shopResponses: [[]] });
   const originalFetch = globalThis.fetch;
   let confirms = 0;
   globalThis.fetch = (async (input: string | URL | Request) => {
@@ -923,6 +966,7 @@ test('receiver confirms a complete payload pair without requiring a local Shop',
     globalThis.fetch = originalFetch;
   }
   assert.equal(confirms, 1);
+  assert.equal(subject.shopFindCalls.length, 1);
   assert.equal(subject.eventCreates[0]?.shopId, null);
   assert.equal(subject.eventCreates[0]?.didiShopId, REMOTE_SHOP_ID);
   assert.equal(subject.eventCreates[0]?.remoteShopValidated, false);
@@ -1031,7 +1075,7 @@ test('receiver falls back to a remote app_shop_id after direct payload authentic
     globalThis.fetch = originalFetch;
   }
   assert.ok(fetches >= 4);
-  assert.equal(subject.shopFindCalls.length, 1);
+  assert.equal(subject.shopFindCalls.length, 2);
   assert.equal(subject.requestUpdates.at(-1)?.outcome, 'accepted');
   assert.ok(subject.updates.some(update =>
     update.appShopId === 'remote-value'
@@ -1108,7 +1152,7 @@ test('a 5xx confirmation outcome is ambiguous and never tries another shop candi
     globalThis.fetch = originalFetch;
   }
   assert.equal(confirmations, 1);
-  assert.equal(subject.shopFindCalls.length, 0);
+  assert.equal(subject.shopFindCalls.length, 1);
   assert.equal(subject.inventoryFindCalls.length, 0);
   assert.equal(subject.currentEvent()?.confirmationCalls, 1);
 });
