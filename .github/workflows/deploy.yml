@@ -6,27 +6,321 @@ on:
     branches: [main]
     types: [completed]
 
+permissions:
+  actions: read
+  contents: read
+
 concurrency:
   group: guaro-production-deploy
   cancel-in-progress: false
 
 jobs:
+  build-images:
+    name: Build production images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      bundle_bytes: ${{ steps.package.outputs.bundle_bytes }}
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build and package production images
+        id: package
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+          VITE_API_URL: https://workspace.didi-shop.com/guaro/api
+        run: |
+          set -Eeuo pipefail
+          case "$DEPLOY_SHA" in
+            ''|*[!0-9a-f]*) echo "Invalid deployment SHA" >&2; exit 1 ;;
+          esac
+          test "${#DEPLOY_SHA}" -eq 40
+          test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
+
+          artifact_dir="$RUNNER_TEMP/guaro-deploy-${DEPLOY_SHA}"
+          bundle_name="guaro-images-${DEPLOY_SHA}.tar.gz"
+          bundle_file="${artifact_dir}/${bundle_name}"
+          cleanup_partial() {
+            status=$?
+            trap - EXIT
+            if [ "$status" -ne 0 ]; then
+              rm -f -- "$bundle_file" "${bundle_file}.sha256"
+              rmdir -- "$artifact_dir" 2>/dev/null || true
+            fi
+            exit "$status"
+          }
+          trap cleanup_partial EXIT
+          install -d -m 700 -- "$artifact_dir"
+
+          docker build \
+            --file backend/Dockerfile \
+            --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
+            --tag guaro-backend:latest \
+            .
+          docker build \
+            --file frontend/Dockerfile \
+            --build-arg "VITE_API_URL=${VITE_API_URL}" \
+            --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
+            --tag guaro-frontend:latest \
+            ./frontend
+
+          docker save guaro-backend:latest guaro-frontend:latest | gzip -1 > "$bundle_file"
+          test -s "$bundle_file"
+          gzip -t "$bundle_file"
+          (
+            cd "$artifact_dir"
+            sha256sum "$bundle_name" > "${bundle_name}.sha256"
+          )
+          echo "bundle_bytes=$(stat -c '%s' "$bundle_file")" >> "$GITHUB_OUTPUT"
+          trap - EXIT
+
+      - name: Upload production image bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: guaro-production-images-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.event.workflow_run.head_sha }}
+          path: |
+            ${{ runner.temp }}/guaro-deploy-${{ github.event.workflow_run.head_sha }}/guaro-images-${{ github.event.workflow_run.head_sha }}.tar.gz
+            ${{ runner.temp }}/guaro-deploy-${{ github.event.workflow_run.head_sha }}/guaro-images-${{ github.event.workflow_run.head_sha }}.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Clean up runner bundle
+        if: ${{ always() }}
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -eu
+          artifact_dir="$RUNNER_TEMP/guaro-deploy-${DEPLOY_SHA}"
+          bundle_name="guaro-images-${DEPLOY_SHA}.tar.gz"
+          rm -f -- "${artifact_dir}/${bundle_name}" "${artifact_dir}/${bundle_name}.sha256"
+          rmdir -- "$artifact_dir" 2>/dev/null || true
+
   deploy:
     name: Deploy to production
+    needs: build-images
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 90
     environment: production
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
     steps:
+      - name: Download production image bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: guaro-production-images-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.event.workflow_run.head_sha }}
+          path: .deploy-artifacts
+
+      - name: Prepare remote staging directory
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 2m
+          script: |
+            set -eu
+            deploy_sha='${{ github.event.workflow_run.head_sha }}'
+            case "$deploy_sha" in
+              ''|*[!0-9a-f]*) echo "Invalid deployment SHA" >&2; exit 1 ;;
+            esac
+            test "${#deploy_sha}" -eq 40
+            bundle_bytes='${{ needs.build-images.outputs.bundle_bytes }}'
+            case "$bundle_bytes" in
+              ''|*[!0-9]*) echo "Invalid image bundle size" >&2; exit 1 ;;
+            esac
+            staging_dir="/tmp/guaro-deploy-${deploy_sha}"
+            bundle_name="guaro-images-${deploy_sha}.tar.gz"
+
+            exec 9>/tmp/guaro-production-deploy.lock
+            flock -w 300 9
+            # drone-scp briefly needs room for both its transfer archive and
+            # the extracted bundle. Prune only disposable builder cache here;
+            # running and rollback images are left untouched.
+            required_free_bytes=$((bundle_bytes * 2 + 1073741824))
+            available_bytes="$(df -PB1 /tmp | awk 'NR == 2 { print $4 }')"
+            if [ "$available_bytes" -lt "$required_free_bytes" ]; then
+              docker builder prune -af
+              available_bytes="$(df -PB1 /tmp | awk 'NR == 2 { print $4 }')"
+            fi
+            if [ "$available_bytes" -lt "$required_free_bytes" ]; then
+              echo "Insufficient space for image transfer: need ${required_free_bytes}, have ${available_bytes}" >&2
+              exit 1
+            fi
+
+            if [ -e "$staging_dir" ]; then
+              test -d "$staging_dir"
+              test ! -L "$staging_dir"
+              rm -f -- "${staging_dir}/${bundle_name}" "${staging_dir}/${bundle_name}.sha256"
+              rmdir -- "$staging_dir"
+            fi
+            install -d -m 700 -- "$staging_dir"
+
+      - name: Transfer production image bundle
+        uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: .deploy-artifacts/guaro-images-${{ github.event.workflow_run.head_sha }}.tar.gz,.deploy-artifacts/guaro-images-${{ github.event.workflow_run.head_sha }}.tar.gz.sha256
+          target: /tmp/guaro-deploy-${{ github.event.workflow_run.head_sha }}
+          strip_components: 1
+          overwrite: true
+          command_timeout: 20m
+
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           command_timeout: 60m
           script: |
-            set -e
+            set -eu
+            deploy_sha='${{ github.event.workflow_run.head_sha }}'
+            case "$deploy_sha" in
+              ''|*[!0-9a-f]*) echo "Invalid deployment SHA" >&2; exit 1 ;;
+            esac
+            test "${#deploy_sha}" -eq 40
+            staging_dir="/tmp/guaro-deploy-${deploy_sha}"
+            bundle_name="guaro-images-${deploy_sha}.tar.gz"
+            bundle_file="${staging_dir}/${bundle_name}"
+            digest_file="${bundle_file}.sha256"
+            backup_tmp=""
+            rollback_armed=false
+            services_switched=false
+            previous_checkout=""
+            previous_backend_image=""
+            previous_frontend_image=""
+            backend_rollback_tag='guaro-backend:rollback-previous'
+            frontend_rollback_tag='guaro-frontend:rollback-previous'
+
+            cleanup_artifacts() {
+              if [ -n "$backup_tmp" ]; then
+                rm -f -- "$backup_tmp"
+              fi
+              rm -f -- "$bundle_file" "$digest_file"
+              rmdir -- "$staging_dir" 2>/dev/null || true
+            }
+
+            wait_for_backend() {
+              attempts="${1:-24}"
+              for attempt in $(seq 1 "$attempts"); do
+                if docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T backend \
+                  node -e "fetch('http://127.0.0.1:3000/auth/me', { signal: AbortSignal.timeout(5000) }).then(r => process.exit(r.status === 401 ? 0 : 1)).catch(() => process.exit(1))"; then
+                  return 0
+                fi
+                sleep 5
+              done
+              return 1
+            }
+
+            wait_for_frontend() {
+              attempts="${1:-24}"
+              for attempt in $(seq 1 "$attempts"); do
+                if docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T frontend \
+                  sh -ec 'pidof nginx >/dev/null; body="$(wget -q -T 5 -O - http://127.0.0.1/)"; test -n "$body"'; then
+                  return 0
+                fi
+                sleep 5
+              done
+              return 1
+            }
+
+            rollback_deployment() {
+              rollback_failed=0
+              echo "Deployment failed; restoring the previous checkout and service images" >&2
+
+              if ! docker tag "$previous_backend_image" guaro-backend:latest; then
+                echo "Rollback error: could not restore backend latest tag" >&2
+                rollback_failed=1
+              fi
+              if ! docker tag "$previous_frontend_image" guaro-frontend:latest; then
+                echo "Rollback error: could not restore frontend latest tag" >&2
+                rollback_failed=1
+              fi
+              if [ "$(docker image inspect guaro-backend:latest --format '{{.Id}}' 2>/dev/null)" != "$previous_backend_image" ]; then
+                echo "Rollback error: backend latest tag does not match the previous image" >&2
+                rollback_failed=1
+              fi
+              if [ "$(docker image inspect guaro-frontend:latest --format '{{.Id}}' 2>/dev/null)" != "$previous_frontend_image" ]; then
+                echo "Rollback error: frontend latest tag does not match the previous image" >&2
+                rollback_failed=1
+              fi
+              if ! git checkout --detach "$previous_checkout"; then
+                echo "Rollback error: could not restore checkout ${previous_checkout}" >&2
+                rollback_failed=1
+              elif [ "$(git rev-parse HEAD 2>/dev/null)" != "$previous_checkout" ]; then
+                echo "Rollback error: restored checkout does not match ${previous_checkout}" >&2
+                rollback_failed=1
+              fi
+
+              if [ "$services_switched" = "true" ]; then
+                if ! docker compose -f docker-compose.prod.yml --env-file .env.prod up -d \
+                  --no-build --no-deps --force-recreate backend frontend; then
+                  echo "Rollback error: could not recreate the previous services" >&2
+                  rollback_failed=1
+                else
+                  if ! wait_for_backend 24; then
+                    echo "Rollback error: previous backend did not become ready" >&2
+                    docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 backend >&2
+                    rollback_failed=1
+                  fi
+                  if ! wait_for_frontend 24; then
+                    echo "Rollback error: previous frontend did not become ready" >&2
+                    docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 frontend >&2
+                    rollback_failed=1
+                  fi
+                fi
+              fi
+
+              if [ "$rollback_failed" -eq 0 ]; then
+                echo "Rollback completed successfully" >&2
+              else
+                echo "CRITICAL: automatic rollback was incomplete; manual intervention is required" >&2
+              fi
+              return "$rollback_failed"
+            }
+
+            on_exit() {
+              original_status=$?
+              # Disable EXIT first so an error inside rollback cannot recurse.
+              trap - EXIT
+              set +e
+              if [ "$original_status" -ne 0 ] && [ "$rollback_armed" = "true" ]; then
+                rollback_deployment || true
+              fi
+              cleanup_artifacts
+              exit "$original_status"
+            }
+            trap on_exit EXIT
+
+            test -d "$staging_dir"
+            test ! -L "$staging_dir"
+            test -f "$bundle_file"
+            test ! -L "$bundle_file"
+            test -f "$digest_file"
+            test ! -L "$digest_file"
+            test "$(find "$staging_dir" -mindepth 1 -maxdepth 1 | wc -l)" -eq 2
+            (
+              cd "$staging_dir"
+              sha256sum -c "${bundle_name}.sha256"
+            )
+            gzip -t "$bundle_file"
+
             exec 9>/tmp/guaro-production-deploy.lock
             flock -w 300 9
             app_dir=""
@@ -43,6 +337,27 @@ jobs:
             test -n "$app_dir"
             test -d "$app_dir/.git"
             cd "$app_dir"
+
+            # Compose normally derives image names from the checkout folder.
+            # Keep the production project stable even when discovery uses a
+            # fallback path such as /root/Guaro-1.
+            export COMPOSE_PROJECT_NAME=guaro
+            compose_images="$(docker compose -f docker-compose.prod.yml --env-file .env.prod config --images)"
+            printf '%s\n' "$compose_images" | grep -Fxq 'guaro-backend'
+            printf '%s\n' "$compose_images" | grep -Fxq 'guaro-frontend'
+
+            # Never let a delayed or historical successful CI run downgrade
+            # production. Fetching is read-only, so this check happens before
+            # the backup, migrations, or image load.
+            test -z "$(git status --porcelain --untracked-files=no)"
+            git fetch --prune origin main
+            git cat-file -e "${deploy_sha}^{commit}"
+            current_main_sha="$(git rev-parse FETCH_HEAD)"
+            if [ "$current_main_sha" != "$deploy_sha" ]; then
+              echo "Refusing stale deployment: tested ${deploy_sha}, current main ${current_main_sha}" >&2
+              exit 1
+            fi
+
             disk_used_percent="$(df -P "$app_dir" | awk 'NR == 2 { gsub("%", "", $5); print $5 }')"
             if [ "${disk_used_percent:-0}" -ge 80 ]; then
               echo "Disk usage is ${disk_used_percent}%; pruning unused Docker artifacts before deployment"
@@ -62,24 +377,51 @@ jobs:
             backup_stamp="$(date +%Y%m%d-%H%M%S)"
             backup_file="backups/pre-deploy-${backup_stamp}.dump"
             backup_tmp="backups/.pre-deploy-${backup_stamp}.dump.tmp"
-            trap 'rm -f -- "$backup_tmp"' EXIT
             docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
               sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" -Fc' > "$backup_tmp"
             test -s "$backup_tmp"
             docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
               pg_restore -l < "$backup_tmp" >/dev/null
             mv -- "$backup_tmp" "$backup_file"
-            trap - EXIT
+            backup_tmp=""
             find backups -maxdepth 1 -type f -name 'pre-deploy-*.dump' -printf '%T@ %p\n' \
               | sort -nr \
               | tail -n +6 \
               | cut -d' ' -f2- \
               | xargs -r rm -f --
-            git pull origin main
-            # Build services sequentially to reduce peak load on production.
-            # Existing containers stay running until both builds succeed.
-            docker compose -f docker-compose.prod.yml --env-file .env.prod build backend
-            docker compose -f docker-compose.prod.yml --env-file .env.prod build frontend
+
+            # Capture the actual images used by the running containers rather
+            # than trusting latest, which a prior failed load may have moved.
+            previous_checkout="$(git rev-parse HEAD)"
+            git cat-file -e "${previous_checkout}^{commit}"
+            previous_backend_container="$(docker compose -f docker-compose.prod.yml --env-file .env.prod ps -q backend)"
+            previous_frontend_container="$(docker compose -f docker-compose.prod.yml --env-file .env.prod ps -q frontend)"
+            test -n "$previous_backend_container"
+            test -n "$previous_frontend_container"
+            test "$(docker inspect --format '{{.State.Running}}' "$previous_backend_container")" = "true"
+            test "$(docker inspect --format '{{.State.Running}}' "$previous_frontend_container")" = "true"
+            previous_backend_image="$(docker inspect --format '{{.Image}}' "$previous_backend_container")"
+            previous_frontend_image="$(docker inspect --format '{{.Image}}' "$previous_frontend_container")"
+            docker image inspect "$previous_backend_image" >/dev/null
+            docker image inspect "$previous_frontend_image" >/dev/null
+            docker tag "$previous_backend_image" "$backend_rollback_tag"
+            docker tag "$previous_frontend_image" "$frontend_rollback_tag"
+            rollback_armed=true
+
+            # Use exactly the revision that passed CI and produced the image
+            # bundle. The current-main guard above prevents stale downgrades.
+            git checkout --detach "$deploy_sha"
+            test "$(git rev-parse HEAD)" = "$deploy_sha"
+            compose_images="$(docker compose -f docker-compose.prod.yml --env-file .env.prod config --images)"
+            printf '%s\n' "$compose_images" | grep -Fxq 'guaro-backend'
+            printf '%s\n' "$compose_images" | grep -Fxq 'guaro-frontend'
+
+            # Loading pre-built images is intentionally the only image work on
+            # production. Builds run on the GitHub-hosted runner above.
+            gzip -dc "$bundle_file" | docker load
+            test "$(docker image inspect guaro-backend:latest --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$deploy_sha"
+            test "$(docker image inspect guaro-frontend:latest --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$deploy_sha"
+
             # The previous release attempted CREATE INDEX CONCURRENTLY through
             # Prisma, which PostgreSQL rejected inside the migration
             # transaction. Resolve only that known failed attempt so the
@@ -104,31 +446,55 @@ jobs:
             # psql autocommit is required: PostgreSQL forbids concurrent index
             # operations inside transaction blocks. The script is retry-safe
             # and repairs invalid indexes left by interrupted builds.
-            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T \
+              -e PGOPTIONS='-c max_parallel_maintenance_workers=0' guaro-db \
               sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
               < prisma/deploy/didi_order_webhook_indexes_online.sql
-            # Record the replay-safe migrations with the newly built image.
-            # All production index statements are now no-ops, while fresh
+            # Record the replay-safe migrations with the loaded image. All
+            # production index statements are now no-ops, while fresh
             # development databases retain a self-contained fallback.
             docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --no-deps backend \
               npx prisma migrate deploy --schema=./prisma/schema.prisma
-            docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
-            backend_ready=false
-            for attempt in $(seq 1 24); do
-              if docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T backend \
-                node -e "fetch('http://127.0.0.1:3000/auth/me', { signal: AbortSignal.timeout(5000) }).then(r => process.exit(r.status === 401 ? 0 : 1)).catch(() => process.exit(1))"; then
-                backend_ready=true
-                break
-              fi
-              sleep 5
-            done
-            if [ "$backend_ready" != "true" ]; then
+            # Arm service recreation before up so a partial Compose failure is
+            # also rolled back, not only a failed health check.
+            services_switched=true
+            docker compose -f docker-compose.prod.yml --env-file .env.prod up -d \
+              --no-build --no-deps backend frontend
+            if ! wait_for_backend 24; then
               docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 backend
               exit 1
             fi
+            if ! wait_for_frontend 24; then
+              docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 frontend
+              exit 1
+            fi
+            rollback_armed=false
             # Keep recent layers for the next deploy; emergency disk cleanup
             # above still removes unused artifacts when disk usage reaches 80%.
-            docker image prune -af --filter 'until=168h'
+            # Do not use -a here: the stable rollback tags must survive.
+            docker image prune -f --filter 'until=168h'
             docker builder prune -af --filter 'until=168h' --keep-storage 2GB
             journalctl --vacuum-size=300M || true
-            docker compose -f docker-compose.prod.yml ps
+            docker compose -f docker-compose.prod.yml --env-file .env.prod ps
+
+      - name: Clean up remote staging directory
+        if: ${{ always() }}
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 2m
+          script: |
+            set -eu
+            deploy_sha='${{ github.event.workflow_run.head_sha }}'
+            case "$deploy_sha" in
+              ''|*[!0-9a-f]*) echo "Invalid deployment SHA" >&2; exit 1 ;;
+            esac
+            test "${#deploy_sha}" -eq 40
+            staging_dir="/tmp/guaro-deploy-${deploy_sha}"
+            bundle_name="guaro-images-${deploy_sha}.tar.gz"
+            if [ -d "$staging_dir" ] && [ ! -L "$staging_dir" ]; then
+              rm -f -- "${staging_dir}/${bundle_name}" "${staging_dir}/${bundle_name}.sha256"
+              rmdir -- "$staging_dir" 2>/dev/null || true
+            fi
