@@ -1,5 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { AccountRole, ExecutionType, Prisma, StepFailureReason, StepStatus, TaskStatus } from '@prisma/client';
+import { AccountRole, ExecutionType, FormFieldTipo, Prisma, StepFailureReason, StepStatus, TaskStatus } from '@prisma/client';
+import { stat } from 'fs/promises';
+import { join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaskEngineService } from './task-engine.service';
 import { CreateTaskDto } from './dto/create-task.dto';
@@ -74,6 +76,81 @@ const TASK_LIST_INCLUDE = {
   },
 } as const;
 
+interface TaskFormFieldDefinition {
+  id: string;
+  label: string;
+  tipo: FormFieldTipo;
+  required: boolean;
+  multiple: boolean;
+}
+
+interface TaskFormValueInput {
+  formFieldId: string;
+  value?: string;
+  brandId?: string;
+  shopId?: string;
+}
+
+const TASK_IMAGE_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpe?g|png)$/i;
+
+function formValueKey(field: TaskFormFieldDefinition, input: TaskFormValueInput): string | null {
+  if (field.tipo === FormFieldTipo.select_brand || field.tipo === FormFieldTipo.multiple_brands) {
+    return input.brandId?.trim() || null;
+  }
+  if (field.tipo === FormFieldTipo.select_store) return input.shopId?.trim() || null;
+  return input.value?.trim() || null;
+}
+
+async function validateTaskFormValues(
+  fields: TaskFormFieldDefinition[],
+  inputs: TaskFormValueInput[] = [],
+) {
+  const fieldsById = new Map(fields.map(field => [field.id, field]));
+  const valuesByField = new Map<string, Set<string>>();
+
+  for (const input of inputs) {
+    const field = fieldsById.get(input.formFieldId);
+    if (!field) {
+      throw new BadRequestException(`Form field ${input.formFieldId} does not belong to the selected task type`);
+    }
+
+    const valueKey = formValueKey(field, input);
+    if (!valueKey) throw new BadRequestException(`Form field "${field.label}" does not contain a value`);
+
+    const values = valuesByField.get(field.id) ?? new Set<string>();
+    const acceptsMultiple = field.multiple || field.tipo === FormFieldTipo.multiple_brands;
+    if (values.size > 0 && !acceptsMultiple) {
+      throw new BadRequestException(`Form field "${field.label}" was submitted more than once`);
+    }
+    if (values.has(valueKey)) {
+      throw new BadRequestException(`Form field "${field.label}" contains a duplicate value`);
+    }
+    values.add(valueKey);
+    valuesByField.set(field.id, values);
+  }
+
+  const missing = fields
+    .filter(field => field.required && !valuesByField.get(field.id)?.size)
+    .map(field => field.label);
+  if (missing.length) {
+    throw new BadRequestException(`Required form fields are missing: ${missing.join(', ')}`);
+  }
+
+  for (const field of fields.filter(item => item.tipo === FormFieldTipo.image)) {
+    const imageInputs = inputs.filter(input => input.formFieldId === field.id);
+    for (const imageInput of imageInputs) {
+      const filename = imageInput.value?.trim() ?? '';
+      if (!TASK_IMAGE_FILE.test(filename)) {
+        throw new BadRequestException(`Image field "${field.label}" must reference a validated JPG, JPEG or PNG upload`);
+      }
+      const metadata = await stat(join(process.cwd(), 'uploads', 'task-assets', filename)).catch(() => null);
+      if (!metadata?.isFile()) {
+        throw new BadRequestException(`Image upload for "${field.label}" was not found; upload the image again`);
+      }
+    }
+  }
+}
+
 @Injectable()
 export class TasksService {
   constructor(
@@ -92,13 +169,20 @@ export class TasksService {
     const taskType = await this.prisma.taskType.findUnique({
       where: { id: dto.taskTypeId },
       include: {
+        formFields: {
+          orderBy: { order: 'asc' },
+          select: { id: true, label: true, tipo: true, required: true, multiple: true },
+        },
         stepDefinitions: {
           orderBy: { order: 'asc' },
           include: { handler: { select: { name: true } } },
         },
       },
     });
-    if (!taskType || taskType.deletedAt) throw new NotFoundException('TaskType not found');
+    if (!taskType || taskType.deletedAt || taskType.active === false) {
+      throw new NotFoundException('TaskType not found');
+    }
+    await validateTaskFormValues(taskType.formFields, dto.formValues);
 
     const isScheduled = !!dto.scheduledStart;
     if (isScheduled && !taskType.schedulable) {
@@ -277,12 +361,54 @@ export class TasksService {
 
   async filterOptions(roles: AccountRole[], accountId: string, sectionId: string | null) {
     const allowedSectionIds = await this.sectionAccess.accessibleSectionIds({ id: accountId, roles, sectionId });
-    const sections = await this.prisma.section.findMany({
-      where: allowedSectionIds === null ? undefined : { id: { in: allowedSectionIds } },
-      select: { id: true, name: true, order: true },
-      orderBy: [{ order: 'asc' }, { name: 'asc' }],
-    });
-    return { sections };
+    const taskScope = await this.taskWhere(roles, accountId, sectionId);
+    const [sections, brandGroups] = await Promise.all([
+      this.prisma.section.findMany({
+        where: allowedSectionIds === null ? undefined : { id: { in: allowedSectionIds } },
+        select: { id: true, name: true, order: true },
+        orderBy: [{ order: 'asc' }, { name: 'asc' }],
+      }),
+      this.prisma.task.groupBy({
+        by: ['brandId'],
+        where: { AND: [taskScope, { brandId: { not: null } }] },
+      }),
+    ]);
+    const brandIds = brandGroups.flatMap(row => row.brandId ? [row.brandId] : []);
+    const brands = brandIds.length
+      ? await this.prisma.brand.findMany({
+        where: { id: { in: brandIds } },
+        select: { id: true, brandId: true, brandName: true, country: true },
+        orderBy: [{ brandName: 'asc' }, { id: 'asc' }],
+      })
+      : [];
+    return { sections, brands };
+  }
+
+  async shopOptions(brandId: string, query?: string, requestedLimit = 75) {
+    const q = query?.trim().slice(0, 120);
+    const limit = Math.min(Math.max(requestedLimit, 1), 75);
+    const where: Prisma.ShopWhereInput = {
+      brandId,
+      deletedAt: null,
+      ...(q ? {
+        OR: [
+          { shopId: { contains: q, mode: 'insensitive' } },
+          { appShopId: { contains: q, mode: 'insensitive' } },
+          { name: { contains: q, mode: 'insensitive' } },
+          { city: { contains: q, mode: 'insensitive' } },
+        ],
+      } : {}),
+    };
+    const [data, total] = await Promise.all([
+      this.prisma.shop.findMany({
+        where,
+        select: { id: true, shopId: true, appShopId: true, name: true, city: true, brandId: true },
+        orderBy: [{ shopId: 'asc' }, { id: 'asc' }],
+        take: limit,
+      }),
+      this.prisma.shop.count({ where }),
+    ]);
+    return { data, total, page: 1, limit };
   }
 
   private async taskWhere(

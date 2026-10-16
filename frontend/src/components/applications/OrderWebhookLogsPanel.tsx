@@ -1,13 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { orderWebhookEventsApi } from '../../api';
 import { useLang, useT } from '../../i18n';
 import type {
   Application,
+  Country,
   DidiOrderWebhookEvent,
   DidiOrderWebhookEventStage,
   DidiOrderWebhookEventStatus,
   DidiOrderWebhookEventsResponse,
+  DidiOrderWebhookShopResolutionSource,
 } from '../../types';
 import Paginator from '../ui/Paginator';
 
@@ -22,8 +24,20 @@ interface Props {
 interface EventFilters {
   applicationId: string;
   status: DidiOrderWebhookEventStatus | '';
+  q: string;
   appShopId: string;
+  didiShopId: string;
   orderId: string;
+  country: Country | '';
+  stage: DidiOrderWebhookEventStage | '';
+  amountField: 'order_price' | 'real_price' | 'real_pay_price';
+  minOrderAmount: string;
+  maxOrderAmount: string;
+  minProfitMxn: string;
+  maxProfitMxn: string;
+  hasProfit: '' | 'true' | 'false';
+  minDurationMs: string;
+  maxDurationMs: string;
   from: string;
   to: string;
 }
@@ -31,8 +45,20 @@ interface EventFilters {
 const EMPTY_FILTERS: EventFilters = {
   applicationId: '',
   status: '',
+  q: '',
   appShopId: '',
+  didiShopId: '',
   orderId: '',
+  country: '',
+  stage: '',
+  amountField: 'real_pay_price',
+  minOrderAmount: '',
+  maxOrderAmount: '',
+  minProfitMxn: '',
+  maxProfitMxn: '',
+  hasProfit: '',
+  minDurationMs: '',
+  maxDurationMs: '',
   from: '',
   to: '',
 };
@@ -63,14 +89,43 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
   const [filters, setFilters] = useState<EventFilters>(EMPTY_FILTERS);
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [filterError, setFilterError] = useState('');
+
+  // Text search is the only live filter. It is debounced and the API enforces
+  // at least three characters, avoiding a query per keystroke on the large log.
+  useEffect(() => {
+    const q = draft.q.trim();
+    const timeout = window.setTimeout(() => {
+      const effectiveQuery = q && q.length < 3 ? '' : q;
+      setFilters(current => current.q === effectiveQuery
+        ? current
+        : { ...current, q: effectiveQuery });
+      setPage(1);
+      setSelectedId(null);
+      setFilterError('');
+    }, q && q.length < 3 ? 0 : 450);
+    return () => window.clearTimeout(timeout);
+  }, [draft.q]);
 
   const params = useMemo(() => ({
     page,
     limit: LIMIT,
     ...(filters.applicationId ? { applicationId: filters.applicationId } : {}),
     ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.q ? { q: filters.q } : {}),
     ...(filters.appShopId ? { appShopId: filters.appShopId } : {}),
+    ...(filters.didiShopId ? { didiShopId: filters.didiShopId } : {}),
     ...(filters.orderId ? { orderId: filters.orderId } : {}),
+    ...(filters.country ? { country: filters.country } : {}),
+    ...(filters.stage ? { stage: filters.stage } : {}),
+    ...(filters.minOrderAmount || filters.maxOrderAmount ? { amountField: filters.amountField } : {}),
+    ...(filters.minOrderAmount ? { minOrderAmount: filters.minOrderAmount } : {}),
+    ...(filters.maxOrderAmount ? { maxOrderAmount: filters.maxOrderAmount } : {}),
+    ...(filters.minProfitMxn ? { minProfitMxn: filters.minProfitMxn } : {}),
+    ...(filters.maxProfitMxn ? { maxProfitMxn: filters.maxProfitMxn } : {}),
+    ...(filters.hasProfit ? { hasProfit: filters.hasProfit === 'true' } : {}),
+    ...(filters.minDurationMs ? { minDurationMs: Number(filters.minDurationMs) } : {}),
+    ...(filters.maxDurationMs ? { maxDurationMs: Number(filters.maxDurationMs) } : {}),
     ...(filters.from ? { from: new Date(filters.from).toISOString() } : {}),
     ...(filters.to ? { to: new Date(filters.to).toISOString() } : {}),
   }), [filters, page]);
@@ -80,7 +135,9 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
     queryFn: () => orderWebhookEventsApi.list(params).then(response => response.data),
     enabled: active,
     retry: false,
-    refetchInterval: active ? 15_000 : false,
+    // The summary is computed over a large audit table. Keep refresh explicit
+    // so an open browser tab cannot run an unbounded aggregate every 15 s.
+    refetchInterval: false,
   });
 
   const detailQuery = useQuery<DidiOrderWebhookEvent>({
@@ -119,15 +176,47 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
     return t(`pages.applications.orderWebhookLogsStage${suffix}`);
   };
 
+  const resolutionSourceLabel = (source: DidiOrderWebhookShopResolutionSource | null) => {
+    if (!source) return t('pages.applications.orderWebhookLogsResolutionSourceUnknown');
+    const suffix = {
+      local: 'Local',
+      inventory: 'Inventory',
+      remote: 'Remote',
+      payload: 'Payload',
+    }[source];
+    return t(`pages.applications.orderWebhookLogsResolutionSource${suffix}`);
+  };
+
+  const formatMoney = (value: string | null, currency: string) => {
+    if (value === null) return '—';
+    const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value);
+    if (!match) return `${currency} ${value}`;
+    const grouped = match[2].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return `${currency} ${match[1]}${grouped}${match[3] ? `.${match[3]}` : ''}`;
+  };
+
   const applyFilters = (event: React.FormEvent) => {
     event.preventDefault();
+    const q = draft.q.trim();
+    if (q && q.length < 3) {
+      setFilterError(t('pages.applications.orderWebhookLogsSearchMin'));
+      return;
+    }
+    setFilterError('');
     setFilters({
       ...draft,
+      q,
       appShopId: draft.appShopId.trim(),
+      didiShopId: draft.didiShopId.trim(),
       orderId: draft.orderId.trim(),
+      minOrderAmount: draft.minOrderAmount.trim(),
+      maxOrderAmount: draft.maxOrderAmount.trim(),
+      minProfitMxn: draft.minProfitMxn.trim(),
+      maxProfitMxn: draft.maxProfitMxn.trim(),
     });
     setPage(1);
     setSelectedId(null);
+    setFilterError('');
   };
 
   const clearFilters = () => {
@@ -138,9 +227,8 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
   };
 
   const selectSummary = (status: DidiOrderWebhookEventStatus | '') => {
-    const next = { ...draft, status };
-    setDraft(next);
-    setFilters(next);
+    setDraft(current => ({ ...current, status }));
+    setFilters(current => ({ ...current, status }));
     setPage(1);
     setSelectedId(null);
   };
@@ -158,7 +246,10 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
     failed: 0,
     processing: 0,
   };
-  const hasFilters = Object.values(filters).some(Boolean);
+  const hasActiveValues = (value: EventFilters) => Object.entries(value)
+    .some(([key, field]) => key !== 'amountField' && Boolean(field));
+  const hasFilters = hasActiveValues(filters);
+  const hasDraftFilters = hasActiveValues(draft);
   const detail = detailQuery.data;
 
   return (
@@ -208,6 +299,22 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
       </div>
 
       <form className="order-webhook-filters" onSubmit={applyFilters}>
+        <div className="form-group order-webhook-filter-wide">
+          <label className="form-label" htmlFor="webhook-log-search">{t('pages.applications.orderWebhookLogsSearch')}</label>
+          <input
+            id="webhook-log-search"
+            className="form-input"
+            placeholder={t('pages.applications.orderWebhookLogsSearchPlaceholder')}
+            value={draft.q}
+            onChange={event => setDraft(current => ({ ...current, q: event.target.value }))}
+            aria-describedby="webhook-log-search-hint"
+          />
+          <p id="webhook-log-search-hint" className="form-hint">
+            {draft.q.trim().length > 0 && draft.q.trim().length < 3
+              ? t('pages.applications.orderWebhookLogsSearchMin')
+              : t('pages.applications.orderWebhookLogsSearchHint')}
+          </p>
+        </div>
         <div className="form-group">
           <label className="form-label" htmlFor="webhook-log-application">{t('pages.applications.orderWebhookLogsApplication')}</label>
           <select
@@ -244,6 +351,34 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
           </select>
         </div>
         <div className="form-group">
+          <label className="form-label" htmlFor="webhook-log-country">{t('pages.applications.orderWebhookLogsCountry')}</label>
+          <select
+            id="webhook-log-country"
+            className="form-select"
+            value={draft.country}
+            onChange={event => setDraft(current => ({ ...current, country: event.target.value as EventFilters['country'] }))}
+          >
+            <option value="">{t('pages.applications.orderWebhookLogsAllCountries')}</option>
+            <option value="MX">MX</option>
+            <option value="CO">CO</option>
+            <option value="CR">CR</option>
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="webhook-log-stage">{t('pages.applications.orderWebhookLogsStage')}</label>
+          <select
+            id="webhook-log-stage"
+            className="form-select"
+            value={draft.stage}
+            onChange={event => setDraft(current => ({ ...current, stage: event.target.value as EventFilters['stage'] }))}
+          >
+            <option value="">{t('pages.applications.orderWebhookLogsAllStages')}</option>
+            {(['received', 'validation', 'shop_resolution', 'idempotency', 'authentication', 'confirmation', 'completed', 'legacy'] as DidiOrderWebhookEventStage[]).map(stage => (
+              <option key={stage} value={stage}>{stageLabel(stage)}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
           <label className="form-label" htmlFor="webhook-log-shop">{t('pages.applications.orderWebhookLogsAppShopId')}</label>
           <input
             id="webhook-log-shop"
@@ -252,6 +387,17 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
             placeholder="83013"
             value={draft.appShopId}
             onChange={event => setDraft(current => ({ ...current, appShopId: event.target.value }))}
+          />
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="webhook-log-didi-shop">{t('pages.applications.orderWebhookLogsDidiShopId')}</label>
+          <input
+            id="webhook-log-didi-shop"
+            className="form-input"
+            inputMode="numeric"
+            placeholder="576460…"
+            value={draft.didiShopId}
+            onChange={event => setDraft(current => ({ ...current, didiShopId: event.target.value }))}
           />
         </div>
         <div className="form-group">
@@ -273,13 +419,72 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
           <label className="form-label" htmlFor="webhook-log-to">{t('pages.applications.orderWebhookLogsTo')}</label>
           <input id="webhook-log-to" className="form-input" type="datetime-local" value={draft.to} onChange={event => setDraft(current => ({ ...current, to: event.target.value }))} />
         </div>
+        <details className="order-webhook-advanced-filters order-webhook-filter-wide">
+          <summary>{t('pages.applications.orderWebhookLogsAdvancedFilters')}</summary>
+          <div className="order-webhook-advanced-grid">
+            <div className="form-group">
+              <label className="form-label" htmlFor="webhook-log-amount-field">{t('pages.applications.orderWebhookLogsAmountField')}</label>
+              <select id="webhook-log-amount-field" className="form-select" value={draft.amountField} onChange={event => setDraft(current => ({ ...current, amountField: event.target.value as EventFilters['amountField'] }))}>
+                <option value="order_price">order_price</option>
+                <option value="real_price">real_price</option>
+                <option value="real_pay_price">real_pay_price</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="webhook-log-min-amount">{t('pages.applications.orderWebhookLogsMinAmount')}</label>
+              <input id="webhook-log-min-amount" className="form-input" inputMode="decimal" value={draft.minOrderAmount} onChange={event => setDraft(current => ({ ...current, minOrderAmount: event.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="webhook-log-max-amount">{t('pages.applications.orderWebhookLogsMaxAmount')}</label>
+              <input id="webhook-log-max-amount" className="form-input" inputMode="decimal" value={draft.maxOrderAmount} onChange={event => setDraft(current => ({ ...current, maxOrderAmount: event.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="webhook-log-profit">{t('pages.applications.orderWebhookLogsProfitState')}</label>
+              <select
+                id="webhook-log-profit"
+                className="form-select"
+                value={draft.hasProfit}
+                onChange={event => setDraft(current => {
+                  const hasProfit = event.target.value as EventFilters['hasProfit'];
+                  return {
+                    ...current,
+                    hasProfit,
+                    ...(hasProfit === 'false' ? { minProfitMxn: '', maxProfitMxn: '' } : {}),
+                  };
+                })}
+              >
+                <option value="">{t('pages.applications.orderWebhookLogsProfitAny')}</option>
+                <option value="true">{t('pages.applications.orderWebhookLogsProfitRecognized')}</option>
+                <option value="false">{t('pages.applications.orderWebhookLogsProfitNotRecognized')}</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="webhook-log-min-profit">{t('pages.applications.orderWebhookLogsMinProfit')}</label>
+              <input id="webhook-log-min-profit" className="form-input" inputMode="decimal" value={draft.minProfitMxn} disabled={draft.hasProfit === 'false'} onChange={event => setDraft(current => ({ ...current, minProfitMxn: event.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="webhook-log-max-profit">{t('pages.applications.orderWebhookLogsMaxProfit')}</label>
+              <input id="webhook-log-max-profit" className="form-input" inputMode="decimal" value={draft.maxProfitMxn} disabled={draft.hasProfit === 'false'} onChange={event => setDraft(current => ({ ...current, maxProfitMxn: event.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="webhook-log-min-duration">{t('pages.applications.orderWebhookLogsMinDuration')}</label>
+              <input id="webhook-log-min-duration" className="form-input" type="number" min="0" value={draft.minDurationMs} onChange={event => setDraft(current => ({ ...current, minDurationMs: event.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="webhook-log-max-duration">{t('pages.applications.orderWebhookLogsMaxDuration')}</label>
+              <input id="webhook-log-max-duration" className="form-input" type="number" min="0" value={draft.maxDurationMs} onChange={event => setDraft(current => ({ ...current, maxDurationMs: event.target.value }))} />
+            </div>
+          </div>
+        </details>
         <div className="order-webhook-filter-actions">
           <button type="submit" className="btn btn-primary btn-sm">{t('pages.applications.orderWebhookLogsApply')}</button>
-          {(hasFilters || Object.values(draft).some(Boolean)) && (
+          {(hasFilters || hasDraftFilters) && (
             <button type="button" className="btn btn-ghost btn-sm" onClick={clearFilters}>{t('pages.applications.orderWebhookLogsClear')}</button>
           )}
         </div>
       </form>
+
+      {filterError && <div className="error-banner">{filterError}</div>}
 
       {eventsQuery.isError && (
         <div className="error-banner">
@@ -296,6 +501,8 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
               <th>{t('pages.applications.orderWebhookLogsStatus')}</th>
               <th>{t('pages.applications.orderWebhookLogsOrderId')}</th>
               <th>{t('pages.applications.orderWebhookLogsStore')}</th>
+              <th>{t('pages.applications.orderWebhookLogsResolutionSource')}</th>
+              <th>{t('pages.applications.orderWebhookLogsFinancials')}</th>
               <th>{t('pages.applications.orderWebhookLogsStage')}</th>
               <th>{t('pages.applications.orderWebhookLogsAttempts')}</th>
               <th>{t('pages.applications.orderWebhookLogsResult')}</th>
@@ -304,10 +511,10 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
           </thead>
           <tbody>
             {eventsQuery.isLoading && (
-              <tr><td colSpan={9} className="order-webhook-table-message">{t('common.loading')}</td></tr>
+              <tr><td colSpan={11} className="order-webhook-table-message">{t('common.loading')}</td></tr>
             )}
             {!eventsQuery.isLoading && events.length === 0 && (
-              <tr><td colSpan={9} className="order-webhook-table-message">
+              <tr><td colSpan={11} className="order-webhook-table-message">
                 <strong>{hasFilters ? t('pages.applications.orderWebhookLogsNoMatch') : t('pages.applications.orderWebhookLogsEmpty')}</strong>
                 <span>{hasFilters ? t('pages.applications.orderWebhookLogsNoMatchHint') : t('pages.applications.orderWebhookLogsEmptyHint')}</span>
               </td></tr>
@@ -328,6 +535,21 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
                 <td>
                   <strong>{event.shop?.name || event.appShopId || '—'}</strong>
                   {event.shop?.name && event.appShopId && <span className="order-webhook-cell-note">{event.appShopId}</span>}
+                </td>
+                <td><span className="order-webhook-stage">{resolutionSourceLabel(event.shopResolutionSource)}</span></td>
+                <td className="order-webhook-financial-cell">
+                  <strong>{event.orderCurrency ? formatMoney(event.realPayPrice, event.orderCurrency) : '—'}</strong>
+                  {event.profitRecognized && event.profitMxn !== null ? (
+                    <span className="order-webhook-cell-note is-success">
+                      {t('pages.applications.orderWebhookLogsProfit')}: {formatMoney(event.profitMxn, 'MXN')} · {formatMoney(event.profitUsd, 'USD')}
+                    </span>
+                  ) : (
+                    <span className="order-webhook-cell-note">
+                      {event.profitMode
+                        ? t('pages.applications.orderWebhookLogsProfitNotThisAttempt')
+                        : t('pages.applications.orderWebhookLogsProfitUnconfigured')}
+                    </span>
+                  )}
                 </td>
                 <td><span className="order-webhook-stage">{stageLabel(event.stage)}</span></td>
                 <td>{event.attempts ?? '—'}</td>
@@ -378,9 +600,12 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
                 <div><span>{t('pages.applications.orderWebhookLogsEventType')}</span><strong>{detail.type ?? '—'}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsOrderId')}</span><strong className="td-mono">{detail.orderId ?? '—'}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsAppShopId')}</span><strong className="td-mono">{detail.appShopId ?? '—'}</strong></div>
-                <div><span>{t('pages.applications.orderWebhookLogsDidiShopId')}</span><strong className="td-mono">{detail.didiShopId ?? '—'}</strong>{detail.remoteShopValidated && <small>{t('pages.applications.orderWebhookLogsRemoteValidated')}</small>}</div>
+                <div><span>{t('pages.applications.orderWebhookLogsDidiShopId')}</span><strong className="td-mono">{detail.didiShopId ?? '—'}</strong></div>
+                <div><span>{t('pages.applications.orderWebhookLogsResolutionSource')}</span><strong>{resolutionSourceLabel(detail.shopResolutionSource)}</strong>{detail.shopResolutionSource === 'remote' && detail.remoteShopValidated && <small>{t('pages.applications.orderWebhookLogsRemoteValidated')}</small>}</div>
                 <div><span>{t('pages.applications.orderWebhookLogsStore')}</span><strong>{detail.shop?.name || detail.shop?.shopId || '—'}</strong>{detail.shop?.brand && <small>{detail.shop.brand.brandName}</small>}</div>
                 <div><span>{t('pages.applications.orderWebhookLogsAttempts')}</span><strong>{detail.attempts ?? '—'}</strong></div>
+                <div><span>{t('pages.applications.orderWebhookLogsAcceptedCount')}</span><strong>{detail.acceptedCount ?? '—'} / 2</strong></div>
+                <div><span>{t('pages.applications.orderWebhookLogsConfirmationCalls')}</span><strong>{detail.confirmationCalls ?? '—'} / 2</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsLocalHttp')}</span><strong>{detail.localHttpStatus ?? '—'}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsDuration')}</span><strong>{detail.durationMs == null ? '—' : `${detail.durationMs} ms`}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsRelatedEvent')}</span><strong className="td-mono">{detail.eventId ?? '—'}</strong></div>
@@ -391,6 +616,24 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
                 <div><span>{t('pages.applications.orderWebhookLogsFailedAt')}</span><strong>{formatDate(detail.failedAt)}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsCompletedAt')}</span><strong>{formatDate(detail.completedAt)}</strong></div>
                 <div><span>{t('pages.applications.orderWebhookLogsUpdatedAt')}</span><strong>{formatDate(detail.updatedAt)}</strong></div>
+              </div>
+
+              <div className="order-webhook-remote-response order-webhook-financial-detail">
+                <h4>{t('pages.applications.orderWebhookLogsFinancials')}</h4>
+                <div>
+                  <span>order_price <strong>{detail.orderCurrency ? formatMoney(detail.orderPrice, detail.orderCurrency) : '—'}</strong></span>
+                  <span>real_price <strong>{detail.orderCurrency ? formatMoney(detail.realPrice, detail.orderCurrency) : '—'}</strong></span>
+                  <span>real_pay_price <strong>{detail.orderCurrency ? formatMoney(detail.realPayPrice, detail.orderCurrency) : '—'}</strong></span>
+                  <span>{t('pages.applications.orderWebhookLogsProfitMxn')} <strong>{detail.profitRecognized ? formatMoney(detail.profitMxn, 'MXN') : '—'}</strong></span>
+                  <span>{t('pages.applications.orderWebhookLogsProfitUsd')} <strong>{detail.profitRecognized ? formatMoney(detail.profitUsd, 'USD') : '—'}</strong></span>
+                </div>
+                <p className="form-hint">
+                  {detail.profitRecognized
+                    ? t('pages.applications.orderWebhookLogsProfitUniqueOrder')
+                    : detail.profitMode
+                      ? t('pages.applications.orderWebhookLogsProfitNotThisAttempt')
+                      : t('pages.applications.orderWebhookLogsProfitUnconfigured')}
+                </p>
               </div>
 
               <div className="order-webhook-remote-response">

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../components/layout/Topbar';
 import Modal from '../components/ui/Modal';
@@ -7,7 +7,7 @@ import '../components/applications/order-webhook-logs.css';
 import { applicationsApi } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useT } from '../i18n';
-import type { Application, ApplicationOrderWebhook, Country, DidiBindingEnvironment, Paginated } from '../types';
+import type { Application, ApplicationOrderWebhook, Country, DidiBindingEnvironment, DidiOrderWebhookProfitMode, Paginated } from '../types';
 import { hasPermission } from '../auth/permissions';
 
 const COUNTRIES: Country[] = ['MX', 'CO', 'CR'];
@@ -81,6 +81,13 @@ export default function ApplicationsPage() {
   const [webhookAction, setWebhookAction] = useState<WebhookAction>(null);
   const [webhookErr, setWebhookErr] = useState('');
   const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [financeSaving, setFinanceSaving] = useState(false);
+  const [financeForm, setFinanceForm] = useState({
+    mode: '' as DidiOrderWebhookProfitMode | '',
+    value: '',
+    nativeToMxnRate: '',
+    mxnPerUsdRate: '',
+  });
 
   const params = { page, limit: LIMIT, ...(q ? { q } : {}), ...(country ? { country } : {}) };
 
@@ -95,6 +102,20 @@ export default function ApplicationsPage() {
     enabled: !!webhookApp,
     retry: false,
   });
+
+  useEffect(() => {
+    const finance = webhookQuery.data?.finance;
+    if (!finance) return;
+    const timeout = window.setTimeout(() => {
+      setFinanceForm({
+        mode: finance.mode ?? '',
+        value: finance.value ?? '',
+        nativeToMxnRate: finance.nativeToMxnRate ?? '',
+        mxnPerUsdRate: finance.mxnPerUsdRate ?? '',
+      });
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [webhookQuery.data?.finance]);
 
   const apps = result?.data ?? [];
   const total = result?.total ?? 0;
@@ -164,7 +185,7 @@ export default function ApplicationsPage() {
   };
 
   const closeOrderWebhook = () => {
-    if (webhookAction) return;
+    if (webhookAction || financeSaving) return;
     setWebhookApp(null);
     setWebhookErr('');
     setCopiedWebhook(false);
@@ -204,6 +225,29 @@ export default function ApplicationsPage() {
       window.setTimeout(() => setCopiedWebhook(false), 2000);
     } catch {
       setWebhookErr(t('pages.applications.orderWebhookCopyError'));
+    }
+  };
+
+  const saveOrderWebhookFinance = async () => {
+    if (!webhookApp) return;
+    setFinanceSaving(true);
+    setWebhookErr('');
+    try {
+      if (!financeForm.mode) {
+        await applicationsApi.updateOrderWebhookFinance(webhookApp.id, { mode: null });
+      } else {
+        await applicationsApi.updateOrderWebhookFinance(webhookApp.id, {
+          mode: financeForm.mode,
+          value: financeForm.value || null,
+          nativeToMxnRate: financeForm.nativeToMxnRate || null,
+          mxnPerUsdRate: financeForm.mxnPerUsdRate || null,
+        });
+      }
+      await refreshOrderWebhook();
+    } catch (error: unknown) {
+      setWebhookErr(responseMessage(error, t('pages.applications.orderWebhookFinanceSaveError')));
+    } finally {
+      setFinanceSaving(false);
     }
   };
 
@@ -409,7 +453,7 @@ export default function ApplicationsPage() {
         <Modal
           title={t('pages.applications.orderWebhookTitle').replace('{name}', webhookApp.appName)}
           onClose={closeOrderWebhook}
-          footer={<button className="btn btn-ghost" onClick={closeOrderWebhook} disabled={!!webhookAction}>{t('common.close')}</button>}
+          footer={<button className="btn btn-ghost" onClick={closeOrderWebhook} disabled={!!webhookAction || financeSaving}>{t('common.close')}</button>}
         >
           <div className="order-webhook-panel">
           {(webhookErr || webhookQuery.isError) && (
@@ -434,6 +478,86 @@ export default function ApplicationsPage() {
                     ? t('pages.applications.orderWebhookEnabled')
                     : t('pages.applications.orderWebhookDisabled')}
                 </span>
+              </div>
+
+              <div className="order-webhook-finance-config">
+                <div>
+                  <div style={{ fontWeight: 700 }}>{t('pages.applications.orderWebhookFinanceTitle')}</div>
+                  <p className="form-hint">{t('pages.applications.orderWebhookFinanceHint')}</p>
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="order-webhook-profit-mode">{t('pages.applications.orderWebhookFinanceMode')}</label>
+                  <select
+                    id="order-webhook-profit-mode"
+                    className="form-select"
+                    value={financeForm.mode}
+                    onChange={event => setFinanceForm(current => ({ ...current, mode: event.target.value as DidiOrderWebhookProfitMode | '' }))}
+                  >
+                    <option value="">{t('pages.applications.orderWebhookFinanceDisabled')}</option>
+                    <option value="fixed_mxn">{t('pages.applications.orderWebhookFinanceFixed')}</option>
+                    <option value="percentage">{t('pages.applications.orderWebhookFinancePercentage')}</option>
+                  </select>
+                </div>
+                {financeForm.mode && (
+                  <div className="order-webhook-finance-grid">
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="order-webhook-profit-value">
+                        {financeForm.mode === 'fixed_mxn'
+                          ? t('pages.applications.orderWebhookFinanceFixedValue')
+                          : t('pages.applications.orderWebhookFinancePercentageValue')}
+                      </label>
+                      <input
+                        id="order-webhook-profit-value"
+                        className="form-input"
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={financeForm.value}
+                        onChange={event => setFinanceForm(current => ({ ...current, value: event.target.value }))}
+                      />
+                    </div>
+                    {financeForm.mode === 'percentage' && webhookApp.country !== 'MX' && (
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="order-webhook-native-mxn">
+                          {t('pages.applications.orderWebhookFinanceNativeRate', { currency: webhookQuery.data.finance.nativeCurrency })}
+                        </label>
+                        <input
+                          id="order-webhook-native-mxn"
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={financeForm.nativeToMxnRate}
+                          onChange={event => setFinanceForm(current => ({ ...current, nativeToMxnRate: event.target.value }))}
+                        />
+                      </div>
+                    )}
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="order-webhook-mxn-usd">{t('pages.applications.orderWebhookFinanceUsdRate')}</label>
+                      <input
+                        id="order-webhook-mxn-usd"
+                        className="form-input"
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={financeForm.mxnPerUsdRate}
+                        onChange={event => setFinanceForm(current => ({ ...current, mxnPerUsdRate: event.target.value }))}
+                      />
+                    </div>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                  <span className={`status ${webhookQuery.data.finance.configured ? 's-done' : 's-cancelled'}`}>
+                    {webhookQuery.data.finance.configured
+                      ? t('pages.applications.orderWebhookFinanceConfigured')
+                      : t('pages.applications.orderWebhookFinanceNotConfigured')}
+                  </span>
+                  <button type="button" className="btn btn-primary btn-sm" disabled={financeSaving || !!webhookAction} onClick={saveOrderWebhookFinance}>
+                    {financeSaving
+                      ? t('pages.applications.orderWebhookFinanceSaving')
+                      : t('pages.applications.orderWebhookFinanceSave')}
+                  </button>
+                </div>
               </div>
 
               {webhookQuery.data.enabled && webhookQuery.data.url ? (

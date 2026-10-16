@@ -111,25 +111,57 @@ async function postShopUpdate(authToken: string, data: Record<string, unknown>) 
   return body.data ?? {};
 }
 
-async function updateShopHeadImage(ctx: HandlerContext) {
-  const { brand, application } = requireBrand(ctx);
-  const imageKey = ctx.field('Shop Head Image');
-  if (!imageKey || !/^[a-f0-9-]+\.(?:jpe?g|png)$/i.test(imageKey)) {
-    throw new Error('A valid Shop Head Image upload is required');
+type StoreImageField = 'shop_head_img' | 'shop_logo';
+
+function publicTaskAssetUrl(imageKey: string) {
+  const configuredUrl = process.env.FRONTEND_URL?.trim();
+  if (!configuredUrl) {
+    throw new Error('FRONTEND_URL must be configured with the public HTTPS Guaro URL before updating store images');
   }
-  const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:5173/guaro').replace(/\/$/, '');
-  const imageUrl = `${frontendUrl}/api/uploads/task-assets/${encodeURIComponent(imageKey)}`;
+
+  let frontendUrl: URL;
+  try {
+    frontendUrl = new URL(configuredUrl);
+  } catch {
+    throw new Error('FRONTEND_URL must be an absolute public HTTPS URL before updating store images');
+  }
+  if (
+    frontendUrl.protocol !== 'https:'
+    || !frontendUrl.hostname
+    || frontendUrl.username
+    || frontendUrl.password
+    || frontendUrl.search
+    || frontendUrl.hash
+  ) {
+    throw new Error('FRONTEND_URL must be an absolute public HTTPS URL without credentials, query parameters or fragments');
+  }
+
+  return `${frontendUrl.toString().replace(/\/$/, '')}/api/uploads/task-assets/${encodeURIComponent(imageKey)}`;
+}
+
+async function updateShopImage(
+  ctx: HandlerContext,
+  fieldLabel: 'Shop Head Image' | 'Shop Logo',
+  apiField: StoreImageField,
+) {
+  const { brand, application } = requireBrand(ctx);
+  const imageKey = ctx.field(fieldLabel);
+  if (!imageKey || !/^[a-f0-9-]+\.(?:jpe?g|png)$/i.test(imageKey)) {
+    throw new Error(`A valid ${fieldLabel} upload is required`);
+  }
+  const imageUrl = publicTaskAssetUrl(imageKey);
   const { requested, resolved, missing } = await resolveTargets(ctx);
   const successful: string[] = [];
   const failed = missing.map(shopId => ({ shopId, error: 'shop_id not found in POST /v1/shop/shop/list' }));
+  for (const failure of failed) ctx.addNote(`✗ ${failure.shopId}: ${failure.error}`);
 
   for (let offset = 0; offset < resolved.length; offset += BATCH_SIZE) {
     for (const target of resolved.slice(offset, offset + BATCH_SIZE)) {
       try {
         const token = await getAuthToken(application.appId, application.appSecret, target.appShopId);
-        await postShopUpdate(token, { shop_head_img: imageUrl });
+        await postShopUpdate(token, { [apiField]: imageUrl });
         successful.push(target.shopId);
-        ctx.addNote(`✓ ${target.shopId}: shop_head_img updated`);
+        ctx.addNote(`✓ ${target.shopId}: ${apiField} updated`);
       } catch (error) {
         const message = (error as Error).message;
         failed.push({ shopId: target.shopId, error: message });
@@ -138,9 +170,30 @@ async function updateShopHeadImage(ctx: HandlerContext) {
     }
     if (offset + BATCH_SIZE < resolved.length) await sleep(COOLDOWN_BATCH_MS);
   }
-  if (!successful.length) throw new Error(`No store image was updated (${failed.length}/${requested.length} failed)`);
-  logger.log(`Updated shop_head_img for ${successful.length}/${requested.length} shops of ${brand.brandName}`);
-  return { imageUrl, total: requested.length, success: successful.length, failed: failed.length, successful, failures: failed };
+  ctx.addNote(`Summary: ${successful.length}/${requested.length} stores updated; ${failed.length} failed`);
+  if (failed.length) {
+    throw new Error(
+      `${apiField} update incomplete: ${successful.length}/${requested.length} stores updated and ${failed.length} failed`,
+    );
+  }
+  logger.log(`Updated ${apiField} for ${successful.length}/${requested.length} shops of ${brand.brandName}`);
+  return {
+    imageUrl,
+    field: apiField,
+    total: requested.length,
+    success: successful.length,
+    failed: failed.length,
+    successful,
+    failures: failed,
+  };
+}
+
+export async function updateShopHeadImage(ctx: HandlerContext) {
+  return updateShopImage(ctx, 'Shop Head Image', 'shop_head_img');
+}
+
+export async function updateShopLogo(ctx: HandlerContext) {
+  return updateShopImage(ctx, 'Shop Logo', 'shop_logo');
 }
 
 async function uploadMenu(
@@ -305,6 +358,7 @@ async function addShopsToIntegration(ctx: HandlerContext) {
 }
 
 registerHandler('update_shop_head_image', updateShopHeadImage);
+registerHandler('update_shop_logo', updateShopLogo);
 registerHandler('replicate_store_menu', replicateStoreMenu);
 registerHandler('check_shop_integration', checkShopIntegration);
 registerHandler('add_shops_to_integration', addShopsToIntegration);

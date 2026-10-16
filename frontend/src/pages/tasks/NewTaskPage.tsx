@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import ValidationAssistant from '../../components/tasks/ValidationAssistant';
-import { taskTypesApi, brandsApi, shopsApi, tasksApi, appConfigApi } from '../../api';
+import SearchableSelect from '../../components/ui/SearchableSelect';
+import { taskTypesApi, brandsApi, tasksApi, appConfigApi } from '../../api';
 import { useT } from '../../i18n';
 import type { TaskType, FormField, Brand, Shop, FileValidationResult } from '../../types';
 import { downloadTaskTemplate } from '../../utils/downloadTaskTemplate';
@@ -142,6 +143,7 @@ function BrandCombobox({ value, onChange, placeholder = 'Search brand…' }: Bra
 
 type FileFieldValue = { name: string; tempPath: string; previewUrl?: string };
 type FieldValue = string | string[] | FileFieldValue | Brand[];
+type TaskShopOption = Pick<Shop, 'id' | 'shopId' | 'appShopId' | 'name' | 'city' | 'brandId'>;
 
 interface MultiBrandComboboxProps {
   value: Brand[];
@@ -225,10 +227,212 @@ function MultiBrandCombobox({ value, onChange }: MultiBrandComboboxProps) {
   );
 }
 
+function shopSearchOption(shop: TaskShopOption) {
+  return {
+    value: shop.id,
+    label: shop.name ? `${shop.shopId} · ${shop.name}` : shop.shopId,
+    description: [shop.appShopId ? `App Shop ID ${shop.appShopId}` : '', shop.city ?? ''].filter(Boolean).join(' · '),
+    keywords: `${shop.shopId} ${shop.appShopId} ${shop.name ?? ''} ${shop.city ?? ''}`,
+  };
+}
+
+interface StoreSearchFieldProps {
+  brandId: string;
+  value: string;
+  onChange: (value: string) => void;
+  ariaLabel: string;
+}
+
+function StoreSearchField({ brandId, value, onChange, ariaLabel }: StoreSearchFieldProps) {
+  const t = useT();
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [cachedSelection, setCachedSelection] = useState<TaskShopOption | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const { data, isFetching } = useQuery<{
+    data: TaskShopOption[];
+    total: number;
+  }>({
+    queryKey: ['tasks', 'shop-options', brandId, debouncedSearch],
+    queryFn: () => tasksApi.shopOptions({
+      brandId,
+      q: debouncedSearch || undefined,
+      limit: 75,
+    }).then(response => response.data),
+    enabled: !!brandId,
+  });
+  const available = data?.data ?? [];
+  const selected = value
+    ? available.find(shop => shop.id === value)
+      ?? (cachedSelection?.id === value && cachedSelection.brandId === brandId ? cachedSelection : null)
+    : null;
+  const candidates = selected && !available.some(shop => shop.id === selected.id)
+    ? [selected, ...available]
+    : available;
+  const searchPending = search.trim() !== debouncedSearch;
+
+  return (
+    <SearchableSelect
+      value={value}
+      options={candidates.map(shopSearchOption)}
+      onChange={nextValue => {
+        if (!nextValue) setCachedSelection(null);
+        else setCachedSelection(candidates.find(shop => shop.id === nextValue) ?? null);
+        onChange(nextValue);
+      }}
+      onSearchChange={setSearch}
+      placeholder={t('pages.newTask.selectStore')}
+      searchPlaceholder={t('pages.newTask.searchStorePlaceholder')}
+      emptyMessage={t('pages.newTask.noStoresFound')}
+      clearLabel={t('common.clearSelection')}
+      moreResultsLabel={t('common.moreSearchResults')}
+      loading={isFetching || searchPending}
+      loadingMessage={t('common.loading')}
+      disabled={!brandId}
+      ariaLabel={ariaLabel}
+      maxResults={75}
+    />
+  );
+}
+
+interface CommercialStorePickerProps {
+  brandId: string;
+  scope: string;
+  value: string[];
+  onChange: (value: string[]) => void;
+}
+
+function CommercialStorePicker({ brandId, scope, value, onChange }: CommercialStorePickerProps) {
+  const t = useT();
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [selectedShops, setSelectedShops] = useState<Record<string, TaskShopOption>>({});
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const allStores = scope === 'All brand stores';
+  const { data: searchResult, isFetching } = useQuery<{
+    data: TaskShopOption[];
+    total: number;
+  }>({
+    queryKey: ['tasks', 'commercial-shop-options', brandId, debouncedSearch],
+    queryFn: () => tasksApi.shopOptions({
+      brandId,
+      q: debouncedSearch || undefined,
+      limit: 75,
+    }).then(response => response.data),
+    enabled: !!brandId && !allStores,
+  });
+  const { data: countResult } = useQuery<{ total: number }>({
+    queryKey: ['tasks', 'commercial-shop-count', brandId],
+    queryFn: () => tasksApi.shopOptions({ brandId, limit: 1 }).then(response => response.data),
+    enabled: !!brandId && allStores,
+  });
+
+  if (allStores) {
+    return (
+      <div style={{ padding: 12, borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--border)', fontSize: '0.84rem' }}>
+        {t('pages.newTask.allStoresSnapshot').replace('{count}', String(countResult?.total ?? '…'))}
+      </div>
+    );
+  }
+
+  const shops = searchResult?.data ?? [];
+  const searchPending = search.trim() !== debouncedSearch;
+  const toggle = (shop: TaskShopOption) => {
+    const checked = value.includes(shop.id);
+    if (scope === 'One store') {
+      setSelectedShops({ [shop.id]: shop });
+      onChange([shop.id]);
+      return;
+    }
+    if (checked) {
+      onChange(value.filter(id => id !== shop.id));
+      return;
+    }
+    setSelectedShops(previous => ({ ...previous, [shop.id]: shop }));
+    onChange([...value, shop.id]);
+  };
+
+  return (
+    <>
+      {value.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          {value.map(id => {
+            const shop = selectedShops[id] ?? shops.find(candidate => candidate.id === id);
+            const label = shop ? (shop.name ? `${shop.shopId} · ${shop.name}` : shop.shopId) : id;
+            return (
+              <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 6, background: 'var(--orange-muted)', color: 'var(--orange-dark)', fontSize: '0.75rem' }}>
+                {label}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  aria-label={t('pages.newTask.removeStore').replace('{store}', label)}
+                  onClick={() => onChange(value.filter(selectedId => selectedId !== id))}
+                  style={{ minHeight: 0, padding: 0, color: 'inherit' }}
+                >×</button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+      <input
+        className="form-input"
+        type="search"
+        value={search}
+        onChange={event => setSearch(event.target.value)}
+        placeholder={t('pages.newTask.searchStorePlaceholder')}
+        aria-label={t('pages.newTask.searchStorePlaceholder')}
+      />
+      <div style={{ border: '1px solid var(--border)', borderRadius: 8, maxHeight: 260, overflowY: 'auto' }}>
+        {(isFetching || searchPending) && <div className="text-muted text-sm" role="status" style={{ padding: 12 }}>{t('common.loading')}</div>}
+        {!isFetching && !searchPending && shops.map(shop => {
+          const checked = value.includes(shop.id);
+          return (
+            <label key={shop.id} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderBottom: '1px solid var(--border)', cursor: 'pointer', fontSize: '0.82rem' }}>
+              <input
+                type={scope === 'One store' ? 'radio' : 'checkbox'}
+                name={scope === 'One store' ? 'commercial-target-shop' : undefined}
+                checked={checked}
+                onChange={() => toggle(shop)}
+              />
+              <strong>{shop.shopId}</strong>
+              <span className="text-muted">{shop.name ?? shop.appShopId}{shop.city ? ` · ${shop.city}` : ''}</span>
+            </label>
+          );
+        })}
+        {!isFetching && !searchPending && shops.length === 0 && (
+          <div className="text-muted text-sm" style={{ padding: 12 }}>{t('pages.newTask.noStoresFound')}</div>
+        )}
+        {!isFetching && !searchPending && (searchResult?.total ?? 0) > shops.length && (
+          <div className="text-muted text-sm" style={{ padding: 12, borderTop: '1px solid var(--border)' }}>
+            {t('common.moreSearchResults').replace('{count}', String((searchResult?.total ?? 0) - shops.length))}
+          </div>
+        )}
+      </div>
+      <p className="form-hint" style={{ marginTop: 6 }}>
+        {t('pages.newTask.selectedStoresCount').replace('{count}', String(value.length))}
+      </p>
+    </>
+  );
+}
+
 export default function NewTaskPage() {
   const nav = useNavigate();
   const [searchParams] = useSearchParams();
   const t = useT();
+  const searchableSelectCopy = {
+    clearLabel: t('common.clearSelection'),
+    moreResultsLabel: t('common.moreSearchResults'),
+  };
   const { min: schedMin, max: schedMax } = useMemo(() => getSchedulingBounds(), []);
 
   const [selectedTTId, setSelectedTTId] = useState<string | null>(null);
@@ -242,7 +446,7 @@ export default function NewTaskPage() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const [targetShopIds, setTargetShopIds] = useState<string[]>([]);
-  const [targetShopSearch, setTargetShopSearch] = useState('');
+  const [taskTypeSearch, setTaskTypeSearch] = useState('');
   const [downloadingCommercialTemplate, setDownloadingCommercialTemplate] = useState(false);
 
   const { data: taskTypesResult } = useQuery<{ data: TaskType[] }>({
@@ -286,7 +490,6 @@ export default function NewTaskPage() {
     if (Object.keys(defaults).length) setFormValues(previous => ({ ...previous, ...defaults }));
   }, [fields, formValues, isCommercialMenuUpload]);
 
-  const hasStoreField   = fields.some(f => f.tipo === 'select_store');
   const hasKaTypeField      = fields.some(f => f.tipo === 'select_ka_type');
   const hasCountryField     = fields.some(f => f.tipo === 'select_country');
   const hasBizCatField      = fields.some(f => f.tipo === 'select_biz_category');
@@ -303,19 +506,7 @@ export default function NewTaskPage() {
   }, [fields, formValues]);
 
   const anySelectedBrand = Object.values(selectedBrandIds)[0] ?? '';
-
-  useEffect(() => {
-    setTargetShopIds([]);
-    setTargetShopSearch('');
-  }, [anySelectedBrand]);
-
-
-  const { data: shopsResult } = useQuery<{ data: Shop[]; total: number }>({
-    queryKey: ['shops', 'for-task', anySelectedBrand],
-    queryFn: () => shopsApi.list({ brandId: anySelectedBrand, limit: 10000 }).then(r => r.data as { data: Shop[]; total: number }),
-    enabled: (hasStoreField || isCommercialMenuUpload) && !!anySelectedBrand,
-  });
-  const shops = shopsResult?.data ?? [];
+  const primaryBrandFieldId = fields.find(field => field.tipo === 'select_brand')?.id;
 
   const { data: appConfig = {} } = useQuery<Record<string, { value: string; label: string }[]>>({
     queryKey: ['app-config'],
@@ -327,15 +518,18 @@ export default function NewTaskPage() {
   });
 
   const bySection = useMemo(() => {
+    const query = taskTypeSearch.trim().toLocaleLowerCase();
     const map = new Map<string, { sectionId: string; sectionName: string; types: TaskType[] }>();
     for (const tt of taskTypes) {
       if (tt.active === false) continue;
+      const sectionName = tt.section?.name ?? 'No section';
+      if (query && !`${tt.name} ${tt.description ?? ''} ${sectionName}`.toLocaleLowerCase().includes(query)) continue;
       const key = tt.sectionId;
-      if (!map.has(key)) map.set(key, { sectionId: key, sectionName: tt.section?.name ?? 'No section', types: [] });
+      if (!map.has(key)) map.set(key, { sectionId: key, sectionName, types: [] });
       map.get(key)!.types.push(tt);
     }
     return [...map.values()];
-  }, [taskTypes]);
+  }, [taskTypeSearch, taskTypes]);
 
   const pickTaskType = (tt: TaskType) => {
     setSelectedTTId(tt.id);
@@ -344,12 +538,26 @@ export default function NewTaskPage() {
     setScheduledStart('');
     setLatestFileValidation(null);
     setTargetShopIds([]);
-    setTargetShopSearch('');
     setErr('');
   };
 
   const setField = (fieldId: string, value: FieldValue) => {
     setFormValues(prev => ({ ...prev, [fieldId]: value }));
+  };
+
+  const setBrandField = (fieldId: string, value: string) => {
+    if (fieldId === primaryBrandFieldId) setTargetShopIds([]);
+    setFormValues(previous => {
+      const next = { ...previous, [fieldId]: value };
+      for (const field of fields) {
+        if (field.tipo !== 'select_store') continue;
+        const dependsOnBrand = field.filteredById
+          ? field.filteredById === fieldId
+          : primaryBrandFieldId === fieldId;
+        if (dependsOnBrand) next[field.id] = '';
+      }
+      return next;
+    });
   };
 
   const toggleMultiOption = (fieldId: string, option: string) => {
@@ -575,13 +783,19 @@ export default function NewTaskPage() {
       return (
         <div className="form-group" key={f.id}>
           {label}
-          <select className="form-select" value={strVal} onChange={e => {
-            setField(f.id, e.target.value);
-            if (f.label === 'Store Scope') setTargetShopIds([]);
-          }}>
-            <option value="">{t('pages.newTask.selectOption')}</option>
-            {f.options.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
+          <SearchableSelect
+            {...searchableSelectCopy}
+            value={strVal}
+            options={f.options.map(option => ({ value: option, label: option }))}
+            onChange={value => {
+              setField(f.id, value);
+              if (f.label === 'Store Scope') setTargetShopIds([]);
+            }}
+            placeholder={t('pages.newTask.selectOption')}
+            searchPlaceholder={t('pages.newTask.typeToSearch')}
+            emptyMessage={t('pages.newTask.noOptionsFound')}
+            ariaLabel={f.label}
+          />
         </div>
       );
     }
@@ -591,7 +805,7 @@ export default function NewTaskPage() {
         {label}
         <BrandCombobox
           value={strVal}
-          onChange={id => setField(f.id, id)}
+          onChange={id => setBrandField(f.id, id)}
           placeholder={t('pages.newTask.noBrandsFound')}
         />
       </div>
@@ -612,10 +826,16 @@ export default function NewTaskPage() {
       return (
         <div className="form-group" key={f.id}>
           {label}
-          <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)}>
-            <option value="">{t('pages.newTask.selectKaType')}</option>
-            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          <SearchableSelect
+            {...searchableSelectCopy}
+            value={strVal}
+            options={options}
+            onChange={value => setField(f.id, value)}
+            placeholder={t('pages.newTask.selectKaType')}
+            searchPlaceholder={t('pages.newTask.typeToSearch')}
+            emptyMessage={t('pages.newTask.noOptionsFound')}
+            ariaLabel={f.label}
+          />
         </div>
       );
     }
@@ -625,10 +845,16 @@ export default function NewTaskPage() {
       return (
         <div className="form-group" key={f.id}>
           {label}
-          <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)}>
-            <option value="">{t('pages.newTask.selectCountry')}</option>
-            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          <SearchableSelect
+            {...searchableSelectCopy}
+            value={strVal}
+            options={options}
+            onChange={value => setField(f.id, value)}
+            placeholder={t('pages.newTask.selectCountry')}
+            searchPlaceholder={t('pages.newTask.typeToSearch')}
+            emptyMessage={t('pages.newTask.noOptionsFound')}
+            ariaLabel={f.label}
+          />
         </div>
       );
     }
@@ -638,31 +864,36 @@ export default function NewTaskPage() {
       return (
         <div className="form-group" key={f.id}>
           {label}
-          <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)}>
-            <option value="">{t('pages.newTask.selectBizCategory')}</option>
-            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          <SearchableSelect
+            {...searchableSelectCopy}
+            value={strVal}
+            options={options}
+            onChange={value => setField(f.id, value)}
+            placeholder={t('pages.newTask.selectBizCategory')}
+            searchPlaceholder={t('pages.newTask.typeToSearch')}
+            emptyMessage={t('pages.newTask.noOptionsFound')}
+            ariaLabel={f.label}
+          />
         </div>
       );
     }
 
     if (f.tipo === 'select_store') {
       const filterBrandId = f.filteredById
-        ? (selectedBrandIds[f.filteredById] ?? anySelectedBrand)
+        ? (selectedBrandIds[f.filteredById] ?? '')
         : anySelectedBrand;
-      const filteredShops = filterBrandId ? shops.filter(s => s.brandId === filterBrandId) : shops;
       return (
         <div className="form-group" key={f.id}>
           {label}
           {!filterBrandId && (
             <p className="form-hint" style={{ marginBottom: 6 }}>{t('pages.newTask.selectBrand')}</p>
           )}
-          <select className="form-select" value={strVal} onChange={e => setField(f.id, e.target.value)} disabled={!filterBrandId}>
-            <option value="">{t('pages.newTask.selectStore')}</option>
-            {filteredShops.map(s => (
-              <option key={s.id} value={s.id}>{s.shopId}{s.name ? ` · ${s.name}` : ''}</option>
-            ))}
-          </select>
+          <StoreSearchField
+            value={strVal}
+            onChange={value => setField(f.id, value)}
+            brandId={filterBrandId}
+            ariaLabel={f.label}
+          />
         </div>
       );
     }
@@ -671,11 +902,16 @@ export default function NewTaskPage() {
       const fileVal = val as FileFieldValue | undefined;
       const uploading = fileUploading[f.id] ?? false;
       const image = f.tipo === 'image';
+      const logoImage = image && f.label.trim().toLocaleLowerCase('en-US') === 'shop logo';
       return (
         <div className="form-group" key={f.id}>
           {label}
           <p className="form-hint" style={{ marginBottom: 6 }}>
-            {image ? 'JPG, JPEG o PNG. Se enviará el archivo original sin redimensionar, recortar, rellenar ni recomprimir. Mínimo 1200 × 900 px y máximo 5 MB.' : t('pages.newTask.excelHint')}
+            {image
+              ? logoImage
+                ? 'JPG, JPEG o PNG. Se enviará el logo original sin redimensionar, recortar, rellenar ni recomprimir. Máximo 5 MB.'
+                : 'JPG, JPEG o PNG. Se enviará el archivo original sin redimensionar, recortar, rellenar ni recomprimir. Mínimo 1200 × 900 px y máximo 5 MB.'
+              : t('pages.newTask.excelHint')}
           </p>
           <input
             type="file"
@@ -743,12 +979,30 @@ export default function NewTaskPage() {
             {t('pages.newTask.taskTypesHeader')}
           </div>
 
+          <div style={{ padding: '0 12px 14px' }}>
+            <input
+              className="form-input"
+              type="search"
+              value={taskTypeSearch}
+              onChange={event => setTaskTypeSearch(event.target.value)}
+              placeholder={t('pages.newTask.searchTaskType')}
+              aria-label={t('pages.newTask.searchTaskType')}
+              style={{ background: 'var(--surface)' }}
+            />
+          </div>
+
           {taskTypes.length === 0 && (
             <p style={{ padding: '0 16px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{t('pages.newTask.noTaskTypes')}</p>
           )}
 
+          {taskTypes.length > 0 && bySection.length === 0 && (
+            <p style={{ padding: '0 16px', fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+              {t('pages.newTask.noTaskTypeMatches')}
+            </p>
+          )}
+
           {bySection.map(({ sectionId, sectionName, types }) => {
-            const collapsed = collapsedSections.has(sectionId);
+            const collapsed = !taskTypeSearch && collapsedSections.has(sectionId);
             return (
               <div key={sectionId} style={{ marginBottom: 4 }}>
                 <button
@@ -872,36 +1126,14 @@ export default function NewTaskPage() {
                   {fields.map(f => renderField(f))}
                   {isCommercialMenuUpload && anySelectedBrand && (
                     <div className="form-group" style={{ marginTop: 16 }}>
-                      <label className="form-label">Target stores <span style={{ color: 'var(--red)' }}>*</span></label>
-                      {storeScope === 'All brand stores' ? (
-                        <div style={{ padding: 12, borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--border)', fontSize: '0.84rem' }}>
-                          A snapshot of all {shopsResult?.total ?? shops.length} local stores in this brand will be attached when the task is created.
-                        </div>
-                      ) : (
-                        <>
-                          <input className="form-input" value={targetShopSearch} onChange={event => setTargetShopSearch(event.target.value)} placeholder="Search by shop ID, appShopId, name or city…" />
-                          <div style={{ border: '1px solid var(--border)', borderRadius: 8, maxHeight: 260, overflowY: 'auto' }}>
-                            {shops
-                              .filter(shop => `${shop.shopId} ${shop.appShopId} ${shop.name ?? ''} ${shop.city ?? ''}`.toLowerCase().includes(targetShopSearch.toLowerCase()))
-                              .slice(0, storeScope === 'One store' ? 200 : 500)
-                              .map(shop => {
-                                const checked = targetShopIds.includes(shop.id);
-                                return (
-                                  <label key={shop.id} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderBottom: '1px solid var(--border)', cursor: 'pointer', fontSize: '0.82rem' }}>
-                                    <input type={storeScope === 'One store' ? 'radio' : 'checkbox'} name={storeScope === 'One store' ? 'commercial-target-shop' : undefined} checked={checked}
-                                      onChange={() => setTargetShopIds(previous => storeScope === 'One store'
-                                        ? [shop.id]
-                                        : checked ? previous.filter(id => id !== shop.id) : [...previous, shop.id])} />
-                                    <strong>{shop.shopId}</strong>
-                                    <span className="text-muted">{shop.name ?? shop.appShopId}{shop.city ? ` · ${shop.city}` : ''}</span>
-                                  </label>
-                                );
-                              })}
-                            {shops.length === 0 && <div className="text-muted text-sm" style={{ padding: 12 }}>This brand has no local stores.</div>}
-                          </div>
-                          <p className="form-hint" style={{ marginTop: 6 }}>{targetShopIds.length} store(s) selected.</p>
-                        </>
-                      )}
+                      <label className="form-label">{t('pages.newTask.targetStores')} <span style={{ color: 'var(--red)' }}>*</span></label>
+                      <CommercialStorePicker
+                        key={anySelectedBrand}
+                        brandId={anySelectedBrand}
+                        scope={storeScope}
+                        value={targetShopIds}
+                        onChange={setTargetShopIds}
+                      />
                     </div>
                   )}
                 </div>

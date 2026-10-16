@@ -244,21 +244,24 @@ export class BpoManagementService {
     const dateRange = this.buildDateRange(year, month, week);
 
     const taskFilter: Prisma.TaskWhereInput = {
+      // A failed task is an operational/system failure, not an individual
+      // performance outcome. Keep it available in task lists and history, but
+      // exclude every one of its steps from people metrics and denominators.
+      status: { not: TaskStatus.failed },
       ...(dateRange  ? { createdAt: dateRange } : {}),
       ...(taskTypeId ? { taskTypeId }           : {}),
     };
-    const hasTaskFilter = dateRange || taskTypeId;
 
     const stepWhere = (status: StepStatus | { in: StepStatus[] }): Prisma.StepInstanceWhereInput => ({
       assignedToId: accountId,
       status,
-      ...(hasTaskFilter ? { task: taskFilter } : {}),
+      task: taskFilter,
     });
 
     const activeWhere: Prisma.StepInstanceWhereInput = {
       assignedToId: accountId,
       status: { in: [StepStatus.pending, StepStatus.in_progress, StepStatus.blocked] },
-      ...(hasTaskFilter ? { task: taskFilter } : {}),
+      task: taskFilter,
     };
 
     const [totalCompleted, totalFailed, totalInProgress] = await Promise.all([
@@ -269,18 +272,20 @@ export class BpoManagementService {
 
     // Average active work time — filter through task to match ORM queries above
     const dateFilter = dateRange
-      ? Prisma.sql`AND task_id IN (SELECT id FROM task WHERE created_at >= ${dateRange.gte} AND created_at < ${dateRange.lt})`
+      ? Prisma.sql`AND t.created_at >= ${dateRange.gte} AND t.created_at < ${dateRange.lt}`
       : Prisma.empty;
     const typeFilter = taskTypeId
-      ? Prisma.sql`AND task_id IN (SELECT id FROM task WHERE task_type_id = ${taskTypeId}::uuid)`
+      ? Prisma.sql`AND t.task_type_id = ${taskTypeId}::uuid`
       : Prisma.empty;
 
     const avgResult = await this.prisma.$queryRaw<{ avg_hours: number | null }[]>`
-      SELECT AVG(worked_seconds) / 3600.0 AS avg_hours
-      FROM step_instance
-      WHERE asignado_id = ${accountId}::uuid
-        AND estado = 'done'
-        AND worked_seconds IS NOT NULL
+      SELECT AVG(si.worked_seconds) / 3600.0 AS avg_hours
+      FROM step_instance si
+      JOIN task t ON t.id = si.task_id
+      WHERE si.asignado_id = ${accountId}::uuid
+        AND si.estado = 'done'
+        AND si.worked_seconds IS NOT NULL
+        AND t.estado <> 'failed'
         ${dateFilter}
         ${typeFilter}
     `;

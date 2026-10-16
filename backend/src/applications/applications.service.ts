@@ -1,11 +1,12 @@
-import { ConflictException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Country, Prisma } from '@prisma/client';
+import { Country, DidiOrderWebhookProfitMode, Prisma } from '@prisma/client';
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { decrypt, encrypt } from '../common/crypto.util';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
+import { UpdateOrderWebhookFinanceDto } from './dto/update-order-webhook-finance.dto';
 
 const SELECT_SAFE = {
   id: true, appId: true, appName: true, country: true, didiBindingEnvironment: true,
@@ -22,6 +23,11 @@ const ORDER_WEBHOOK_SELECT = {
   orderWebhookCreatedAt: true,
   orderWebhookRotatedAt: true,
   orderWebhookDisabledAt: true,
+  country: true,
+  orderWebhookProfitMode: true,
+  orderWebhookProfitValue: true,
+  orderWebhookNativeToMxn: true,
+  orderWebhookMxnPerUsd: true,
 } as const;
 
 @Injectable()
@@ -84,6 +90,10 @@ export class ApplicationsService {
           orderWebhookCreatedAt: null,
           orderWebhookRotatedAt: null,
           orderWebhookDisabledAt: null,
+          orderWebhookProfitMode: null,
+          orderWebhookProfitValue: null,
+          orderWebhookNativeToMxn: null,
+          orderWebhookMxnPerUsd: null,
         },
         select: SELECT_SAFE,
       });
@@ -111,13 +121,23 @@ export class ApplicationsService {
 
   async update(id: string, dto: UpdateApplicationDto) {
     const application = await this.findOne(id);
-    if (dto.country && dto.country !== application.country) {
-      await this.assertCountryCanChange(id, dto.country);
+    const countryChanged = !!dto.country && dto.country !== application.country;
+    if (countryChanged) {
+      await this.assertCountryCanChange(id, dto.country!);
     }
     const data: Record<string, unknown> = {};
     if (dto.appName) data.appName = dto.appName.trim();
     if (dto.appSecret) data.appSecret = encrypt(dto.appSecret, this.encKey);
     if (dto.country) data.country = dto.country;
+    if (countryChanged) {
+      // Commission percentages and native-currency FX are country-specific.
+      // Clear the whole snapshot configuration rather than silently applying
+      // a rate that was entered for a different currency.
+      data.orderWebhookProfitMode = null;
+      data.orderWebhookProfitValue = null;
+      data.orderWebhookNativeToMxn = null;
+      data.orderWebhookMxnPerUsd = null;
+    }
     if (dto.didiBindingEnvironment !== undefined) {
       data.didiBindingEnvironment = dto.didiBindingEnvironment;
     }
@@ -236,6 +256,63 @@ export class ApplicationsService {
     return this.orderWebhookResponse(updated);
   }
 
+  async updateOrderWebhookFinance(id: string, dto: UpdateOrderWebhookFinanceDto) {
+    const application = await this.orderWebhookApplication(id);
+    const mode = dto.mode !== undefined ? dto.mode : application.orderWebhookProfitMode;
+    if (mode === null) {
+      const cleared = await this.prisma.application.update({
+        where: { id },
+        data: {
+          orderWebhookProfitMode: null,
+          orderWebhookProfitValue: null,
+          orderWebhookNativeToMxn: null,
+          orderWebhookMxnPerUsd: null,
+        },
+        select: ORDER_WEBHOOK_SELECT,
+      });
+      return this.orderWebhookResponse(cleared);
+    }
+    if (!mode) {
+      throw new BadRequestException('Profit mode is required to enable financial estimates');
+    }
+
+    const value = this.financeDecimal(
+      dto.value !== undefined ? dto.value : application.orderWebhookProfitValue,
+      'Profit value',
+    );
+    const mxnPerUsd = this.financeDecimal(
+      dto.mxnPerUsdRate !== undefined
+        ? dto.mxnPerUsdRate
+        : application.orderWebhookMxnPerUsd,
+      'MXN per USD rate',
+    );
+    if (mode === DidiOrderWebhookProfitMode.percentage && value.gt(100)) {
+      throw new BadRequestException('Percentage profit value must be at most 100');
+    }
+
+    let nativeToMxn: Prisma.Decimal | null = null;
+    if (mode === DidiOrderWebhookProfitMode.percentage && application.country !== Country.MX) {
+      nativeToMxn = this.financeDecimal(
+        dto.nativeToMxnRate !== undefined
+          ? dto.nativeToMxnRate
+          : application.orderWebhookNativeToMxn,
+        'Native currency to MXN rate',
+      );
+    }
+
+    const updated = await this.prisma.application.update({
+      where: { id },
+      data: {
+        orderWebhookProfitMode: mode,
+        orderWebhookProfitValue: value,
+        orderWebhookNativeToMxn: nativeToMxn,
+        orderWebhookMxnPerUsd: mxnPerUsd,
+      },
+      select: ORDER_WEBHOOK_SELECT,
+    });
+    return this.orderWebhookResponse(updated);
+  }
+
   private async orderWebhookApplication(id: string) {
     const application = await this.prisma.application.findUnique({
       where: { id },
@@ -274,6 +351,18 @@ export class ApplicationsService {
       lastReceivedAt: lastReceived?.createdAt ?? null,
       lastAcceptedAt: lastAccepted?.acceptedAt ?? null,
       lastError: lastFailed?.errorMessage ?? lastFailed?.remoteErrmsg ?? null,
+      finance: {
+        configured: application.orderWebhookProfitMode !== null,
+        mode: application.orderWebhookProfitMode,
+        value: application.orderWebhookProfitValue?.toString() ?? null,
+        nativeToMxnRate: application.orderWebhookNativeToMxn?.toString() ?? null,
+        mxnPerUsdRate: application.orderWebhookMxnPerUsd?.toString() ?? null,
+        nativeCurrency: application.country === Country.MX
+          ? 'MXN'
+          : application.country === Country.CO
+            ? 'COP'
+            : 'CRC',
+      },
     };
 
     if (
@@ -321,5 +410,14 @@ export class ApplicationsService {
 
   private isUniqueConstraintError(error: unknown) {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+  }
+
+  private financeDecimal(value: string | Prisma.Decimal | null, label: string) {
+    if (value === null) throw new BadRequestException(`${label} is required`);
+    const decimal = new Prisma.Decimal(value);
+    if (!decimal.isFinite() || decimal.lte(0) || decimal.gt(1_000_000_000)) {
+      throw new BadRequestException(`${label} must be greater than zero and at most 1000000000`);
+    }
+    return decimal;
   }
 }

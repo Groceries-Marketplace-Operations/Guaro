@@ -152,12 +152,33 @@ export const applicationsApi = {
     client.post<import('../types').ApplicationOrderWebhook>(`/applications/${id}/order-webhook/rotate`),
   disableOrderWebhook: (id: string) =>
     client.delete<import('../types').ApplicationOrderWebhook>(`/applications/${id}/order-webhook`),
+  updateOrderWebhookFinance: (id: string, data: {
+    mode: import('../types').DidiOrderWebhookProfitMode | null;
+    value?: string | null;
+    nativeToMxnRate?: string | null;
+    mxnPerUsdRate?: string | null;
+  }) => client.patch<import('../types').ApplicationOrderWebhook>(
+    `/applications/${id}/order-webhook/finance`,
+    data,
+  ),
   listOrderWebhookEvents: (id: string, params?: {
     page?: number;
     limit?: number;
     status?: import('../types').DidiOrderWebhookEventStatus;
+    q?: string;
     appShopId?: string;
+    didiShopId?: string;
     orderId?: string;
+    country?: import('../types').Country;
+    stage?: import('../types').DidiOrderWebhookEventStage;
+    amountField?: 'order_price' | 'real_price' | 'real_pay_price';
+    minOrderAmount?: string;
+    maxOrderAmount?: string;
+    minProfitMxn?: string;
+    maxProfitMxn?: string;
+    hasProfit?: boolean;
+    minDurationMs?: number;
+    maxDurationMs?: number;
     from?: string;
     to?: string;
   }) => client.get<import('../types').DidiOrderWebhookEventsResponse>(
@@ -200,8 +221,20 @@ export const orderWebhookEventsApi = {
     limit?: number;
     applicationId?: string;
     status?: import('../types').DidiOrderWebhookEventStatus;
+    q?: string;
     appShopId?: string;
+    didiShopId?: string;
     orderId?: string;
+    country?: import('../types').Country;
+    stage?: import('../types').DidiOrderWebhookEventStage;
+    amountField?: 'order_price' | 'real_price' | 'real_pay_price';
+    minOrderAmount?: string;
+    maxOrderAmount?: string;
+    minProfitMxn?: string;
+    maxProfitMxn?: string;
+    hasProfit?: boolean;
+    minDurationMs?: number;
+    maxDurationMs?: number;
     from?: string;
     to?: string;
   }) => client.get<import('../types').DidiOrderWebhookEventsResponse>(
@@ -217,7 +250,16 @@ export const orderWebhookEventsApi = {
 export const tasksApi = {
   list: (params?: object) => client.get<{ data: unknown[]; total: number; page: number; limit: number }>('/tasks', { params }),
   dashboardSummary: () => client.get<import('../types').TaskDashboardSummary>('/tasks/dashboard-summary'),
-  filterOptions: () => client.get<{ sections: { id: string; name: string; order: number }[] }>('/tasks/filter-options'),
+  filterOptions: () => client.get<{
+    sections: { id: string; name: string; order: number }[];
+    brands: { id: string; brandId: string; brandName: string; country: string }[];
+  }>('/tasks/filter-options'),
+  shopOptions: (params: { brandId: string; q?: string; limit?: number }) => client.get<{
+    data: { id: string; shopId: string; appShopId: string; name?: string; city?: string; brandId: string }[];
+    total: number;
+    page: number;
+    limit: number;
+  }>('/tasks/shop-options', { params }),
   get: (id: string) => client.get(`/tasks/${id}`),
   create: (data: object) => client.post('/tasks', data),
   completeStep: (taskId: string, stepId: string, data: object) =>

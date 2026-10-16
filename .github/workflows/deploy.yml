@@ -51,10 +51,25 @@ jobs:
             fi
             umask 077
             mkdir -p backups
-            backup_file="backups/pre-deploy-$(date +%Y%m%d-%H%M%S).dump"
+            # Keep four existing backups before writing the next one. This
+            # avoids briefly needing space for six full database dumps on
+            # hosts that are already close to their disk threshold.
+            find backups -maxdepth 1 -type f -name 'pre-deploy-*.dump' -printf '%T@ %p\n' \
+              | sort -nr \
+              | tail -n +5 \
+              | cut -d' ' -f2- \
+              | xargs -r rm -f --
+            backup_stamp="$(date +%Y%m%d-%H%M%S)"
+            backup_file="backups/pre-deploy-${backup_stamp}.dump"
+            backup_tmp="backups/.pre-deploy-${backup_stamp}.dump.tmp"
+            trap 'rm -f -- "$backup_tmp"' EXIT
             docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
-              sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" -Fc' > "$backup_file"
-            test -s "$backup_file"
+              sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" -Fc' > "$backup_tmp"
+            test -s "$backup_tmp"
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
+              pg_restore -l < "$backup_tmp" >/dev/null
+            mv -- "$backup_tmp" "$backup_file"
+            trap - EXIT
             find backups -maxdepth 1 -type f -name 'pre-deploy-*.dump' -printf '%T@ %p\n' \
               | sort -nr \
               | tail -n +6 \
@@ -65,6 +80,12 @@ jobs:
             # Existing containers stay running until both builds succeed.
             docker compose -f docker-compose.prod.yml --env-file .env.prod build backend
             docker compose -f docker-compose.prod.yml --env-file .env.prod build frontend
+            # Apply backward-compatible migrations with the newly built image
+            # while the current backend is still serving traffic. A migration
+            # failure therefore leaves the running release untouched, and
+            # large concurrent indexes do not extend the container restart.
+            docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --no-deps backend \
+              npx prisma migrate deploy --schema=./prisma/schema.prisma
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
             backend_ready=false
             for attempt in $(seq 1 24); do

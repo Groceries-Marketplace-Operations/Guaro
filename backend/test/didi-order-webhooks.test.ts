@@ -8,12 +8,18 @@ import {
   BadRequestException,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import { Country } from '@prisma/client';
+import {
+  Country,
+  DidiOrderWebhookProfitMode,
+  DidiOrderWebhookShopResolutionSource,
+  Prisma,
+} from '@prisma/client';
 import { ApplicationsService } from '../src/applications/applications.service';
 import { decrypt, encrypt } from '../src/common/crypto.util';
 import { redactSensitiveRequestUrl } from '../src/common/filters/global-error.filter';
 import {
   buildDidiOrderConfirmBody,
+  DIDI_ORDER_ACCEPTANCE_TIMEOUT_MS,
   DIDI_ORDER_WEBHOOK_MAX_BODY_BYTES,
   DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS,
   DIDI_ORDER_WEBHOOK_STALE_PROCESSING_MS,
@@ -41,6 +47,7 @@ function payload(options: {
   nestedOrderId?: string;
   type?: string;
   shopId?: string;
+  priceJson?: string;
   omitRootAppShopId?: boolean;
   omitNestedAppShopId?: boolean;
 } = {}) {
@@ -58,11 +65,14 @@ function payload(options: {
       : [`"app_shop_id":${JSON.stringify(nestedAppShopId)}`]),
     ...(options.shopId ? [`"shop_id":${options.shopId}`] : []),
   ].join(',');
+  const priceField = options.priceJson === undefined
+    ? ''
+    : `,"price":${options.priceJson}`;
   return Buffer.from(
     `{"app_id":${appId}${rootShopField},`
       + `"timestamp":1770000000000,"type":${JSON.stringify(options.type ?? 'orderNew')},`
       + `"data":{"order_id":${orderId},"order_info":{"order_id":${nestedOrderId},`
-      + `"shop":{${nestedShopFields}}}}}`,
+      + `"shop":{${nestedShopFields}}${priceField}}}}`,
     'utf8',
   );
 }
@@ -75,6 +85,9 @@ test('raw webhook parsing preserves 64-bit app and order IDs exactly', () => {
     orderId: ORDER_ID,
     type: 'orderNew',
     sourceTimestamp: '1770000000000',
+    orderPriceMinor: null,
+    realPriceMinor: null,
+    realPayPriceMinor: null,
   });
   assert.notEqual(parsed.orderId, String(Number(ORDER_ID)));
 });
@@ -117,6 +130,9 @@ test('raw webhook parsing preserves shop_id when app_shop_id is absent', () => {
       orderId: ORDER_ID,
       type: 'orderNew',
       sourceTimestamp: '1770000000000',
+      orderPriceMinor: null,
+      realPriceMinor: null,
+      realPayPriceMinor: null,
     },
   );
   assert.throws(
@@ -126,6 +142,29 @@ test('raw webhook parsing preserves shop_id when app_shop_id is absent', () => {
     })),
     BadRequestException,
   );
+});
+
+test('raw webhook parsing captures all three optional price amounts as exact minor units', () => {
+  const parsed = parseDidiOrderWebhookPayload(payload({
+    priceJson: '{"order_price":"1234567890123456","real_price":2750,"real_pay_price":"2499"}',
+  }));
+  assert.equal(parsed.orderPriceMinor, 1_234_567_890_123_456n);
+  assert.equal(parsed.realPriceMinor, 2_750n);
+  assert.equal(parsed.realPayPriceMinor, 2_499n);
+});
+
+test('malformed optional price metadata becomes null instead of rejecting orderNew', () => {
+  const malformedValues = parseDidiOrderWebhookPayload(payload({
+    priceJson: '{"order_price":-1,"real_price":"12.34","real_pay_price":"9223372036854775808"}',
+  }));
+  assert.equal(malformedValues.orderPriceMinor, null);
+  assert.equal(malformedValues.realPriceMinor, null);
+  assert.equal(malformedValues.realPayPriceMinor, null);
+
+  const malformedBlock = parseDidiOrderWebhookPayload(payload({ priceJson: '"not-an-object"' }));
+  assert.equal(malformedBlock.orderPriceMinor, null);
+  assert.equal(malformedBlock.realPriceMinor, null);
+  assert.equal(malformedBlock.realPayPriceMinor, null);
 });
 
 test('receiver enforces its own 1 MiB raw-body limit', () => {
@@ -154,6 +193,32 @@ test('second-acceptance migration backfills accepted events and constrains the d
   assert.match(migration, /VALIDATE CONSTRAINT "didi_order_webhook_event_order_new_type_check"/);
 });
 
+test('resolution-source migrations stay compatible with the previous writer during rollout', () => {
+  const sourceMigration = readFileSync(resolve(
+    __dirname,
+    '../../prisma/migrations/20261015010000_didi_order_webhook_resolution_sources/migration.sql',
+  ), 'utf8');
+  const consistencyMigration = readFileSync(resolve(
+    __dirname,
+    '../../prisma/migrations/20261015011000_didi_order_webhook_resolution_consistency/migration.sql',
+  ), 'utf8');
+  assert.match(sourceMigration, /DEFAULT 'local'/);
+  assert.doesNotMatch(sourceMigration, /UPDATE "didi_order_webhook_(?:event|request)"/i);
+  assert.doesNotMatch(sourceMigration, /ADD CONSTRAINT[\s\S]+shop_resolution_check/i);
+  assert.doesNotMatch(consistencyMigration, /UPDATE "didi_order_webhook_request"/i);
+  assert.doesNotMatch(consistencyMigration, /ADD CONSTRAINT/i);
+});
+
+test('confirmation budget migration is metadata-only and defers table validation', () => {
+  const migration = readFileSync(resolve(
+    __dirname,
+    '../../prisma/migrations/20261016022000_didi_order_webhook_confirmation_budget/migration.sql',
+  ), 'utf8');
+  assert.match(migration, /ADD COLUMN "confirmation_calls" INTEGER NOT NULL DEFAULT 0/);
+  assert.match(migration, /confirmation_calls_check[\s\S]+NOT VALID/);
+  assert.doesNotMatch(migration, /UPDATE\s+"didi_order_webhook_event"/i);
+});
+
 interface ExistingEvent {
   id: string;
   status: 'processing' | 'accepted' | 'failed';
@@ -161,22 +226,55 @@ interface ExistingEvent {
   didiShopId: string | null;
   startedAt: Date;
   acceptedAt?: Date | null;
+  failedAt?: Date | null;
   acceptedCount?: number;
+  confirmationCalls?: number;
+  profitMxn?: Prisma.Decimal | null;
+  remoteShopValidated?: boolean;
+  shopResolutionSource?: DidiOrderWebhookShopResolutionSource;
 }
 
 function receiver(options: {
   shops?: string[];
   shopResponses?: string[][];
+  shopRecordResponses?: Array<Array<{
+    id: string;
+    shopId: string;
+    appShopId: string;
+  }>>;
+  inventoryShops?: Array<{
+    shopId: string;
+    appShopId: string;
+    applicationId?: string;
+    published?: boolean;
+  }>;
   existing?: ExistingEvent;
   createUniqueConflict?: boolean;
+  finance?: {
+    country?: Country;
+    mode: DidiOrderWebhookProfitMode;
+    value: string;
+    nativeToMxnRate?: string;
+    mxnPerUsdRate: string;
+  };
+  automaticSecond?: boolean;
 } = {}) {
   let existing = options.existing
     ? {
         ...options.existing,
         acceptedAt: options.existing.acceptedAt
           ?? (options.existing.status === 'accepted' ? new Date() : null),
+        failedAt: options.existing.failedAt
+          ?? (options.existing.status === 'failed' ? new Date() : null),
         acceptedCount: options.existing.acceptedCount
           ?? (options.existing.status === 'accepted' ? 1 : 0),
+        confirmationCalls: options.existing.confirmationCalls
+          ?? options.existing.acceptedCount
+          ?? (options.existing.status === 'accepted' ? 1 : 0),
+        profitMxn: options.existing.profitMxn ?? null,
+        remoteShopValidated: options.existing.remoteShopValidated ?? false,
+        shopResolutionSource: options.existing.shopResolutionSource
+          ?? DidiOrderWebhookShopResolutionSource.local,
       }
     : undefined;
   const updates: Array<Record<string, unknown>> = [];
@@ -185,7 +283,10 @@ function receiver(options: {
   const eventCreates: Array<Record<string, unknown>> = [];
   const applicationFindCalls: unknown[] = [];
   const shopFindCalls: unknown[] = [];
+  const inventoryFindCalls: unknown[] = [];
   const rawQueries: string[] = [];
+  let transactions = 0;
+  let ambiguousBarrierWaits = 0;
   let shopFindIndex = 0;
   const prisma = {
     application: {
@@ -195,14 +296,48 @@ function receiver(options: {
           id: APPLICATION_ID,
           appId: APP_ID,
           appSecret: encrypt(SECRET, KEY),
+          country: options.finance?.country ?? Country.MX,
+          orderWebhookProfitMode: options.finance?.mode ?? null,
+          orderWebhookProfitValue: options.finance
+            ? new Prisma.Decimal(options.finance.value)
+            : null,
+          orderWebhookNativeToMxn: options.finance?.nativeToMxnRate
+            ? new Prisma.Decimal(options.finance.nativeToMxnRate)
+            : null,
+          orderWebhookMxnPerUsd: options.finance
+            ? new Prisma.Decimal(options.finance.mxnPerUsdRate)
+            : null,
         };
       },
     },
     shop: {
       findMany: async (input: unknown) => {
         shopFindCalls.push(input);
-        const ids = options.shopResponses?.[shopFindIndex++] ?? options.shops ?? [SHOP_ID];
-        return ids.map(id => ({ id, shopId: REMOTE_SHOP_ID }));
+        const responseIndex = shopFindIndex++;
+        const records = options.shopRecordResponses?.[responseIndex];
+        const ids = options.shopResponses?.[responseIndex] ?? options.shops ?? [SHOP_ID];
+        return records
+          ?? ids.map(id => ({ id, shopId: REMOTE_SHOP_ID, appShopId: APP_SHOP_ID }));
+      },
+    },
+    applicationShopInventoryShop: {
+      findMany: async (input: unknown) => {
+        inventoryFindCalls.push(input);
+        const query = input as {
+          where?: {
+            inventory?: { applicationId?: string; lastSuccessfulFetchAt?: { not?: null } };
+            OR?: Array<{ shopId?: string; appShopId?: string }>;
+          };
+        };
+        const applicationId = query.where?.inventory?.applicationId;
+        const requiresPublished = query.where?.inventory?.lastSuccessfulFetchAt?.not === null;
+        return (options.inventoryShops ?? [])
+          .filter(candidate => (candidate.applicationId ?? APPLICATION_ID) === applicationId)
+          .filter(candidate => !requiresPublished || candidate.published !== false)
+          .filter(candidate => (query.where?.OR ?? []).some(condition =>
+            (condition.shopId !== undefined && condition.shopId === candidate.shopId)
+              || (condition.appShopId !== undefined && condition.appShopId === candidate.appShopId)))
+          .map(({ shopId, appShopId }) => ({ shopId, appShopId }));
       },
     },
     didiOrderWebhookRequest: {
@@ -226,7 +361,12 @@ function receiver(options: {
           didiShopId: String(input.data.didiShopId),
           startedAt: new Date(),
           acceptedAt: null,
+          failedAt: null,
           acceptedCount: 0,
+          confirmationCalls: 0,
+          profitMxn: input.data.profitMxn as Prisma.Decimal | null,
+          remoteShopValidated: Boolean(input.data.remoteShopValidated),
+          shopResolutionSource: input.data.shopResolutionSource as DidiOrderWebhookShopResolutionSource,
         };
         return {
           id: existing.id,
@@ -234,6 +374,8 @@ function receiver(options: {
           appShopId: existing.appShopId,
           didiShopId: existing.didiShopId,
           acceptedCount: existing.acceptedCount,
+          confirmationCalls: existing.confirmationCalls,
+          profitMxn: existing.profitMxn,
         };
       },
       findUnique: async () => existing
@@ -243,7 +385,13 @@ function receiver(options: {
           }
         : null,
       updateMany: async (input: {
-        where: { status: string; startedAt?: { lt: Date }; acceptedCount?: number | { lt: number } };
+        where: {
+          status: string;
+          startedAt?: { lt: Date };
+          acceptedCount?: number | { lt: number };
+          confirmationCalls?: number | { lt: number };
+          failedAt?: { lte: Date };
+        };
         data: Record<string, unknown>;
       }) => {
         if (!existing || existing.status !== input.where.status) return { count: 0 };
@@ -252,17 +400,49 @@ function receiver(options: {
           && existing.acceptedCount !== input.where.acceptedCount) return { count: 0 };
         if (typeof input.where.acceptedCount === 'object'
           && (existing.acceptedCount ?? 0) >= input.where.acceptedCount.lt) return { count: 0 };
+        if (input.where.confirmationCalls
+          && typeof input.where.confirmationCalls === 'number'
+          && (existing.confirmationCalls ?? 0) !== input.where.confirmationCalls) return { count: 0 };
+        if (input.where.confirmationCalls
+          && typeof input.where.confirmationCalls === 'object'
+          && (existing.confirmationCalls ?? 0) >= input.where.confirmationCalls.lt) return { count: 0 };
+        if (input.where.failedAt
+          && (!existing.failedAt || existing.failedAt > input.where.failedAt.lte)) return { count: 0 };
         const nextStatus = typeof input.data.status === 'string'
           ? input.data.status as ExistingEvent['status']
           : existing.status;
-        existing = { ...existing, status: nextStatus, startedAt: new Date() };
+        existing = {
+          ...existing,
+          status: nextStatus,
+          startedAt: new Date(),
+          ...(input.data.failedAt instanceof Date || input.data.failedAt === null
+            ? { failedAt: input.data.failedAt }
+            : {}),
+        };
         updates.push(input.data);
         return { count: 1 };
       },
       update: async (input: { data: Record<string, unknown> }) => {
         updates.push(input.data);
-        if (existing && typeof input.data.status === 'string') {
-          existing = { ...existing, status: input.data.status as ExistingEvent['status'] };
+        if (existing) {
+          existing = {
+            ...existing,
+            ...(typeof input.data.status === 'string'
+              ? { status: input.data.status as ExistingEvent['status'] }
+              : {}),
+            ...(typeof input.data.appShopId === 'string'
+              ? { appShopId: input.data.appShopId }
+              : {}),
+            ...(typeof input.data.didiShopId === 'string'
+              ? { didiShopId: input.data.didiShopId }
+              : {}),
+            ...(typeof input.data.remoteShopValidated === 'boolean'
+              ? { remoteShopValidated: input.data.remoteShopValidated }
+              : {}),
+            ...(typeof input.data.shopResolutionSource === 'string'
+              ? { shopResolutionSource: input.data.shopResolutionSource as DidiOrderWebhookShopResolutionSource }
+              : {}),
+          };
         }
         return existing;
       },
@@ -271,13 +451,37 @@ function receiver(options: {
       const sql = query.strings?.join('?') ?? '';
       rawQueries.push(sql);
       if (!existing) return [];
+      if (sql.includes('"confirmation_calls" - 1')) {
+        if (existing.status !== 'processing'
+          || (existing.confirmationCalls ?? 0) <= (existing.acceptedCount ?? 0)) return [];
+        existing = {
+          ...existing,
+          confirmationCalls: Math.max(
+            existing.acceptedCount ?? 0,
+            (existing.confirmationCalls ?? 0) - 1,
+          ),
+        };
+        return [{ confirmationCall: existing.confirmationCalls }];
+      }
+      if (sql.includes('"confirmation_calls" = GREATEST')) {
+        const effectiveCalls = Math.max(
+          existing.confirmationCalls ?? 0,
+          existing.acceptedCount ?? 0,
+        );
+        if (existing.status !== 'processing' || effectiveCalls >= 2) return [];
+        existing = { ...existing, confirmationCalls: effectiveCalls + 1 };
+        return [{ confirmationCall: existing.confirmationCalls }];
+      }
       if (sql.includes('"accepted_count" = "accepted_count" + 1')) {
-        if (existing.status !== 'processing' || (existing.acceptedCount ?? 0) >= 2) return [];
+        if (existing.status !== 'processing'
+          || (existing.acceptedCount ?? 0) >= 2
+          || (existing.confirmationCalls ?? 0) <= (existing.acceptedCount ?? 0)) return [];
         existing = {
           ...existing,
           status: 'accepted',
           acceptedCount: (existing.acceptedCount ?? 0) + 1,
           acceptedAt: new Date(),
+          failedAt: null,
         };
         updates.push({
           status: 'accepted',
@@ -290,6 +494,7 @@ function receiver(options: {
         const eligibleBefore = Date.now() - DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS;
         if (existing.status !== 'accepted'
           || existing.acceptedCount !== 1
+          || Math.max(existing.confirmationCalls ?? 0, existing.acceptedCount ?? 0) >= 2
           || !existing.acceptedAt
           || existing.acceptedAt.getTime() > eligibleBefore) return [];
         existing = { ...existing, status: 'processing', startedAt: new Date() };
@@ -299,21 +504,55 @@ function receiver(options: {
           appShopId: existing.appShopId,
           didiShopId: existing.didiShopId,
           acceptedCount: existing.acceptedCount,
+          confirmationCalls: existing.confirmationCalls,
+          profitMxn: existing.profitMxn,
         }];
       }
       return [];
     },
+    $transaction: async (callback: (transaction: unknown) => Promise<unknown>) => {
+      transactions += 1;
+      return callback(prisma);
+    },
   };
   const config = { getOrThrow: () => KEY };
+  const value = new DidiOrderWebhooksService(prisma as never, config as never);
+  (value as unknown as {
+    waitForAutomaticSecondAcceptance: (deadlineAt: number) => Promise<boolean>;
+  }).waitForAutomaticSecondAcceptance = async () => {
+    if (!options.automaticSecond) return false;
+    if (existing) {
+      existing.acceptedAt = new Date(
+        Date.now() - DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS - 1,
+      );
+    }
+    return true;
+  };
+  (value as unknown as {
+    waitForAmbiguousRetryBarrier: (
+      failedAt: Date,
+      acceptanceDeadlineAt: number,
+    ) => Promise<void>;
+  }).waitForAmbiguousRetryBarrier = async () => {
+    ambiguousBarrierWaits += 1;
+    if (existing) {
+      existing.failedAt = new Date(
+        Date.now() - DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS - 1,
+      );
+    }
+  };
   return {
-    value: new DidiOrderWebhooksService(prisma as never, config as never),
+    value,
     updates,
     requestUpdates,
     requestCreates,
     eventCreates,
     applicationFindCalls,
     shopFindCalls,
+    inventoryFindCalls,
     rawQueries,
+    transactions: () => transactions,
+    ambiguousBarrierWaits: () => ambiguousBarrierWaits,
     currentEvent: () => existing,
   };
 }
@@ -357,10 +596,145 @@ test('receiver gets the shop token and confirms once with the exact order ID', a
   assert.equal(subject.updates.at(-1)?.remoteErrno, 0);
   assert.equal(subject.requestUpdates.at(-1)?.outcome, 'accepted');
   assert.equal(subject.requestUpdates.at(-1)?.localHttpStatus, 200);
+  assert.equal(subject.transactions(), 1);
+  assert.equal(subject.currentEvent()?.confirmationCalls, 1);
+});
+
+test('one delivery automatically performs the second confirmation after the delay', async () => {
+  const subject = receiver({
+    automaticSecond: true,
+    finance: {
+      mode: DidiOrderWebhookProfitMode.fixed_mxn,
+      value: '7.50',
+      mxnPerUsdRate: '20',
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  let confirmations = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirmations += 1;
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, payload());
+    assert.equal(result.accepted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(confirmations, 2);
+  assert.equal(subject.currentEvent()?.acceptedCount, 2);
+  assert.equal(subject.currentEvent()?.confirmationCalls, 2);
+  assert.equal(subject.transactions(), 2);
+  assert.equal(subject.requestUpdates.at(-1)?.profitRecognized, true);
+});
+
+test('an explicit automatic-second rejection preserves the first success and can retry later', async () => {
+  const subject = receiver({ automaticSecond: true });
+  const originalFetch = globalThis.fetch;
+  let confirmations = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirmations += 1;
+    return new Response(JSON.stringify(confirmations === 2
+      ? { errno: 20001, errmsg: 'explicit rejection' }
+      : { errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const first = await subject.value.receive(TOKEN, payload());
+    assert.equal(first.accepted, true);
+    assert.equal(subject.currentEvent()?.status, 'accepted');
+    assert.equal(subject.currentEvent()?.acceptedCount, 1);
+    assert.equal(subject.currentEvent()?.confirmationCalls, 1);
+
+    const retried = await subject.value.receive(TOKEN, payload());
+    assert.equal(retried.accepted, true);
+    assert.equal(retried.deduplicated, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(confirmations, 3);
+  assert.equal(subject.currentEvent()?.acceptedCount, 2);
+  assert.equal(subject.currentEvent()?.confirmationCalls, 2);
+});
+
+test('an ambiguous automatic-second failure consumes the safety budget without undoing success', async () => {
+  const subject = receiver({ automaticSecond: true });
+  const originalFetch = globalThis.fetch;
+  let confirmations = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirmations += 1;
+    return confirmations === 2
+      ? new Response('not-json', { status: 503 })
+      : new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const first = await subject.value.receive(TOKEN, payload());
+    assert.equal(first.accepted, true);
+    assert.equal(subject.currentEvent()?.status, 'accepted');
+    assert.equal(subject.currentEvent()?.acceptedCount, 1);
+    assert.equal(subject.currentEvent()?.confirmationCalls, 2);
+
+    const later = await subject.value.receive(TOKEN, payload());
+    assert.equal(later.deduplicated, true);
+    assert.equal(later.accepted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(confirmations, 2);
+});
+
+test('malformed price metadata never blocks confirmation and is persisted as null', async () => {
+  const subject = receiver();
+  const originalFetch = globalThis.fetch;
+  let confirmations = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirmations += 1;
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, payload({
+      shopId: REMOTE_SHOP_ID,
+      priceJson: '{"order_price":{},"real_price":2.5,"real_pay_price":"invalid"}',
+    }));
+    assert.equal(result.accepted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(confirmations, 1);
+  assert.equal(subject.eventCreates[0]?.orderPriceMinor, null);
+  assert.equal(subject.eventCreates[0]?.realPriceMinor, null);
+  assert.equal(subject.eventCreates[0]?.realPayPriceMinor, null);
 });
 
 test('receiver resolves a missing app_shop_id from the application shop list', async () => {
-  const subject = receiver();
+  const subject = receiver({ shops: [] });
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -421,14 +795,14 @@ test('receiver resolves a missing app_shop_id from the application shop list', a
       deletedAt: null,
       brand: { applicationId: APPLICATION_ID, deletedAt: null },
     },
-    select: { id: true, shopId: true },
+    select: { id: true, shopId: true, appShopId: true },
     take: 2,
   });
   const resolutionAudit = subject.requestUpdates.find(update => update.appShopId === APP_SHOP_ID);
   assert.equal(resolutionAudit?.appShopId, APP_SHOP_ID);
 });
 
-test('receiver verifies a supplied app_shop_id remotely when its exact local pair is missing', async () => {
+test('receiver uses a complete webhook shop pair before local, inventory, or remote lookup', async () => {
   const subject = receiver({ shopResponses: [[], [SHOP_ID]] });
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
@@ -436,13 +810,7 @@ test('receiver verifies a supplied app_shop_id remotely when its exact local pai
     const url = String(input);
     calls.push(url);
     if (url.endsWith('/v1/shop/shop/list')) {
-      return new Response(JSON.stringify({
-        errno: 0,
-        data: {
-          total: 1,
-          shop_list: [{ shop_id: REMOTE_SHOP_ID, app_shop_id: APP_SHOP_ID }],
-        },
-      }));
+      throw new Error('a complete webhook pair must not scan the shop list');
     }
     if (url.includes('/refresh')) {
       return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
@@ -458,18 +826,13 @@ test('receiver verifies a supplied app_shop_id remotely when its exact local pai
   } finally {
     globalThis.fetch = originalFetch;
   }
-  assert.equal(calls.filter(url => url.endsWith('/v1/shop/shop/list')).length, 1);
-  assert.equal(subject.shopFindCalls.length, 2);
-  assert.deepEqual(subject.shopFindCalls[1], {
-    where: {
-      shopId: REMOTE_SHOP_ID,
-      appShopId: APP_SHOP_ID,
-      deletedAt: null,
-      brand: { applicationId: APPLICATION_ID, deletedAt: null },
-    },
-    select: { id: true, shopId: true },
-    take: 2,
-  });
+  assert.equal(calls.filter(url => url.endsWith('/v1/shop/shop/list')).length, 0);
+  assert.equal(subject.shopFindCalls.length, 0);
+  assert.equal(subject.inventoryFindCalls.length, 0);
+  assert.equal(
+    subject.eventCreates[0]?.shopResolutionSource,
+    DidiOrderWebhookShopResolutionSource.payload,
+  );
 });
 
 test('receiver confirms a remotely verified shop even when it is absent locally', async () => {
@@ -516,21 +879,20 @@ test('receiver confirms a remotely verified shop even when it is absent locally'
 
   assert.equal(calls.filter(url => url.endsWith('/v1/shop/shop/list')).length, 1);
   assert.equal(calls.filter(url => url.endsWith('/v1/order/order/confirm')).length, 1);
-  assert.deepEqual(subject.eventCreates[0], {
-    applicationId: APPLICATION_ID,
-    shopId: null,
-    didiShopId: REMOTE_SHOP_ID,
-    appShopId: APP_SHOP_ID,
-    orderId: ORDER_ID,
-    type: 'orderNew',
-    sourceTimestamp: '1770000000000',
-    remoteShopValidated: true,
-  });
+  assert.equal(subject.eventCreates[0]?.applicationId, APPLICATION_ID);
+  assert.equal(subject.eventCreates[0]?.shopId, null);
+  assert.equal(subject.eventCreates[0]?.didiShopId, REMOTE_SHOP_ID);
+  assert.equal(subject.eventCreates[0]?.appShopId, APP_SHOP_ID);
+  assert.equal(subject.eventCreates[0]?.remoteShopValidated, true);
+  assert.equal(
+    subject.eventCreates[0]?.shopResolutionSource,
+    DidiOrderWebhookShopResolutionSource.remote,
+  );
   assert.ok(subject.requestUpdates.some(update =>
     update.didiShopId === REMOTE_SHOP_ID && update.remoteShopValidated === true));
 });
 
-test('receiver confirms a supplied app_shop_id after its remote pair is verified without a local Shop', async () => {
+test('receiver confirms a complete payload pair without requiring a local Shop', async () => {
   const subject = receiver({ shopResponses: [[], []] });
   const originalFetch = globalThis.fetch;
   let confirms = 0;
@@ -563,7 +925,11 @@ test('receiver confirms a supplied app_shop_id after its remote pair is verified
   assert.equal(confirms, 1);
   assert.equal(subject.eventCreates[0]?.shopId, null);
   assert.equal(subject.eventCreates[0]?.didiShopId, REMOTE_SHOP_ID);
-  assert.equal(subject.eventCreates[0]?.remoteShopValidated, true);
+  assert.equal(subject.eventCreates[0]?.remoteShopValidated, false);
+  assert.equal(
+    subject.eventCreates[0]?.shopResolutionSource,
+    DidiOrderWebhookShopResolutionSource.payload,
+  );
 });
 
 test('remote shop resolution single-flights concurrent calls and reuses the signed mapping cache', async () => {
@@ -624,12 +990,28 @@ test('receiver does not trust an app_shop_id-only payload when the shop is absen
   assert.equal(subject.eventCreates.length, 0);
 });
 
-test('receiver rejects a supplied app_shop_id that disagrees with the remote shop mapping', async () => {
+test('receiver falls back to a remote app_shop_id after direct payload authentication fails', async () => {
   const subject = receiver({ shopResponses: [[]] });
   const originalFetch = globalThis.fetch;
   let fetches = 0;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (input: string | URL | Request) => {
     fetches += 1;
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      const selected = new URL(url).searchParams.get('app_shop_id');
+      if (selected === APP_SHOP_ID) {
+        return new Response(JSON.stringify({ errno: 20001, errmsg: 'invalid app shop' }));
+      }
+      assert.equal(selected, 'remote-value');
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      assert.equal(new URL(url).searchParams.get('app_shop_id'), 'remote-value');
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    if (url.endsWith('/v1/order/order/confirm')) {
+      return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+    }
     return new Response(JSON.stringify({
       errno: 0,
       data: {
@@ -639,16 +1021,175 @@ test('receiver rejects a supplied app_shop_id that disagrees with the remote sho
     }));
   }) as typeof fetch;
   try {
-    await assert.rejects(
-      subject.value.receive(TOKEN, payload({ shopId: REMOTE_SHOP_ID })),
-      /Payload app_shop_id does not match/,
+    const accepted = await subject.value.receive(
+      TOKEN,
+      payload({ shopId: REMOTE_SHOP_ID }),
     );
+    assert.equal(accepted.accepted, true);
+    assert.equal(accepted.appShopId, 'remote-value');
   } finally {
     globalThis.fetch = originalFetch;
   }
-  assert.equal(fetches, 1);
+  assert.ok(fetches >= 4);
   assert.equal(subject.shopFindCalls.length, 1);
-  assert.equal(subject.requestUpdates.at(-1)?.outcome, 'rejected');
+  assert.equal(subject.requestUpdates.at(-1)?.outcome, 'accepted');
+  assert.ok(subject.updates.some(update =>
+    update.appShopId === 'remote-value'
+      && update.shopResolutionSource === DidiOrderWebhookShopResolutionSource.remote));
+});
+
+test('an explicit payload-candidate confirmation rejection falls back to the local mapping', async () => {
+  const subject = receiver();
+  const originalFetch = globalThis.fetch;
+  const confirmedTokens: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      const appShopId = new URL(url).searchParams.get('app_shop_id');
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: { refresh_token: `refresh-${appShopId}` },
+      }));
+    }
+    if (url.includes('/get')) {
+      const appShopId = new URL(url).searchParams.get('app_shop_id');
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: { auth_token: `auth-${appShopId}` },
+      }));
+    }
+    const body = JSON.parse(String(init?.body)) as { auth_token: string };
+    confirmedTokens.push(body.auth_token);
+    return new Response(JSON.stringify(confirmedTokens.length === 1
+      ? { errno: 20001, errmsg: 'shop does not match order' }
+      : { errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, payload({
+      appShopId: 'payload-wrong',
+      nestedAppShopId: 'payload-wrong',
+      shopId: REMOTE_SHOP_ID,
+    }));
+    assert.equal(result.accepted, true);
+    assert.equal(result.appShopId, APP_SHOP_ID);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.deepEqual(confirmedTokens, ['auth-payload-wrong', `auth-${APP_SHOP_ID}`]);
+  assert.equal(subject.currentEvent()?.confirmationCalls, 1);
+  assert.ok(subject.updates.some(update =>
+    update.shopResolutionSource === DidiOrderWebhookShopResolutionSource.local));
+});
+
+test('a 5xx confirmation outcome is ambiguous and never tries another shop candidate', async () => {
+  const subject = receiver();
+  const originalFetch = globalThis.fetch;
+  let confirmations = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirmations += 1;
+    return new Response(JSON.stringify({ errno: 20001, errmsg: 'upstream failure' }), {
+      status: 503,
+    });
+  }) as typeof fetch;
+  try {
+    await assert.rejects(subject.value.receive(TOKEN, payload({
+      appShopId: 'payload-wrong',
+      nestedAppShopId: 'payload-wrong',
+      shopId: REMOTE_SHOP_ID,
+    })), BadGatewayException);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(confirmations, 1);
+  assert.equal(subject.shopFindCalls.length, 0);
+  assert.equal(subject.inventoryFindCalls.length, 0);
+  assert.equal(subject.currentEvent()?.confirmationCalls, 1);
+});
+
+test('an immediate redelivery waits out an ambiguous result and then uses only slot two', async () => {
+  const subject = receiver();
+  const originalFetch = globalThis.fetch;
+  let confirmations = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirmations += 1;
+    return confirmations === 1
+      ? new Response('ambiguous-upstream-body', { status: 503 })
+      : new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  const body = payload({ shopId: REMOTE_SHOP_ID });
+  try {
+    await assert.rejects(subject.value.receive(TOKEN, body), BadGatewayException);
+    assert.equal(subject.currentEvent()?.status, 'failed');
+    assert.equal(subject.currentEvent()?.acceptedCount, 0);
+    assert.equal(subject.currentEvent()?.confirmationCalls, 1);
+
+    const retried = await subject.value.receive(TOKEN, body);
+    assert.equal(retried.deduplicated, false);
+    assert.equal(retried.accepted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(subject.ambiguousBarrierWaits(), 1);
+  assert.equal(confirmations, 2);
+  assert.equal(subject.currentEvent()?.acceptedCount, 1);
+  assert.equal(subject.currentEvent()?.confirmationCalls, 2);
+});
+
+test('concurrent redeliveries after an ambiguous result have one slot-two CAS winner', async () => {
+  const subject = receiver({
+    createUniqueConflict: true,
+    existing: {
+      id: 'event-ambiguous-concurrent',
+      status: 'failed',
+      appShopId: APP_SHOP_ID,
+      didiShopId: REMOTE_SHOP_ID,
+      startedAt: new Date(),
+      failedAt: new Date(),
+      acceptedCount: 0,
+      confirmationCalls: 1,
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  let confirmations = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    confirmations += 1;
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  const body = payload({ shopId: REMOTE_SHOP_ID });
+  try {
+    const results = await Promise.all([
+      subject.value.receive(TOKEN, body),
+      subject.value.receive(TOKEN, body),
+    ]);
+    assert.equal(results.filter(result => !result.deduplicated).length, 1);
+    assert.equal(results.filter(result => result.deduplicated).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(confirmations, 1);
+  assert.equal(subject.currentEvent()?.acceptedCount, 1);
+  assert.equal(subject.currentEvent()?.confirmationCalls, 2);
 });
 
 test('missing app_shop_id fails closed when the remote shop is absent or ambiguous', async () => {
@@ -659,7 +1200,7 @@ test('missing app_shop_id fails closed when the remote shop is absent or ambiguo
       { shop_id: REMOTE_SHOP_ID, app_shop_id: 'different-app-shop' },
     ],
   ]) {
-    const subject = receiver();
+    const subject = receiver({ shops: [] });
     const originalFetch = globalThis.fetch;
     let fetches = 0;
     globalThis.fetch = (async () => {
@@ -684,7 +1225,7 @@ test('missing app_shop_id fails closed when the remote shop is absent or ambiguo
       globalThis.fetch = originalFetch;
     }
     assert.equal(fetches, 1);
-    assert.equal(subject.shopFindCalls.length, 0);
+    assert.equal(subject.shopFindCalls.length, 1);
     const audit = subject.requestUpdates.at(-1);
     assert.equal(audit?.stage, 'shop_resolution');
     assert.equal(audit?.outcome, shopList.length === 0 ? 'rejected' : 'failed');
@@ -777,6 +1318,36 @@ test('an accepted duplicate before ten seconds and a live processing duplicate n
   assert.equal(fetches, 0);
 });
 
+test('processing events remain leased for the entire bounded acceptance window', async () => {
+  const subject = receiver({
+    createUniqueConflict: true,
+    existing: {
+      id: 'event-live-deadline',
+      status: 'processing',
+      appShopId: APP_SHOP_ID,
+      didiShopId: REMOTE_SHOP_ID,
+      startedAt: new Date(Date.now() - DIDI_ORDER_ACCEPTANCE_TIMEOUT_MS + 10_000),
+      acceptedCount: 0,
+      confirmationCalls: 0,
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = (async () => {
+    fetches += 1;
+    throw new Error('a live processing event must not be reclaimed');
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, payload({ shopId: REMOTE_SHOP_ID }));
+    assert.equal(result.deduplicated, true);
+    assert.equal(result.status, 'processing');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(fetches, 0);
+  assert.equal(subject.currentEvent()?.status, 'processing');
+});
+
 test('the same order is accepted a second time after ten seconds, then all later deliveries deduplicate', async () => {
   const subject = receiver({
     createUniqueConflict: true,
@@ -826,6 +1397,82 @@ test('the same order is accepted a second time after ten seconds, then all later
   assert.equal(confirmations, 1);
 });
 
+test('profit is recognized only on the first successful acceptance request', async () => {
+  const finance = {
+    mode: DidiOrderWebhookProfitMode.fixed_mxn,
+    value: '7.50',
+    mxnPerUsdRate: '20',
+  };
+  const originalFetch = globalThis.fetch;
+  let failConfirmation = false;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.endsWith('/v1/shop/shop/list')) {
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: { total: 0, shop_list: [] },
+      }));
+    }
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    return new Response(JSON.stringify(failConfirmation
+      ? { errno: 10005, errmsg: 'temporary failure' }
+      : { errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const first = receiver({ finance });
+    await first.value.receive(TOKEN, payload());
+    assert.equal(first.requestUpdates.at(-1)?.outcome, 'accepted');
+    assert.equal(first.requestUpdates.at(-1)?.profitRecognized, true);
+
+    const second = receiver({
+      finance,
+      createUniqueConflict: true,
+      existing: {
+        id: 'event-profit-second',
+        status: 'accepted',
+        appShopId: APP_SHOP_ID,
+        didiShopId: REMOTE_SHOP_ID,
+        startedAt: new Date(Date.now() - 20_000),
+        acceptedAt: new Date(Date.now() - DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS - 1_000),
+        acceptedCount: 1,
+      },
+    });
+    await second.value.receive(TOKEN, payload());
+    assert.equal(second.requestUpdates.at(-1)?.outcome, 'accepted');
+    assert.equal(second.requestUpdates.at(-1)?.profitRecognized, false);
+
+    const duplicate = receiver({
+      finance,
+      createUniqueConflict: true,
+      existing: {
+        id: 'event-profit-duplicate',
+        status: 'accepted',
+        appShopId: APP_SHOP_ID,
+        didiShopId: REMOTE_SHOP_ID,
+        startedAt: new Date(Date.now() - 20_000),
+        acceptedAt: new Date(Date.now() - 20_000),
+        acceptedCount: 2,
+      },
+    });
+    await duplicate.value.receive(TOKEN, payload());
+    assert.equal(duplicate.requestUpdates.at(-1)?.outcome, 'deduplicated');
+    assert.equal(duplicate.requestUpdates.at(-1)?.profitRecognized, false);
+
+    failConfirmation = true;
+    const failure = receiver({ finance });
+    await assert.rejects(failure.value.receive(TOKEN, payload()), BadGatewayException);
+    assert.equal(failure.requestUpdates.at(-1)?.outcome, 'failed');
+    assert.equal(failure.requestUpdates.at(-1)?.profitRecognized, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('concurrent deliveries eligible for the second acceptance have exactly one CAS winner', async () => {
   const subject = receiver({
     createUniqueConflict: true,
@@ -843,6 +1490,12 @@ test('concurrent deliveries eligible for the second acceptance have exactly one 
   let confirmations = 0;
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
+    if (url.endsWith('/v1/shop/shop/list')) {
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: { total: 0, shop_list: [] },
+      }));
+    }
     if (url.includes('/refresh')) {
       return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
     }
@@ -884,6 +1537,12 @@ test('a failed second confirmation preserves the first acceptance and a later de
   let confirmations = 0;
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
+    if (url.endsWith('/v1/shop/shop/list')) {
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: { total: 0, shop_list: [] },
+      }));
+    }
     if (url.includes('/refresh')) {
       return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
     }
@@ -965,6 +1624,31 @@ test('a legacy duplicate with a null audit shop ID still verifies its local Shop
   assert.equal(fetches, 0);
 });
 
+test('a rollout-window remote duplicate normalizes the legacy local default on read', async () => {
+  const subject = receiver({
+    existing: {
+      id: 'event-rollout-window',
+      status: 'accepted',
+      appShopId: APP_SHOP_ID,
+      didiShopId: REMOTE_SHOP_ID,
+      startedAt: new Date(),
+      acceptedAt: new Date(),
+      acceptedCount: 1,
+      remoteShopValidated: true,
+      shopResolutionSource: DidiOrderWebhookShopResolutionSource.local,
+    },
+    createUniqueConflict: true,
+  });
+  const result = await subject.value.receive(
+    TOKEN,
+    payload({ shopId: REMOTE_SHOP_ID }),
+  );
+  assert.equal(result.deduplicated, true);
+  assert.ok(subject.requestUpdates.some(update =>
+    update.shopResolutionSource === DidiOrderWebhookShopResolutionSource.remote
+      && update.remoteShopValidated === true));
+});
+
 test('failed and stale processing events are reclaimable', async () => {
   for (const existing of [
     {
@@ -1002,6 +1686,51 @@ test('failed and stale processing events are reclaimable', async () => {
       globalThis.fetch = originalFetch;
     }
   }
+});
+
+test('reclaim refreshes price and profit metadata only before the first acceptance', async () => {
+  const subject = receiver({
+    createUniqueConflict: true,
+    existing: {
+      id: 'event-refresh-finance',
+      status: 'failed',
+      appShopId: APP_SHOP_ID,
+      didiShopId: REMOTE_SHOP_ID,
+      startedAt: new Date(),
+      acceptedCount: 0,
+      confirmationCalls: 0,
+      profitMxn: new Prisma.Decimal('1'),
+    },
+    finance: {
+      mode: DidiOrderWebhookProfitMode.fixed_mxn,
+      value: '8.25',
+      mxnPerUsdRate: '20',
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    await subject.value.receive(TOKEN, payload({
+      priceJson: '{"order_price":"111","real_price":"100","real_pay_price":"90"}',
+    }));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const reclaim = subject.updates.find(update => 'orderPriceMinor' in update);
+  assert.equal(reclaim?.orderPriceMinor, 111n);
+  assert.equal(reclaim?.realPriceMinor, 100n);
+  assert.equal(reclaim?.realPayPriceMinor, 90n);
+  assert.equal(String(reclaim?.profitMxn), '8.25');
+  assert.equal(String(reclaim?.profitUsd), '0.4125');
 });
 
 test('receiver refuses app mismatch and ambiguous shop resolution before remote calls', async () => {
@@ -1087,6 +1816,12 @@ test('remote failures are audited without credentials, URLs, or raw payloads', a
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
+    if (url.endsWith('/v1/shop/shop/list')) {
+      return new Response(JSON.stringify({
+        errno: 0,
+        data: { total: 0, shop_list: [] },
+      }));
+    }
     if (url.includes('/refresh')) {
       return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
     }
@@ -1119,7 +1854,10 @@ test('remote failures are audited without credentials, URLs, or raw payloads', a
 test('authentication failures record their exact safe stage without credentials', async () => {
   const subject = receiver();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    if (String(input).endsWith('/v1/shop/shop/list')) {
+      return new Response(JSON.stringify({ errno: 0, data: { total: 0, shop_list: [] } }));
+    }
     throw new Error(`auth failed for app_secret=${SECRET} Bearer ${TOKEN}`);
   }) as typeof fetch;
   try {
@@ -1150,6 +1888,10 @@ interface AdminApplicationState {
   orderWebhookCreatedAt: Date | null;
   orderWebhookRotatedAt: Date | null;
   orderWebhookDisabledAt: Date | null;
+  orderWebhookProfitMode: DidiOrderWebhookProfitMode | null;
+  orderWebhookProfitValue: Prisma.Decimal | null;
+  orderWebhookNativeToMxn: Prisma.Decimal | null;
+  orderWebhookMxnPerUsd: Prisma.Decimal | null;
 }
 
 function adminService() {
@@ -1169,6 +1911,10 @@ function adminService() {
     orderWebhookCreatedAt: null,
     orderWebhookRotatedAt: null,
     orderWebhookDisabledAt: null,
+    orderWebhookProfitMode: null,
+    orderWebhookProfitValue: null,
+    orderWebhookNativeToMxn: null,
+    orderWebhookMxnPerUsd: null,
   };
   const prisma = {
     application: {
@@ -1231,6 +1977,75 @@ test('simultaneous rotations from the same URL converge on one winner', async ()
   assert.equal(first.enabled, true);
   assert.equal(first.url, second.url);
   assert.equal(first.url?.split('/').at(-1), decrypt(subject.state.orderWebhookTokenEncrypted ?? '', KEY));
+});
+
+test('financial estimates require explicit values and can be disabled without defaults', async () => {
+  const subject = adminService();
+  await assert.rejects(
+    subject.value.updateOrderWebhookFinance(APPLICATION_ID, {
+      mode: DidiOrderWebhookProfitMode.fixed_mxn,
+    }),
+    BadRequestException,
+  );
+
+  const configured = await subject.value.updateOrderWebhookFinance(APPLICATION_ID, {
+    mode: DidiOrderWebhookProfitMode.fixed_mxn,
+    value: '8.5',
+    mxnPerUsdRate: '17',
+  });
+  assert.deepEqual(configured.finance, {
+    configured: true,
+    mode: DidiOrderWebhookProfitMode.fixed_mxn,
+    value: '8.5',
+    nativeToMxnRate: null,
+    mxnPerUsdRate: '17',
+    nativeCurrency: 'MXN',
+  });
+
+  const disabled = await subject.value.updateOrderWebhookFinance(APPLICATION_ID, { mode: null });
+  assert.equal(disabled.finance.configured, false);
+  assert.equal(subject.state.orderWebhookProfitMode, null);
+  assert.equal(subject.state.orderWebhookProfitValue, null);
+  assert.equal(subject.state.orderWebhookMxnPerUsd, null);
+});
+
+test('percentage estimates for non-MXN applications require a native-to-MXN rate', async () => {
+  const subject = adminService();
+  subject.state.country = Country.CO;
+  await assert.rejects(
+    subject.value.updateOrderWebhookFinance(APPLICATION_ID, {
+      mode: DidiOrderWebhookProfitMode.percentage,
+      value: '5',
+      mxnPerUsdRate: '20',
+    }),
+    /Native currency to MXN rate is required/,
+  );
+
+  const configured = await subject.value.updateOrderWebhookFinance(APPLICATION_ID, {
+    mode: DidiOrderWebhookProfitMode.percentage,
+    value: '5',
+    nativeToMxnRate: '0.004',
+    mxnPerUsdRate: '20',
+  });
+  assert.equal(configured.finance.nativeCurrency, 'COP');
+  assert.equal(configured.finance.nativeToMxnRate, '0.004');
+});
+
+test('changing application country clears currency-specific webhook finance configuration', async () => {
+  const subject = adminService();
+  await subject.value.updateOrderWebhookFinance(APPLICATION_ID, {
+    mode: DidiOrderWebhookProfitMode.percentage,
+    value: '5',
+    mxnPerUsdRate: '20',
+  });
+
+  await subject.value.update(APPLICATION_ID, { country: Country.CO });
+
+  assert.equal(subject.state.country, Country.CO);
+  assert.equal(subject.state.orderWebhookProfitMode, null);
+  assert.equal(subject.state.orderWebhookProfitValue, null);
+  assert.equal(subject.state.orderWebhookNativeToMxn, null);
+  assert.equal(subject.state.orderWebhookMxnPerUsd, null);
 });
 
 test('disable, soft-delete, and restore cannot revive an old webhook URL', async () => {

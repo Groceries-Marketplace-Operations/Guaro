@@ -210,6 +210,13 @@ enum DidiOrderWebhookStatus {
   failed
 }
 
+enum DidiOrderWebhookShopResolutionSource {
+  local
+  inventory
+  remote
+  payload
+}
+
 enum DidiOrderWebhookRequestStage {
   received
   validation
@@ -227,6 +234,11 @@ enum DidiOrderWebhookRequestOutcome {
   deduplicated
   rejected
   failed
+}
+
+enum DidiOrderWebhookProfitMode {
+  fixed_mxn
+  percentage
 }
 
 enum ApplicationShopInventoryFetchStatus {
@@ -718,22 +730,26 @@ model StepWebhook {
 
 // ---------------------------- Catalog -------------------------------------
 model Application {
-  sftpApiRules SftpApiRule[]
-  id                         String                  @id @default(uuid()) @db.Uuid
-  appId                      String                  @unique @map("app_id")
-  appName                    String                  @map("app_name")
+  sftpApiRules               SftpApiRule[]
+  id                         String                      @id @default(uuid()) @db.Uuid
+  appId                      String                      @unique @map("app_id")
+  appName                    String                      @map("app_name")
   country                    Country
-  appSecret                  String                  @map("app_secret") // ENCRYPTED at rest; never expose
-  didiBindingEnvironment     DidiBindingEnvironment? @map("didi_binding_environment")
-  orderWebhookTokenEncrypted String?                 @map("order_webhook_token_encrypted") @db.Text
-  orderWebhookTokenHash      String?                 @unique @map("order_webhook_token_hash")
-  orderWebhookCreatedAt      DateTime?               @map("order_webhook_created_at") @db.Timestamptz
-  orderWebhookRotatedAt      DateTime?               @map("order_webhook_rotated_at") @db.Timestamptz
-  orderWebhookDisabledAt     DateTime?               @map("order_webhook_disabled_at") @db.Timestamptz
-  createdById                String?                 @map("created_by") @db.Uuid
-  createdAt                  DateTime                @default(now()) @map("created_at")
-  updatedAt                  DateTime                @updatedAt @map("updated_at")
-  deletedAt                  DateTime?               @map("deleted_at")
+  appSecret                  String                      @map("app_secret") // ENCRYPTED at rest; never expose
+  didiBindingEnvironment     DidiBindingEnvironment?     @map("didi_binding_environment")
+  orderWebhookTokenEncrypted String?                     @map("order_webhook_token_encrypted") @db.Text
+  orderWebhookTokenHash      String?                     @unique @map("order_webhook_token_hash")
+  orderWebhookCreatedAt      DateTime?                   @map("order_webhook_created_at") @db.Timestamptz
+  orderWebhookRotatedAt      DateTime?                   @map("order_webhook_rotated_at") @db.Timestamptz
+  orderWebhookDisabledAt     DateTime?                   @map("order_webhook_disabled_at") @db.Timestamptz
+  orderWebhookProfitMode     DidiOrderWebhookProfitMode? @map("order_webhook_profit_mode")
+  orderWebhookProfitValue    Decimal?                    @map("order_webhook_profit_value") @db.Decimal(18, 6)
+  orderWebhookNativeToMxn    Decimal?                    @map("order_webhook_native_to_mxn") @db.Decimal(20, 10)
+  orderWebhookMxnPerUsd      Decimal?                    @map("order_webhook_mxn_per_usd") @db.Decimal(20, 10)
+  createdById                String?                     @map("created_by") @db.Uuid
+  createdAt                  DateTime                    @default(now()) @map("created_at")
+  updatedAt                  DateTime                    @updatedAt @map("updated_at")
+  deletedAt                  DateTime?                   @map("deleted_at")
 
   createdBy                  Account?                    @relation("AppCreador", fields: [createdById], references: [id])
   brands                     Brand[]
@@ -806,19 +822,19 @@ model ApplicationShopInventoryShop {
 
 model SftpApplication {
   sftpApiRules SftpApiRule[]
-  id          String    @id @default(uuid()) @db.Uuid
-  name        String
-  host        String
-  port        Int       @default(22)
-  username    String
-  password    String // encrypted at rest; never expose
-  rootPath    String?   @map("root_path")
-  brandId     String?   @map("brand_id") @db.Uuid
-  active      Boolean   @default(true)
-  createdById String?   @map("created_by") @db.Uuid
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+  id           String        @id @default(uuid()) @db.Uuid
+  name         String
+  host         String
+  port         Int           @default(22)
+  username     String
+  password     String // encrypted at rest; never expose
+  rootPath     String?       @map("root_path")
+  brandId      String?       @map("brand_id") @db.Uuid
+  active       Boolean       @default(true)
+  createdById  String?       @map("created_by") @db.Uuid
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt    DateTime?     @map("deleted_at") @db.Timestamptz
 
   createdBy              Account?                @relation("SftpAppCreator", fields: [createdById], references: [id], onDelete: SetNull)
   brand                  Brand?                  @relation(fields: [brandId], references: [id], onDelete: SetNull)
@@ -833,7 +849,7 @@ model SftpApplication {
 }
 
 model Brand {
-  sftpApiRules SftpApiRule[]
+  sftpApiRules    SftpApiRule[]
   id              String           @id @default(uuid()) @db.Uuid
   brandId         String           @unique @map("brand_id")
   brandName       String           @map("brand_name")
@@ -878,30 +894,31 @@ model Brand {
 }
 
 model SftpApiRule {
-  id String @id @default(uuid()) @db.Uuid
-  brandId String @unique @map("brand_id") @db.Uuid
-  applicationId String @map("application_id") @db.Uuid
-  sftpApplicationId String @map("sftp_application_id") @db.Uuid
-  fileRegex String @map("file_regex")
-  maxFileAgeMinutes Int @default(30) @map("max_file_age_minutes")
-  delimiter String @default("|")
-  hasHeader Boolean @default(false) @map("has_header")
-  shopSource String @default("filename") @map("shop_source")
-  shopRegex String @map("shop_regex")
-  mapping Json
-  schedules Json
-  active Boolean @default(false)
-  nextRunAt DateTime? @map("next_run_at") @db.Timestamptz
-  lastReadAt DateTime? @map("last_read_at") @db.Timestamptz
-  lastUploadAt DateTime? @map("last_upload_at") @db.Timestamptz
-  createdById String @map("created_by_id") @db.Uuid
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
-  brand Brand @relation(fields: [brandId], references: [id], onDelete: Restrict)
-  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
-  sftpApplication SftpApplication @relation(fields: [sftpApplicationId], references: [id], onDelete: Restrict)
-  runs SftpApiRun[]
-  processedFiles SftpApiProcessedFile[]
+  id                String                 @id @default(uuid()) @db.Uuid
+  brandId           String                 @unique @map("brand_id") @db.Uuid
+  applicationId     String                 @map("application_id") @db.Uuid
+  sftpApplicationId String                 @map("sftp_application_id") @db.Uuid
+  fileRegex         String                 @map("file_regex")
+  maxFileAgeMinutes Int                    @default(30) @map("max_file_age_minutes")
+  delimiter         String                 @default("|")
+  hasHeader         Boolean                @default(false) @map("has_header")
+  shopSource        String                 @default("filename") @map("shop_source")
+  shopRegex         String                 @map("shop_regex")
+  mapping           Json
+  schedules         Json
+  active            Boolean                @default(false)
+  nextRunAt         DateTime?              @map("next_run_at") @db.Timestamptz
+  lastReadAt        DateTime?              @map("last_read_at") @db.Timestamptz
+  lastUploadAt      DateTime?              @map("last_upload_at") @db.Timestamptz
+  createdById       String                 @map("created_by_id") @db.Uuid
+  updatedAt         DateTime               @updatedAt @map("updated_at") @db.Timestamptz
+  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  brand             Brand                  @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  application       Application            @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  sftpApplication   SftpApplication        @relation(fields: [sftpApplicationId], references: [id], onDelete: Restrict)
+  runs              SftpApiRun[]
+  processedFiles    SftpApiProcessedFile[]
+
   @@index([applicationId])
   @@index([sftpApplicationId])
   @@index([active, nextRunAt])
@@ -909,40 +926,42 @@ model SftpApiRule {
 }
 
 model SftpApiRun {
-  id String @id @default(uuid()) @db.Uuid
-  ruleId String @map("rule_id") @db.Uuid
-  mode String
-  trigger String
-  actorId String? @map("actor_id") @db.Uuid
-  status String @default("pending")
-  snapshot Json
-  error String?
-  filesRead Int @default(0) @map("files_read")
-  filesSkipped Int @default(0) @map("files_skipped")
-  startedAt DateTime? @map("started_at") @db.Timestamptz
-  finishedAt DateTime? @map("finished_at") @db.Timestamptz
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
-  rule SftpApiRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
-  uploads SftpApiUpload[]
+  id             String                 @id @default(uuid()) @db.Uuid
+  ruleId         String                 @map("rule_id") @db.Uuid
+  mode           String
+  trigger        String
+  actorId        String?                @map("actor_id") @db.Uuid
+  status         String                 @default("pending")
+  snapshot       Json
+  error          String?
+  filesRead      Int                    @default(0) @map("files_read")
+  filesSkipped   Int                    @default(0) @map("files_skipped")
+  startedAt      DateTime?              @map("started_at") @db.Timestamptz
+  finishedAt     DateTime?              @map("finished_at") @db.Timestamptz
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  rule           SftpApiRule            @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  uploads        SftpApiUpload[]
   processedFiles SftpApiProcessedFile[]
+
   @@index([ruleId, createdAt])
   @@index([status])
   @@map("sftp_api_run")
 }
 
 model SftpApiProcessedFile {
-  id String @id @default(uuid()) @db.Uuid
-  ruleId String @map("rule_id") @db.Uuid
-  runId String @map("run_id") @db.Uuid
-  fileName String @map("file_name")
-  modifiedAt DateTime? @map("modified_at") @db.Timestamptz
-  fileHash String? @map("file_hash")
-  status String @default("processing")
-  error String? @db.Text
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
-  processedAt DateTime? @map("processed_at") @db.Timestamptz
-  rule SftpApiRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
-  run SftpApiRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  id          String      @id @default(uuid()) @db.Uuid
+  ruleId      String      @map("rule_id") @db.Uuid
+  runId       String      @map("run_id") @db.Uuid
+  fileName    String      @map("file_name")
+  modifiedAt  DateTime?   @map("modified_at") @db.Timestamptz
+  fileHash    String?     @map("file_hash")
+  status      String      @default("processing")
+  error       String?     @db.Text
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  processedAt DateTime?   @map("processed_at") @db.Timestamptz
+  rule        SftpApiRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  run         SftpApiRun  @relation(fields: [runId], references: [id], onDelete: Restrict)
+
   @@unique([ruleId, fileName])
   @@index([ruleId, createdAt])
   @@index([runId, status])
@@ -950,25 +969,26 @@ model SftpApiProcessedFile {
 }
 
 model SftpApiUpload {
-  id String @id @default(uuid()) @db.Uuid
-  runId String @map("run_id") @db.Uuid
-  shopId String @map("shop_id")
-  fileName String @map("file_name")
-  fileHash String @map("file_hash")
-  configHash String @map("config_hash")
-  endpoint String
-  itemCount Int @map("item_count")
-  payload Json
-  encryptedBody String @map("encrypted_body") @db.Text
-  response Json?
-  httpStatus Int? @map("http_status")
-  taskId String? @map("task_id")
-  status String @default("sending")
-  error String?
-  sentAt DateTime @default(now()) @map("sent_at") @db.Timestamptz
-  sentAtMx String @map("sent_at_mx")
-  durationMs Int? @map("duration_ms")
-  run SftpApiRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  id            String     @id @default(uuid()) @db.Uuid
+  runId         String     @map("run_id") @db.Uuid
+  shopId        String     @map("shop_id")
+  fileName      String     @map("file_name")
+  fileHash      String     @map("file_hash")
+  configHash    String     @map("config_hash")
+  endpoint      String
+  itemCount     Int        @map("item_count")
+  payload       Json
+  encryptedBody String     @map("encrypted_body") @db.Text
+  response      Json?
+  httpStatus    Int?       @map("http_status")
+  taskId        String?    @map("task_id")
+  status        String     @default("sending")
+  error         String?
+  sentAt        DateTime   @default(now()) @map("sent_at") @db.Timestamptz
+  sentAtMx      String     @map("sent_at_mx")
+  durationMs    Int?       @map("duration_ms")
+  run           SftpApiRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+
   @@index([runId, sentAt])
   @@index([fileHash, configHash, shopId, status])
   @@map("sftp_api_upload")
@@ -1026,27 +1046,39 @@ model Shop {
 }
 
 model DidiOrderWebhookEvent {
-  id                  String                 @id @default(uuid()) @db.Uuid
-  applicationId       String                 @map("application_id") @db.Uuid
-  shopId              String?                @map("shop_id") @db.Uuid
-  didiShopId          String?                @map("didi_shop_id")
-  appShopId           String                 @map("app_shop_id")
-  orderId             String                 @map("order_id")
-  type                String
-  status              DidiOrderWebhookStatus @default(processing)
-  attempts            Int                    @default(1)
-  acceptedCount       Int                    @default(0) @map("accepted_count")
-  remoteShopValidated Boolean                @default(false) @map("remote_shop_validated")
-  sourceTimestamp     String?                @map("source_timestamp")
-  remoteHttpStatus    Int?                   @map("remote_http_status")
-  remoteErrno         Int?                   @map("remote_errno")
-  remoteErrmsg        String?                @map("remote_errmsg") @db.Text
-  errorMessage        String?                @map("error_message") @db.Text
-  startedAt           DateTime               @default(now()) @map("started_at") @db.Timestamptz
-  acceptedAt          DateTime?              @map("accepted_at") @db.Timestamptz
-  failedAt            DateTime?              @map("failed_at") @db.Timestamptz
-  createdAt           DateTime               @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt           DateTime               @updatedAt @map("updated_at") @db.Timestamptz
+  id                   String                               @id @default(uuid()) @db.Uuid
+  applicationId        String                               @map("application_id") @db.Uuid
+  shopId               String?                              @map("shop_id") @db.Uuid
+  didiShopId           String?                              @map("didi_shop_id")
+  appShopId            String                               @map("app_shop_id")
+  orderId              String                               @map("order_id")
+  type                 String
+  status               DidiOrderWebhookStatus               @default(processing)
+  attempts             Int                                  @default(1)
+  acceptedCount        Int                                  @default(0) @map("accepted_count")
+  confirmationCalls    Int                                  @default(0) @map("confirmation_calls")
+  shopResolutionSource DidiOrderWebhookShopResolutionSource @default(local) @map("shop_resolution_source")
+  orderPriceMinor      BigInt?                              @map("order_price_minor")
+  realPriceMinor       BigInt?                              @map("real_price_minor")
+  realPayPriceMinor    BigInt?                              @map("real_pay_price_minor")
+  orderCurrency        String?                              @map("order_currency") @db.Char(3)
+  profitMode           DidiOrderWebhookProfitMode?          @map("profit_mode")
+  profitValue          Decimal?                             @map("profit_value") @db.Decimal(18, 6)
+  nativeToMxnRate      Decimal?                             @map("native_to_mxn_rate") @db.Decimal(20, 10)
+  mxnPerUsdRate        Decimal?                             @map("mxn_per_usd_rate") @db.Decimal(20, 10)
+  profitMxn            Decimal?                             @map("profit_mxn") @db.Decimal(20, 4)
+  profitUsd            Decimal?                             @map("profit_usd") @db.Decimal(20, 4)
+  remoteShopValidated  Boolean                              @default(false) @map("remote_shop_validated")
+  sourceTimestamp      String?                              @map("source_timestamp")
+  remoteHttpStatus     Int?                                 @map("remote_http_status")
+  remoteErrno          Int?                                 @map("remote_errno")
+  remoteErrmsg         String?                              @map("remote_errmsg") @db.Text
+  errorMessage         String?                              @map("error_message") @db.Text
+  startedAt            DateTime                             @default(now()) @map("started_at") @db.Timestamptz
+  acceptedAt           DateTime?                            @map("accepted_at") @db.Timestamptz
+  failedAt             DateTime?                            @map("failed_at") @db.Timestamptz
+  createdAt            DateTime                             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime                             @updatedAt @map("updated_at") @db.Timestamptz
 
   application Application               @relation(fields: [applicationId], references: [id], onDelete: Restrict)
   shop        Shop?                     @relation(fields: [shopId], references: [id], onDelete: Restrict)
@@ -1061,25 +1093,27 @@ model DidiOrderWebhookEvent {
 }
 
 model DidiOrderWebhookRequest {
-  id                  String                         @id @default(uuid()) @db.Uuid
-  applicationId       String                         @map("application_id") @db.Uuid
-  eventId             String?                        @map("event_id") @db.Uuid
-  appShopId           String?                        @map("app_shop_id")
-  didiShopId          String?                        @map("didi_shop_id")
-  orderId             String?                        @map("order_id")
-  type                String?
-  stage               DidiOrderWebhookRequestStage   @default(received)
-  outcome             DidiOrderWebhookRequestOutcome @default(processing)
-  remoteShopValidated Boolean                        @default(false) @map("remote_shop_validated")
-  localHttpStatus     Int?                           @map("local_http_status")
-  durationMs          Int?                           @map("duration_ms")
-  remoteHttpStatus    Int?                           @map("remote_http_status")
-  remoteErrno         Int?                           @map("remote_errno")
-  remoteErrmsg        String?                        @map("remote_errmsg") @db.Text
-  errorMessage        String?                        @map("error_message") @db.Text
-  completedAt         DateTime?                      @map("completed_at") @db.Timestamptz
-  createdAt           DateTime                       @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt           DateTime                       @updatedAt @map("updated_at") @db.Timestamptz
+  id                   String                                @id @default(uuid()) @db.Uuid
+  applicationId        String                                @map("application_id") @db.Uuid
+  eventId              String?                               @map("event_id") @db.Uuid
+  appShopId            String?                               @map("app_shop_id")
+  didiShopId           String?                               @map("didi_shop_id")
+  orderId              String?                               @map("order_id")
+  type                 String?
+  stage                DidiOrderWebhookRequestStage          @default(received)
+  outcome              DidiOrderWebhookRequestOutcome        @default(processing)
+  shopResolutionSource DidiOrderWebhookShopResolutionSource? @map("shop_resolution_source")
+  profitRecognized     Boolean                               @default(false) @map("profit_recognized")
+  remoteShopValidated  Boolean                               @default(false) @map("remote_shop_validated")
+  localHttpStatus      Int?                                  @map("local_http_status")
+  durationMs           Int?                                  @map("duration_ms")
+  remoteHttpStatus     Int?                                  @map("remote_http_status")
+  remoteErrno          Int?                                  @map("remote_errno")
+  remoteErrmsg         String?                               @map("remote_errmsg") @db.Text
+  errorMessage         String?                               @map("error_message") @db.Text
+  completedAt          DateTime?                             @map("completed_at") @db.Timestamptz
+  createdAt            DateTime                              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime                              @updatedAt @map("updated_at") @db.Timestamptz
 
   application Application            @relation(fields: [applicationId], references: [id], onDelete: Restrict)
   event       DidiOrderWebhookEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
@@ -1089,6 +1123,9 @@ model DidiOrderWebhookRequest {
   @@index([createdAt, id], map: "didi_order_webhook_request_created_at_id_idx")
   @@index([outcome, createdAt], map: "didi_order_webhook_request_outcome_created_at_idx")
   @@index([eventId])
+  @@index([orderId, applicationId], map: "didi_order_webhook_request_order_id_idx")
+  @@index([appShopId, applicationId], map: "didi_order_webhook_request_app_shop_id_idx")
+  @@index([didiShopId, applicationId], map: "didi_order_webhook_request_didi_shop_id_idx")
   @@map("didi_order_webhook_request")
 }
 

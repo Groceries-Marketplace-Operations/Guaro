@@ -167,6 +167,14 @@ export interface ApplicationOrderWebhook {
   lastReceivedAt: string | null;
   lastAcceptedAt: string | null;
   lastError: string | null;
+  finance: {
+    configured: boolean;
+    mode: DidiOrderWebhookProfitMode | null;
+    value: string | null;
+    nativeToMxnRate: string | null;
+    mxnPerUsdRate: string | null;
+    nativeCurrency: 'MXN' | 'COP' | 'CRC';
+  };
 }
 
 export type ApplicationShopInventoryFetchStatus = 'never' | 'queued' | 'running' | 'succeeded' | 'failed';
@@ -232,6 +240,8 @@ export interface ApplicationShopInventoryShop {
 
 export type DidiOrderWebhookEventOutcome = 'processing' | 'accepted' | 'deduplicated' | 'rejected' | 'failed';
 export type DidiOrderWebhookEventStatus = DidiOrderWebhookEventOutcome;
+export type DidiOrderWebhookProfitMode = 'fixed_mxn' | 'percentage';
+export type DidiOrderWebhookShopResolutionSource = 'local' | 'inventory' | 'remote' | 'payload';
 export type DidiOrderWebhookEventStage =
   | 'received'
   | 'validation'
@@ -266,6 +276,7 @@ export interface DidiOrderWebhookEvent {
   shop: DidiOrderWebhookEventShop | null;
   appShopId: string | null;
   didiShopId: string | null;
+  shopResolutionSource: DidiOrderWebhookShopResolutionSource | null;
   remoteShopValidated: boolean;
   orderId: string | null;
   type: string | null;
@@ -273,6 +284,8 @@ export interface DidiOrderWebhookEvent {
   stage: DidiOrderWebhookEventStage;
   outcome: DidiOrderWebhookEventOutcome;
   attempts: number | null;
+  acceptedCount: number | null;
+  confirmationCalls: number | null;
   sourceTimestamp: string | null;
   sourceOccurredAt: string | null;
   localHttpStatus: number | null;
@@ -287,6 +300,20 @@ export interface DidiOrderWebhookEvent {
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  orderPriceMinor: string | null;
+  orderPrice: string | null;
+  realPriceMinor: string | null;
+  realPrice: string | null;
+  realPayPriceMinor: string | null;
+  realPayPrice: string | null;
+  orderCurrency: 'MXN' | 'COP' | 'CRC' | null;
+  profitMode: DidiOrderWebhookProfitMode | null;
+  profitValue: string | null;
+  nativeToMxnRate: string | null;
+  mxnPerUsdRate: string | null;
+  profitMxn: string | null;
+  profitUsd: string | null;
+  profitRecognized: boolean;
 }
 
 export interface DidiOrderWebhookEventSummary {

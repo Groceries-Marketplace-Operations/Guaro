@@ -43,15 +43,21 @@
 .order-webhook-filters .form-group { min-width: 0; margin: 0; }
 .order-webhook-filters .form-label { margin-bottom: 4px; font-size: .62rem; }
 .order-webhook-filters .form-input, .order-webhook-filters .form-select { min-height: 34px; padding: 6px 8px; font-size: .72rem; }
+.order-webhook-filter-wide { grid-column: 1 / -1; }
+.order-webhook-advanced-filters { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.order-webhook-advanced-filters > summary { cursor: pointer; color: var(--text-secondary); font-size: .68rem; font-weight: 700; }
+.order-webhook-advanced-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
 .order-webhook-filter-actions { display: flex; gap: 5px; }
 
 .order-webhook-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-md); }
-.order-webhook-table-wrap > table { width: 100%; min-width: 1120px; }
+.order-webhook-table-wrap > table { width: 100%; min-width: 1460px; }
 .order-webhook-table-wrap > table th { padding: 8px 10px; font-size: .61rem; }
 .order-webhook-table-wrap > table td { max-width: 260px; padding: 9px 10px; font-size: .68rem; vertical-align: middle; }
 .order-webhook-table-wrap > table tbody tr.is-selected { background: var(--surface-2); }
 .order-webhook-date { min-width: 145px; color: var(--text-secondary); white-space: nowrap; }
 .order-webhook-cell-note { display: block; margin-top: 2px; color: var(--text-muted); font-family: var(--font-mono); font-size: .61rem; }
+.order-webhook-financial-cell { min-width: 230px; }
+.order-webhook-financial-cell > strong { white-space: nowrap; }
 .order-webhook-result { overflow: hidden; }
 .order-webhook-result > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .order-webhook-result .is-success { color: var(--green-text); }
@@ -83,6 +89,11 @@
 .order-webhook-remote-response { padding: 11px 12px; margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
 .order-webhook-remote-response h4 { margin: 0 0 7px; font-size: .7rem; }
 .order-webhook-remote-response > div { display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--text-secondary); font-family: var(--font-mono); font-size: .68rem; }
+.order-webhook-financial-detail { border-color: var(--green-border); background: var(--green-bg); }
+.order-webhook-financial-detail .form-hint { margin: 8px 0 0; }
+.order-webhook-finance-config { display: grid; gap: 10px; padding: 13px; margin: 0 0 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); }
+.order-webhook-finance-config .form-group { margin: 0; }
+.order-webhook-finance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .order-webhook-error-detail { padding: 10px 12px; margin-top: 10px; border: 1px solid var(--red-border); border-radius: var(--radius-md); color: var(--red-text); background: var(--red-bg); }
 .order-webhook-error-detail > strong { display: block; margin-bottom: 5px; font-size: .66rem; }
 .order-webhook-error-detail code { font-size: .68rem; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -91,6 +102,7 @@
 @media (max-width: 960px) {
   .order-webhook-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .order-webhook-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .order-webhook-advanced-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .order-webhook-filter-actions { align-self: end; }
   .order-webhook-table-wrap { overflow-x: auto; }
   .order-webhook-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -101,5 +113,7 @@
   .order-webhook-refresh { justify-content: space-between; }
   .order-webhook-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .order-webhook-filters { grid-template-columns: 1fr; }
+  .order-webhook-advanced-grid { grid-template-columns: 1fr; }
   .order-webhook-detail-grid { grid-template-columns: 1fr; }
+  .order-webhook-finance-grid { grid-template-columns: 1fr; }
 }

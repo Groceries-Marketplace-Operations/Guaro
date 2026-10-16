@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { Response } from 'express';
 import * as ExcelJS from 'exceljs';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -56,6 +56,17 @@ export class TasksController {
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin, AccountRole.director)
   filterOptions(@CurrentUser() u: JwtUser) {
     return this.tasksService.filterOptions(u.roles, u.id, u.sectionId);
+  }
+
+  @Get('shop-options')
+  @Permissions('tasks.create')
+  @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  shopOptions(
+    @Query('brandId', ParseUUIDPipe) brandId: string,
+    @Query('q') q?: string,
+    @Query('limit', new DefaultValuePipe(75), ParseIntPipe) limit?: number,
+  ) {
+    return this.tasksService.shopOptions(brandId, q, limit);
   }
 
   @Get('dashboard-summary')

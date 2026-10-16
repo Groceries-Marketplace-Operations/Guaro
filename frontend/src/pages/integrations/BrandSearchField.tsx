@@ -8,21 +8,31 @@ interface BrandSearchFieldProps {
   displayValue: string;
   onChange: (brandId: string, displayValue: string, brand?: Brand) => void;
   placeholder?: string;
+  loadingMessage?: string;
+  emptyMessage?: string;
+  ariaLabel?: string;
 }
 
 function brandLabel(brand: Brand) {
   return `${brand.brandName} · ${brand.country} · ${brand.brandId}`;
 }
 
-export default function BrandSearchField({ value, displayValue, onChange, placeholder = 'Escribe el nombre o Brand ID…' }: BrandSearchFieldProps) {
-  const [query, setQuery] = useState(displayValue);
+export default function BrandSearchField({
+  value,
+  displayValue,
+  onChange,
+  placeholder = 'Escribe el nombre o Brand ID…',
+  loadingMessage = 'Buscando marcas…',
+  emptyMessage = 'No se encontraron marcas.',
+  ariaLabel,
+}: BrandSearchFieldProps) {
   const [debounced, setDebounced] = useState(displayValue);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(query.trim()), 250);
+    const timer = window.setTimeout(() => setDebounced(displayValue.trim()), 250);
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [displayValue]);
 
   const { data, isFetching } = useQuery<Paginated<Brand>>({
     queryKey: ['brands', 'search-field', debounced],
@@ -34,22 +44,25 @@ export default function BrandSearchField({ value, displayValue, onChange, placeh
   return <div style={{ position: 'relative' }}>
     <input
       className="form-input"
-      value={query}
+      value={displayValue}
       placeholder={placeholder}
       autoComplete="off"
-      aria-invalid={!value && !!query.trim()}
+      role="combobox"
+      aria-label={ariaLabel}
+      aria-autocomplete="list"
+      aria-expanded={open}
+      aria-invalid={!value && !!displayValue.trim()}
       onFocus={() => setOpen(true)}
       onBlur={() => window.setTimeout(() => setOpen(false), 150)}
       onChange={event => {
         const next = event.target.value;
-        setQuery(next);
         setOpen(true);
         onChange('', next);
       }}
     />
     {open && <div className="card" style={{ position: 'absolute', zIndex: 30, top: 'calc(100% + 4px)', left: 0, right: 0, maxHeight: 260, overflowY: 'auto', padding: 5, boxShadow: '0 12px 30px rgba(0,0,0,.14)' }}>
-      {isFetching && <p className="text-muted" style={{ padding: 10, fontSize: 12 }}>Buscando marcas…</p>}
-      {!isFetching && brands.length === 0 && <p className="text-muted" style={{ padding: 10, fontSize: 12 }}>No se encontraron marcas.</p>}
+      {isFetching && <p className="text-muted" style={{ padding: 10, fontSize: 12 }}>{loadingMessage}</p>}
+      {!isFetching && brands.length === 0 && <p className="text-muted" style={{ padding: 10, fontSize: 12 }}>{emptyMessage}</p>}
       {brands.map(brand => <button
         key={brand.id}
         type="button"
@@ -58,7 +71,6 @@ export default function BrandSearchField({ value, displayValue, onChange, placeh
         onMouseDown={event => event.preventDefault()}
         onClick={() => {
           const label = brandLabel(brand);
-          setQuery(label);
           setOpen(false);
           onChange(brand.id, label, brand);
         }}

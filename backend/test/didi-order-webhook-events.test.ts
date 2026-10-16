@@ -2,8 +2,8 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { NotFoundException } from '@nestjs/common';
-import { AccountRole } from '@prisma/client';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { AccountRole, Prisma } from '@prisma/client';
 import { validate } from 'class-validator';
 import { PERMISSIONS_KEY } from '../src/access-control/permissions.decorator';
 import { ROLES_KEY } from '../src/auth/decorators/roles.decorator';
@@ -32,6 +32,8 @@ function safeRequest() {
     type: 'orderNew',
     stage: 'completed' as const,
     outcome: 'accepted' as const,
+    shopResolutionSource: 'local' as const,
+    profitRecognized: true,
     remoteShopValidated: false,
     localHttpStatus: 200,
     durationMs: 321,
@@ -53,7 +55,20 @@ function safeRequest() {
       didiShopId: '5764607688097661019',
       status: 'accepted' as const,
       attempts: 1,
+      acceptedCount: 1,
+      confirmationCalls: 2,
+      shopResolutionSource: 'local' as const,
       remoteShopValidated: false,
+      orderPriceMinor: 3_000n,
+      realPriceMinor: 2_750n,
+      realPayPriceMinor: 2_499n,
+      orderCurrency: 'COP',
+      profitMode: 'percentage' as const,
+      profitValue: new Prisma.Decimal('5'),
+      nativeToMxnRate: new Prisma.Decimal('0.004'),
+      mxnPerUsdRate: new Prisma.Decimal('20'),
+      profitMxn: new Prisma.Decimal('0.05'),
+      profitUsd: new Prisma.Decimal('0.0025'),
       sourceTimestamp: '1770000000000000',
       startedAt: NOW,
       acceptedAt: NOW,
@@ -123,6 +138,13 @@ test('admin request log list is application-scoped, filtered, bounded, and secre
   assert.equal(result.data[0].sourceOccurredAt, '2026-02-02T02:40:00.000Z');
   assert.equal(result.data[0].shop?.name, 'Sally');
   assert.equal(result.data[0].didiShopId, '5764607688097661019');
+  assert.equal(result.data[0].orderPrice, '30.00');
+  assert.equal(result.data[0].realPrice, '27.50');
+  assert.equal(result.data[0].realPayPrice, '24.99');
+  assert.equal(result.data[0].profitMxn, '0.05');
+  assert.equal(result.data[0].profitUsd, '0.0025');
+  assert.equal(result.data[0].profitRecognized, true);
+  assert.equal(result.data[0].confirmationCalls, 2);
   const serialized = JSON.stringify(result);
   for (const forbidden of [
     'appSecret',
@@ -162,6 +184,81 @@ test('central request log list spans applications without adding an application 
   assert.equal(result.summary.total, 1);
   assert.equal(result.data[0].application.appName, 'Sally App');
   assert.equal(JSON.stringify(result).includes('appSecret'), false);
+});
+
+test('central filters use exact indexed order/shop IDs, an App ID prefix, and recognize profit once', async () => {
+  let findManyInput: Record<string, unknown> | undefined;
+  const prisma = {
+    didiOrderWebhookRequest: {
+      findMany: async (input: Record<string, unknown>) => {
+        findManyInput = input;
+        return [];
+      },
+      groupBy: async () => [],
+    },
+  };
+  const service = new DidiOrderWebhookEventsService(prisma as never);
+  await service.findAllGlobal({
+    page: 1,
+    limit: 25,
+    q: '5764685048762665383',
+    didiShopId: '5764607688097661019',
+    country: 'CO',
+    stage: 'confirmation',
+    amountField: 'order_price',
+    minOrderAmount: '10.50',
+    maxOrderAmount: '30.00',
+    minProfitMxn: '1.25',
+    maxProfitMxn: '9.50',
+    hasProfit: true,
+    minDurationMs: 100,
+    maxDurationMs: 2_000,
+  });
+
+  const where = findManyInput?.where as Record<string, unknown>;
+  assert.equal(where.didiShopId, '5764607688097661019');
+  assert.equal(where.stage, 'confirmation');
+  assert.equal(where.profitRecognized, true);
+  assert.deepEqual(where.application, { country: 'CO' });
+  assert.deepEqual(where.durationMs, { gte: 100, lte: 2_000 });
+  assert.deepEqual(where.OR, [
+    { orderId: '5764685048762665383' },
+    { appShopId: '5764685048762665383' },
+    { didiShopId: '5764685048762665383' },
+    { application: { appId: { startsWith: '5764685048762665383' } } },
+  ]);
+  const event = (where.event as { is: Record<string, unknown> }).is;
+  assert.deepEqual(event.orderPriceMinor, { gte: 1_050n, lte: 3_000n });
+  const profit = event.profitMxn as { gte: Prisma.Decimal; lte: Prisma.Decimal; not: null };
+  assert.equal(profit.gte.toString(), '1.25');
+  assert.equal(profit.lte.toString(), '9.5');
+  assert.equal(profit.not, null);
+});
+
+test('profit ranges cannot include unrecognized duplicate or failed requests', async () => {
+  let queries = 0;
+  const prisma = {
+    didiOrderWebhookRequest: {
+      findMany: async () => {
+        queries += 1;
+        return [];
+      },
+      groupBy: async () => [],
+    },
+  };
+  const service = new DidiOrderWebhookEventsService(prisma as never);
+
+  await assert.rejects(
+    service.findAllGlobal({
+      page: 1,
+      limit: 25,
+      hasProfit: false,
+      minProfitMxn: '1.00',
+    }),
+    (error: unknown) => error instanceof BadRequestException
+      && error.message.includes('Profit ranges require hasProfit=true'),
+  );
+  assert.equal(queries, 0);
 });
 
 test('central request log list optionally scopes every query by applicationId', async () => {
@@ -244,6 +341,10 @@ test('central request log query accepts an optional UUID applicationId and rejec
   });
   const errors = await validate(invalid);
   assert.ok(errors.some(error => error.property === 'applicationId'));
+
+  const shortSearch = Object.assign(new CentralOrderWebhookEventsQueryDto(), { q: 'ab' });
+  const searchErrors = await validate(shortSearch);
+  assert.ok(searchErrors.some(error => error.property === 'q'));
 });
 
 test('request log serializes a remotely validated event without a local Shop', async () => {
@@ -252,6 +353,8 @@ test('request log serializes a remotely validated event without a local Shop', a
   request.event.shop = null as never;
   request.event.remoteShopValidated = true;
   request.remoteShopValidated = true;
+  request.shopResolutionSource = null as never;
+  request.event.shopResolutionSource = 'local';
   const prisma = {
     application: {
       findFirst: async () => ({ id: APPLICATION_ID, appName: 'CKA App' }),
@@ -266,6 +369,7 @@ test('request log serializes a remotely validated event without a local Shop', a
   assert.equal(result.shopId, null);
   assert.equal(result.didiShopId, '5764607688097661019');
   assert.equal(result.remoteShopValidated, true);
+  assert.equal(result.shopResolutionSource, 'remote');
 });
 
 test('detail cannot cross application scope', async () => {
@@ -339,6 +443,70 @@ test('central request-log indexes are additive and contain no sensitive columns'
   assert.match(sql, /\("created_at", "id"\)/);
   assert.match(sql, /\("outcome", "created_at"\)/);
   assert.doesNotMatch(sql, /DROP|DELETE|TRUNCATE|raw_body|headers|auth_token|app_secret/i);
+});
+
+test('high-volume webhook filters use concurrent exact-ID indexes before schema expansion', () => {
+  const sql = readFileSync(
+    resolve(
+      __dirname,
+      '../../prisma/migrations/20261015005000_didi_order_webhook_filter_indexes/migration.sql',
+    ),
+    'utf8',
+  );
+  assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS[\s\S]+\("order_id", "application_id"\)/);
+  assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS[\s\S]+\("app_shop_id", "application_id"\)/);
+  assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS[\s\S]+\("didi_shop_id", "application_id"\)/);
+  assert.doesNotMatch(sql, /BEGIN|pg_trgm|raw_body|headers|auth_token|app_secret/i);
+});
+
+test('financial migration stores three optional amounts and one-time profit recognition without payload PII', () => {
+  const sql = readFileSync(
+    resolve(
+      __dirname,
+      '../../prisma/migrations/20261016020000_didi_order_webhook_financials/migration.sql',
+    ),
+    'utf8',
+  );
+  assert.match(sql, /"order_price_minor" BIGINT/);
+  assert.match(sql, /"real_price_minor" BIGINT/);
+  assert.match(sql, /"real_pay_price_minor" BIGINT/);
+  assert.match(sql, /"profit_recognized" BOOLEAN NOT NULL DEFAULT false/);
+  assert.match(sql, /didi_order_webhook_event_prices_check[\s\S]+NOT VALID/);
+  assert.match(sql, /didi_order_webhook_event_profit_snapshot_check[\s\S]+NOT VALID/);
+  assert.doesNotMatch(sql, /raw_body|headers|customer|address|phone|auth_token|app_secret/i);
+});
+
+test('financial filters use sparse concurrent indexes without indexing legacy null rows', () => {
+  const sql = readFileSync(
+    resolve(
+      __dirname,
+      '../../prisma/migrations/20261016021000_didi_order_webhook_financial_indexes/migration.sql',
+    ),
+    'utf8',
+  );
+  for (const column of [
+    'order_price_minor',
+    'real_price_minor',
+    'real_pay_price_minor',
+    'profit_mxn',
+  ]) {
+    assert.match(sql, new RegExp(`CREATE INDEX CONCURRENTLY IF NOT EXISTS[\\s\\S]+WHERE "${column}" IS NOT NULL`));
+  }
+  assert.match(sql, /WHERE "profit_recognized" = true/);
+  assert.doesNotMatch(sql, /BEGIN|pg_trgm|raw_body|headers|auth_token|app_secret/i);
+});
+
+test('confirmation-budget migration adds a bounded budget without rewriting legacy rows', () => {
+  const sql = readFileSync(
+    resolve(
+      __dirname,
+      '../../prisma/migrations/20261016022000_didi_order_webhook_confirmation_budget/migration.sql',
+    ),
+    'utf8',
+  );
+  assert.match(sql, /ADD COLUMN "confirmation_calls" INTEGER NOT NULL DEFAULT 0/);
+  assert.match(sql, /CHECK \("confirmation_calls" >= 0 AND "confirmation_calls" <= 2\) NOT VALID/);
+  assert.doesNotMatch(sql, /UPDATE|DROP|DELETE|TRUNCATE|raw_body|headers|auth_token|app_secret/i);
 });
 
 test('unmapped-shop migration backfills DiDi shop IDs and makes only the local FK nullable', () => {

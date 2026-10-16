@@ -1,8 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { DidiOrderWebhookShopResolutionSource, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CentralOrderWebhookEventsQueryDto } from './dto/central-order-webhook-events-query.dto';
 import { OrderWebhookEventsQueryDto } from './dto/order-webhook-events-query.dto';
+import {
+  decimalString,
+  minorUnitsToMajorString,
+} from './didi-order-webhook-finance.util';
 
 const REQUEST_SELECT = {
   id: true,
@@ -14,6 +18,8 @@ const REQUEST_SELECT = {
   type: true,
   stage: true,
   outcome: true,
+  shopResolutionSource: true,
+  profitRecognized: true,
   remoteShopValidated: true,
   localHttpStatus: true,
   durationMs: true,
@@ -38,7 +44,20 @@ const REQUEST_SELECT = {
       didiShopId: true,
       status: true,
       attempts: true,
+      acceptedCount: true,
+      confirmationCalls: true,
+      shopResolutionSource: true,
       remoteShopValidated: true,
+      orderPriceMinor: true,
+      realPriceMinor: true,
+      realPayPriceMinor: true,
+      orderCurrency: true,
+      profitMode: true,
+      profitValue: true,
+      nativeToMxnRate: true,
+      mxnPerUsdRate: true,
+      profitMxn: true,
+      profitUsd: true,
       sourceTimestamp: true,
       startedAt: true,
       acceptedAt: true,
@@ -163,12 +182,94 @@ export class DidiOrderWebhookEventsService {
     if (from && to && from > to) {
       throw new BadRequestException('from must be earlier than or equal to to');
     }
+    const minOrderMinor = query.minOrderAmount
+      ? decimalAmountToMinorUnits(query.minOrderAmount)
+      : undefined;
+    const maxOrderMinor = query.maxOrderAmount
+      ? decimalAmountToMinorUnits(query.maxOrderAmount)
+      : undefined;
+    if (minOrderMinor !== undefined && maxOrderMinor !== undefined && minOrderMinor > maxOrderMinor) {
+      throw new BadRequestException('minOrderAmount must be less than or equal to maxOrderAmount');
+    }
+    const minProfitMxn = query.minProfitMxn ? new Prisma.Decimal(query.minProfitMxn) : undefined;
+    const maxProfitMxn = query.maxProfitMxn ? new Prisma.Decimal(query.maxProfitMxn) : undefined;
+    const profitRangeRequested = minProfitMxn !== undefined || maxProfitMxn !== undefined;
+    if (minProfitMxn && maxProfitMxn && minProfitMxn.gt(maxProfitMxn)) {
+      throw new BadRequestException('minProfitMxn must be less than or equal to maxProfitMxn');
+    }
+    if (query.hasProfit === false && profitRangeRequested) {
+      throw new BadRequestException('Profit ranges require hasProfit=true or no hasProfit filter');
+    }
+    if (
+      query.minDurationMs !== undefined
+      && query.maxDurationMs !== undefined
+      && query.minDurationMs > query.maxDurationMs
+    ) {
+      throw new BadRequestException('minDurationMs must be less than or equal to maxDurationMs');
+    }
+
+    const amountField = {
+      order_price: 'orderPriceMinor',
+      real_price: 'realPriceMinor',
+      real_pay_price: 'realPayPriceMinor',
+    }[query.amountField ?? 'real_pay_price'] as
+      'orderPriceMinor' | 'realPriceMinor' | 'realPayPriceMinor';
+    const profitRange = {
+      ...(minProfitMxn ? { gte: minProfitMxn } : {}),
+      ...(maxProfitMxn ? { lte: maxProfitMxn } : {}),
+      ...(query.hasProfit === true ? { not: null } : {}),
+    };
+    const eventFilter: Prisma.DidiOrderWebhookEventWhereInput = {
+      ...(minOrderMinor !== undefined || maxOrderMinor !== undefined
+        ? {
+            [amountField]: {
+              ...(minOrderMinor !== undefined ? { gte: minOrderMinor } : {}),
+              ...(maxOrderMinor !== undefined ? { lte: maxOrderMinor } : {}),
+            },
+          }
+        : {}),
+      ...(Object.keys(profitRange).length > 0 ? { profitMxn: profitRange } : {}),
+    };
+    const q = query.q?.trim();
+    const qIsNumericId = q ? /^\d{3,20}$/.test(q) : false;
 
     return {
       ...(applicationId ? { applicationId } : {}),
       ...(query.status ? { outcome: query.status } : {}),
       ...(query.appShopId?.trim() ? { appShopId: query.appShopId.trim() } : {}),
+      ...(query.didiShopId ? { didiShopId: query.didiShopId } : {}),
       ...(query.orderId ? { orderId: query.orderId } : {}),
+      ...(query.stage ? { stage: query.stage } : {}),
+      ...(query.hasProfit === false
+        ? { profitRecognized: false }
+        : query.hasProfit === true || profitRangeRequested
+          ? { profitRecognized: true }
+          : {}),
+      ...(query.country ? { application: { country: query.country } } : {}),
+      ...(query.minDurationMs !== undefined || query.maxDurationMs !== undefined
+        ? {
+            durationMs: {
+              ...(query.minDurationMs !== undefined ? { gte: query.minDurationMs } : {}),
+              ...(query.maxDurationMs !== undefined ? { lte: query.maxDurationMs } : {}),
+            },
+          }
+        : {}),
+      ...(Object.keys(eventFilter).length > 0 ? { event: { is: eventFilter } } : {}),
+      ...(q
+        ? {
+            OR: qIsNumericId
+              ? [
+                  { orderId: q },
+                  { appShopId: q },
+                  { didiShopId: q },
+                  { application: { appId: { startsWith: q } } },
+                ]
+              : [
+                  { application: { appName: { contains: q, mode: 'insensitive' } } },
+                  { application: { appId: { startsWith: q, mode: 'insensitive' } } },
+                ],
+          }
+        : {}),
       ...(from || to
         ? {
             createdAt: {
@@ -182,6 +283,16 @@ export class DidiOrderWebhookEventsService {
 
   private toResponse(request: SafeRequest) {
     const event = request.event;
+    const storedResolutionSource = request.shopResolutionSource
+      ?? event?.shopResolutionSource
+      ?? null;
+    const remoteShopValidated = request.shopResolutionSource !== null
+      ? request.remoteShopValidated
+      : (event?.remoteShopValidated ?? request.remoteShopValidated);
+    const shopResolutionSource = remoteShopValidated
+      && storedResolutionSource === DidiOrderWebhookShopResolutionSource.local
+      ? DidiOrderWebhookShopResolutionSource.remote
+      : storedResolutionSource;
     return {
       id: request.id,
       applicationId: request.applicationId,
@@ -197,11 +308,13 @@ export class DidiOrderWebhookEventsService {
       status: request.outcome,
       stage: request.stage,
       outcome: request.outcome,
-      remoteShopValidated:
-        request.remoteShopValidated || (event?.remoteShopValidated ?? false),
+      shopResolutionSource,
+      remoteShopValidated,
       localHttpStatus: request.localHttpStatus,
       durationMs: request.durationMs,
       attempts: event?.attempts ?? null,
+      acceptedCount: event?.acceptedCount ?? null,
+      confirmationCalls: event?.confirmationCalls ?? null,
       sourceTimestamp: event?.sourceTimestamp ?? null,
       sourceOccurredAt: unixTimestampToIso(event?.sourceTimestamp ?? null),
       remoteHttpStatus: request.remoteHttpStatus,
@@ -214,6 +327,20 @@ export class DidiOrderWebhookEventsService {
       completedAt: request.completedAt,
       createdAt: request.createdAt,
       updatedAt: request.updatedAt,
+      orderPriceMinor: event?.orderPriceMinor?.toString() ?? null,
+      orderPrice: minorUnitsToMajorString(event?.orderPriceMinor),
+      realPriceMinor: event?.realPriceMinor?.toString() ?? null,
+      realPrice: minorUnitsToMajorString(event?.realPriceMinor),
+      realPayPriceMinor: event?.realPayPriceMinor?.toString() ?? null,
+      realPayPrice: minorUnitsToMajorString(event?.realPayPriceMinor),
+      orderCurrency: event?.orderCurrency?.trim() ?? null,
+      profitMode: event?.profitMode ?? null,
+      profitValue: decimalString(event?.profitValue),
+      nativeToMxnRate: decimalString(event?.nativeToMxnRate),
+      mxnPerUsdRate: decimalString(event?.mxnPerUsdRate),
+      profitMxn: decimalString(event?.profitMxn),
+      profitUsd: decimalString(event?.profitUsd),
+      profitRecognized: request.profitRecognized,
       shop: event?.shop
         ? {
             id: event.shop.id,
@@ -224,6 +351,10 @@ export class DidiOrderWebhookEventsService {
         : null,
     };
   }
+}
+export function decimalAmountToMinorUnits(value: string) {
+  const [whole, fraction = ''] = value.split('.');
+  return (BigInt(whole) * 100n) + BigInt(fraction.padEnd(2, '0'));
 }
 
 export function unixTimestampToIso(value: string | null) {

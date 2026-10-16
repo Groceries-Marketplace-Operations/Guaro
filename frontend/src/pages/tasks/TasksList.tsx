@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import Paginator from '../../components/ui/Paginator';
+import SearchableSelect from '../../components/ui/SearchableSelect';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { tasksApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
+import { hasPermission } from '../../auth/permissions';
 import { useT } from '../../i18n';
 import type { Account, Task, TaskStatus, Paginated } from '../../types';
+import './tasks-list.css';
 
 const LIMIT = 25;
 
@@ -23,12 +26,18 @@ export default function TasksList() {
   const qc = useQueryClient();
   const { account } = useAuth();
   const t = useT();
+  const searchableSelectCopy = {
+    clearLabel: t('common.clearSelection'),
+    moreResultsLabel: t('common.moreSearchResults'),
+  };
   const canReassign = account?.roles.some(role => role === 'admin' || role === 'super_admin') ?? false;
+  const canCreate = hasPermission(account, 'tasks.create') && !account?.roles.includes('director');
   const sectionFilterStorageKey = account ? `tequila.tasks.section-filter.${account.id}` : null;
   const [q, setQ] = useState('');
   const [dq, setDq] = useState('');
   const [page, setPage] = useState(1);
   const [statusF, setStatusF] = useState<TaskStatus | ''>('');
+  const [brandF, setBrandF] = useState('');
   const [sectionF, setSectionF] = useState(() => (
     sectionFilterStorageKey ? localStorage.getItem(sectionFilterStorageKey) ?? '' : ''
   ));
@@ -59,6 +68,7 @@ export default function TasksList() {
     queryFn: () => tasksApi.filterOptions().then(r => r.data),
   });
   const sections = filterOptions?.sections ?? [];
+  const brands = filterOptions?.brands ?? [];
   const activeSectionF = !filterOptions || !sectionF || sections.some(section => section.id === sectionF)
     ? sectionF
     : '';
@@ -73,6 +83,7 @@ export default function TasksList() {
     page, limit: LIMIT,
     ...(dq      && { q: dq }),
     ...(statusF && { status: statusF }),
+    ...(brandF && { brandId: brandF }),
     ...(activeSectionF && { sectionId: activeSectionF }),
   };
 
@@ -138,53 +149,127 @@ export default function TasksList() {
     else eligibleVisibleIds.forEach(id => next.add(id));
     return next;
   });
+  const activeFilterCount = [q.trim(), statusF, activeSectionF, brandF].filter(Boolean).length;
+  const resultStart = total === 0 ? 0 : ((page - 1) * LIMIT) + 1;
+  const resultEnd = Math.min(page * LIMIT, total);
+  const clearFilters = () => {
+    setQ('');
+    setDq('');
+    setStatusF('');
+    setBrandF('');
+    setSectionF('');
+    setPage(1);
+    if (sectionFilterStorageKey) localStorage.removeItem(sectionFilterStorageKey);
+  };
 
   return (
     <>
       <Topbar breadcrumb={[{ label: t('nav.tasks') }]} />
-      <main className="main-content">
+      <main className="main-content tasks-list-page">
         <div className="page-header">
           <div className="page-header-info">
             <h1>{t('pages.tasksList.title')}</h1>
             <p>
               {statusF
-                ? t('pages.tasksList.subtitleFiltered').replace('{total}', String(total)).replace('{status}', statusF.replace('_', ' '))
+                ? t('pages.tasksList.subtitleFiltered').replace('{total}', String(total)).replace('{status}', t(STATUSES.find(status => status.value === statusF)?.labelKey ?? 'pages.tasksList.statusAll'))
                 : t('pages.tasksList.subtitle').replace('{total}', String(total))}
             </p>
           </div>
+          {canCreate && (
+            <button className="btn btn-primary" onClick={() => nav('/tasks/new')}>
+              <span aria-hidden="true">＋</span>{t('pages.tasksList.createTask')}
+            </button>
+          )}
         </div>
 
-        <div className="toolbar">
-          <div className="search-wrap">
-            <SearchIcon />
-            <input placeholder={t('pages.tasksList.searchPlaceholder')} value={q} onChange={e => setQ(e.target.value)} />
+        <section className="tasks-filter-card" aria-label={t('pages.tasksList.filtersTitle')}>
+          <div className="tasks-filter-heading">
+            <div>
+              <strong>{t('pages.tasksList.filtersTitle')}</strong>
+              <span>{t('pages.tasksList.filtersHint')}</span>
+            </div>
+            {activeFilterCount > 0 && (
+              <button className="btn btn-ghost btn-sm" type="button" onClick={clearFilters}>
+                {t('pages.tasksList.clearFilters')} · {activeFilterCount}
+              </button>
+            )}
           </div>
-          <select
-            className="form-select"
-            aria-label={t('pages.tasksList.sectionFilter')}
-            value={activeSectionF}
-            onChange={event => {
-              const value = event.target.value;
-              setSectionF(value);
-              setPage(1);
-              if (sectionFilterStorageKey) {
-                if (value) localStorage.setItem(sectionFilterStorageKey, value);
-                else localStorage.removeItem(sectionFilterStorageKey);
-              }
-            }}
-            style={{ width: 220 }}
-          >
-            <option value="">{t('pages.tasksList.sectionAll')}</option>
-            {sections.map(section => <option key={section.id} value={section.id}>{section.name}</option>)}
-          </select>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+
+          <div className="tasks-filter-grid">
+            <label className="tasks-filter-field tasks-filter-search">
+              <span>{t('common.search')}</span>
+              <div className="search-wrap">
+                <SearchIcon />
+                <input
+                  type="search"
+                  placeholder={t('pages.tasksList.searchPlaceholder')}
+                  value={q}
+                  onChange={event => setQ(event.target.value)}
+                />
+              </div>
+            </label>
+            <div className="tasks-filter-field">
+              <span>{t('pages.tasksList.sectionFilter')}</span>
+              <SearchableSelect
+                {...searchableSelectCopy}
+                value={activeSectionF}
+                options={sections.map(section => ({ value: section.id, label: section.name }))}
+                onChange={value => {
+                  setSectionF(value);
+                  setPage(1);
+                  if (sectionFilterStorageKey) {
+                    if (value) localStorage.setItem(sectionFilterStorageKey, value);
+                    else localStorage.removeItem(sectionFilterStorageKey);
+                  }
+                }}
+                placeholder={t('pages.tasksList.sectionAll')}
+                searchPlaceholder={t('pages.tasksList.typeToFindSection')}
+                emptyMessage={t('pages.tasksList.noSectionsFound')}
+                ariaLabel={t('pages.tasksList.sectionFilter')}
+              />
+            </div>
+            <div className="tasks-filter-field">
+              <span>{t('pages.tasksList.brandFilter')}</span>
+              <SearchableSelect
+                {...searchableSelectCopy}
+                value={brandF}
+                options={brands.map(brand => ({
+                  value: brand.id,
+                  label: brand.brandName,
+                  description: `${brand.country} · ${brand.brandId}`,
+                  keywords: brand.brandId,
+                }))}
+                onChange={brandId => {
+                  setBrandF(brandId);
+                  setPage(1);
+                }}
+                placeholder={t('pages.tasksList.typeToFindBrand')}
+                searchPlaceholder={t('pages.tasksList.typeToFindBrand')}
+                emptyMessage={t('pages.tasksList.noBrandsFound')}
+                ariaLabel={t('pages.tasksList.brandFilter')}
+              />
+            </div>
+          </div>
+
+          <div className="tasks-status-filter" role="group" aria-label={t('pages.tasksList.statusFilter')}>
+            <span>{t('pages.tasksList.statusFilter')}</span>
+            <div>
             {STATUSES.map(s => (
-              <button key={s.value} className={`btn btn-sm ${statusF === s.value ? 'btn-primary' : 'btn-ghost'}`}
+              <button key={s.value} type="button" aria-pressed={statusF === s.value} className={`tasks-status-chip${statusF === s.value ? ' is-active' : ''}`}
                 onClick={() => { setStatusF(s.value as TaskStatus | ''); setPage(1); }}>
                 {t(s.labelKey)}
               </button>
             ))}
+            </div>
           </div>
+        </section>
+
+        <div className="tasks-results-bar" aria-live="polite">
+          <span>{t('pages.tasksList.showingResults')
+            .replace('{start}', String(resultStart))
+            .replace('{end}', String(resultEnd))
+            .replace('{total}', String(total))}</span>
+          {activeFilterCount > 0 && <small>{t('pages.tasksList.filteredResults')}</small>}
         </div>
 
         {canReassign && selectedIds.size > 0 && <div className="alert" style={{
@@ -210,8 +295,8 @@ export default function TasksList() {
           <button className="btn btn-ghost btn-sm" style={{ marginLeft: 10 }} onClick={() => setBulkNotice('')}>×</button>
         </div>}
 
-        <div className="table-wrap">
-          <table>
+        <div className="table-wrap tasks-table-wrap">
+          <table className="tasks-table">
             <thead>
               <tr>
                 {canReassign && <th style={{ width: 38 }}>
@@ -237,7 +322,10 @@ export default function TasksList() {
                 </td></tr>
               )}
               {tasks.map(tk => (
-                <tr key={tk.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/tasks/${tk.id}`)}>
+                <tr
+                  key={tk.id}
+                  onClick={() => nav(`/tasks/${tk.id}`)}
+                >
                   {canReassign && <td onClick={event => event.stopPropagation()}>
                     <input
                       type="checkbox"
@@ -247,13 +335,18 @@ export default function TasksList() {
                       onChange={() => toggleSelected(tk.id)}
                     />
                   </td>}
-                  <td style={{ fontWeight: 600 }}>{tk.brand?.brandName ?? '—'}</td>
-                  <td>{tk.taskType?.name ?? '—'}</td>
+                  <td className="tasks-brand-cell">
+                    <Link className="tasks-primary-link" to={`/tasks/${tk.id}`} onClick={event => event.stopPropagation()}>
+                      <strong>{tk.brand?.brandName ?? '—'}</strong>
+                      {tk.brand?.brandId && <small>{tk.brand.brandId} · {tk.brand.country}</small>}
+                    </Link>
+                  </td>
+                  <td className="tasks-type-cell"><strong>{tk.taskType?.name ?? '—'}</strong><small>{tk.id.slice(0, 8)}</small></td>
                   <td><StatusBadge status={tk.status} /></td>
                   <td className="text-muted text-sm">{activeStepFor(tk) ?? '—'}</td>
                   {canReassign && <td className="text-muted text-sm">{assignedBposFor(tk)}</td>}
                   <td className="text-muted">{tk.createdBy?.name ?? '—'}</td>
-                  <td className="text-muted text-sm">{new Date(tk.createdAt).toLocaleDateString()}</td>
+                  <td className="text-muted text-sm tasks-date-cell"><span>{new Date(tk.createdAt).toLocaleDateString()}</span><small>{new Date(tk.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></td>
                 </tr>
               ))}
             </tbody>
@@ -273,10 +366,16 @@ export default function TasksList() {
         </div>
         <div className="form-group">
           <label className="form-label">{t('pages.tasksList.targetBpo')}</label>
-          <select className="form-select" value={bulkBpoId} onChange={event => setBulkBpoId(event.target.value)}>
-            <option value="">{t('pages.taskDetail.selectBpo')}</option>
-            {bpoAccounts.map(bpo => <option key={bpo.id} value={bpo.id}>{bpo.name} · {bpo.email}</option>)}
-          </select>
+          <SearchableSelect
+            {...searchableSelectCopy}
+            value={bulkBpoId}
+            options={bpoAccounts.map(bpo => ({ value: bpo.id, label: bpo.name, description: bpo.email }))}
+            onChange={setBulkBpoId}
+            placeholder={t('pages.taskDetail.selectBpo')}
+            searchPlaceholder={t('pages.tasksList.typeToFindBpo')}
+            emptyMessage={t('pages.tasksList.noBposFound')}
+            ariaLabel={t('pages.tasksList.targetBpo')}
+          />
         </div>
       </Modal>}
     </>

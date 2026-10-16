@@ -9,6 +9,7 @@ import { Permissions } from '../access-control/permissions.decorator';
 import { ApplicationsService } from './applications.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
+import { UpdateOrderWebhookFinanceDto } from './dto/update-order-webhook-finance.dto';
 
 @Controller('applications')
 @Permissions('applications.manage')
@@ -70,6 +71,17 @@ export class ApplicationsController {
   @Roles(AccountRole.admin, AccountRole.super_admin)
   disableOrderWebhook(@Param('id') id: string) {
     return this.applicationsService.disableOrderWebhook(id);
+  }
+
+  @Patch(':id/order-webhook/finance')
+  @Header('Cache-Control', 'no-store')
+  @Permissions('applications.update')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  updateOrderWebhookFinance(
+    @Param('id') id: string,
+    @Body() dto: UpdateOrderWebhookFinanceDto,
+  ) {
+    return this.applicationsService.updateOrderWebhookFinance(id, dto);
   }
 
   @Patch(':id')

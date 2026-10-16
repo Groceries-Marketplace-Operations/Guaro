@@ -3,6 +3,7 @@ import { FormFieldTipo } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
 import { readFile, unlink } from 'fs/promises';
 import { extname } from 'path';
+import { inflateSync } from 'zlib';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { isClosed, normalizeDate, parseScheduleString } from '../queue/handlers/didi-food.util';
@@ -36,25 +37,186 @@ const KNOWN_FILE_HANDLERS = new Set([
 ]);
 
 const MAX_DETAIL_ITEMS = 20;
+const MAX_DECODED_IMAGE_BYTES = 128 * 1024 * 1024;
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PNG_CRC_TABLE = Uint32Array.from({ length: 256 }, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) ? (0xedb88320 ^ (crc >>> 1)) : (crc >>> 1);
+  return crc >>> 0;
+});
+
+function pngCrc32(buffer: Buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = PNG_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngDecodedLength(width: number, height: number, bitsPerPixel: number, interlace: number) {
+  const scanlineLength = (columns: number) => 1 + Math.ceil((columns * bitsPerPixel) / 8);
+  let length = 0;
+  if (interlace === 0) {
+    length = height * scanlineLength(width);
+  } else {
+    const passes = [
+      [0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4],
+      [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2],
+    ];
+    for (const [startX, startY, stepX, stepY] of passes) {
+      const passWidth = width <= startX ? 0 : Math.ceil((width - startX) / stepX);
+      const passHeight = height <= startY ? 0 : Math.ceil((height - startY) / stepY);
+      if (passWidth && passHeight) length += passHeight * scanlineLength(passWidth);
+    }
+  }
+  return Number.isSafeInteger(length) && length > 0 && length <= MAX_DECODED_IMAGE_BYTES ? length : null;
+}
+
+function readPngDimensions(buffer: Buffer): { width: number; height: number } | null {
+  if (buffer.length < 45 || !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) return null;
+  let offset = PNG_SIGNATURE.length;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = -1;
+  let interlace = -1;
+  let sawHeader = false;
+  let sawPalette = false;
+  let sawImageData = false;
+  let imageDataEnded = false;
+  let sawEnd = false;
+  const imageData: Buffer[] = [];
+
+  while (offset + 12 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const typeStart = offset + 4;
+    const dataStart = typeStart + 4;
+    const dataEnd = dataStart + length;
+    const chunkEnd = dataEnd + 4;
+    if (dataEnd < dataStart || chunkEnd > buffer.length) return null;
+    const type = buffer.toString('ascii', typeStart, dataStart);
+    if (!/^[A-Za-z]{4}$/.test(type)) return null;
+    if (pngCrc32(buffer.subarray(typeStart, dataEnd)) !== buffer.readUInt32BE(dataEnd)) return null;
+
+    if (!sawHeader && type !== 'IHDR') return null;
+    if (sawImageData && type !== 'IDAT') imageDataEnded = true;
+    if (type === 'IHDR') {
+      if (sawHeader || length !== 13) return null;
+      width = buffer.readUInt32BE(dataStart);
+      height = buffer.readUInt32BE(dataStart + 4);
+      bitDepth = buffer[dataStart + 8];
+      colorType = buffer[dataStart + 9];
+      const validDepths: Record<number, number[]> = {
+        0: [1, 2, 4, 8, 16],
+        2: [8, 16],
+        3: [1, 2, 4, 8],
+        4: [8, 16],
+        6: [8, 16],
+      };
+      interlace = buffer[dataStart + 12];
+      if (
+        !width
+        || !height
+        || !validDepths[colorType]?.includes(bitDepth)
+        || buffer[dataStart + 10] !== 0
+        || buffer[dataStart + 11] !== 0
+        || ![0, 1].includes(interlace)
+      ) return null;
+      sawHeader = true;
+    } else if (type === 'PLTE') {
+      if (sawImageData || [0, 4].includes(colorType) || length === 0 || length % 3 !== 0 || length > 768) return null;
+      sawPalette = true;
+    } else if (type === 'IDAT') {
+      if (!sawHeader || imageDataEnded || length === 0) return null;
+      sawImageData = true;
+      imageData.push(buffer.subarray(dataStart, dataEnd));
+    } else if (type === 'IEND') {
+      if (length !== 0 || !sawImageData || chunkEnd !== buffer.length) return null;
+      sawEnd = true;
+      offset = chunkEnd;
+      break;
+    } else if (/^[A-Z]/.test(type)) {
+      // PNG only defines IHDR, PLTE, IDAT and IEND as critical chunks.
+      return null;
+    }
+    offset = chunkEnd;
+  }
+
+  if (!sawHeader || !sawImageData || !sawEnd || offset !== buffer.length || (colorType === 3 && !sawPalette)) return null;
+  const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 } as Record<number, number>)[colorType];
+  const expectedLength = pngDecodedLength(width, height, channels * bitDepth, interlace);
+  if (!expectedLength) return null;
+  try {
+    const decoded = inflateSync(Buffer.concat(imageData), { maxOutputLength: expectedLength + 1 });
+    if (decoded.length !== expectedLength) return null;
+  } catch {
+    return null;
+  }
+  return { width, height };
+}
+
+function readJpegDimensions(buffer: Buffer): { width: number; height: number } | null {
+  if (buffer.length < 16 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return null;
+  const startOfFrameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+  let offset = 2;
+  let dimensions: { width: number; height: number } | null = null;
+  let sawScan = false;
+  let sawEntropyData = false;
+
+  while (offset < buffer.length) {
+    if (buffer[offset] !== 0xff) return null;
+    while (offset < buffer.length && buffer[offset] === 0xff) offset += 1;
+    if (offset >= buffer.length) return null;
+    const marker = buffer[offset];
+    const markerStart = offset - 1;
+    offset += 1;
+    if (marker === 0xd9) return dimensions && sawScan && sawEntropyData ? dimensions : null;
+    if (marker === 0x00 || marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) return null;
+    if (offset + 2 > buffer.length) return null;
+    const size = buffer.readUInt16BE(offset);
+    if (size < 2 || offset + size > buffer.length) return null;
+    const segmentEnd = offset + size;
+
+    if (startOfFrameMarkers.has(marker)) {
+      if (size < 11) return null;
+      const height = buffer.readUInt16BE(offset + 3);
+      const width = buffer.readUInt16BE(offset + 5);
+      const components = buffer[offset + 7];
+      if (!width || !height || !components || size !== 8 + (components * 3)) return null;
+      dimensions = { width, height };
+    }
+
+    offset = segmentEnd;
+    if (marker !== 0xda) continue;
+    sawScan = true;
+    while (offset < buffer.length) {
+      if (buffer[offset] !== 0xff) {
+        sawEntropyData = true;
+        offset += 1;
+        continue;
+      }
+      const entropyMarkerStart = offset;
+      while (offset < buffer.length && buffer[offset] === 0xff) offset += 1;
+      if (offset >= buffer.length) return null;
+      const entropyMarker = buffer[offset];
+      if (entropyMarker === 0x00) {
+        sawEntropyData = true;
+        offset += 1;
+        continue;
+      }
+      if (entropyMarker >= 0xd0 && entropyMarker <= 0xd7) {
+        offset += 1;
+        continue;
+      }
+      offset = entropyMarkerStart;
+      break;
+    }
+    if (offset === markerStart) return null;
+  }
+  return null;
+}
 
 function readImageDimensions(buffer: Buffer, extension: string): { width: number; height: number } | null {
-  if (extension === '.png') {
-    if (buffer.length < 24 || buffer.toString('ascii', 1, 4) !== 'PNG') return null;
-    return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
-  }
-  if (!['.jpg', '.jpeg'].includes(extension) || buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return null;
-  let offset = 2;
-  while (offset + 9 < buffer.length) {
-    if (buffer[offset] !== 0xff) { offset += 1; continue; }
-    const marker = buffer[offset + 1];
-    if (marker === 0xd8 || marker === 0xd9) { offset += 2; continue; }
-    const size = buffer.readUInt16BE(offset + 2);
-    if (size < 2 || offset + size + 2 > buffer.length) return null;
-    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
-      return { height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
-    }
-    offset += size + 2;
-  }
+  if (extension === '.png') return readPngDimensions(buffer);
+  if (extension === '.jpg' || extension === '.jpeg') return readJpegDimensions(buffer);
   return null;
 }
 
@@ -401,22 +563,33 @@ export class TaskValidationService {
       await unlink(file.path).catch(() => undefined);
       throw new BadRequestException('The uploaded file is not a valid JPG, JPEG or PNG image');
     }
-    if (dimensions.width < 1200 || dimensions.height < 900) {
+    const isLogo = field.label.trim().toLocaleLowerCase('en-US') === 'shop logo';
+    if (!isLogo && (dimensions.width < 1200 || dimensions.height < 900)) {
       await unlink(file.path).catch(() => undefined);
       throw new BadRequestException(`The cover must be at least 1200 x 900 px; received ${dimensions.width} x ${dimensions.height} px`);
     }
+    const checks = [
+      { id: 'access', label: 'Access permission', status: 'passed' as const, message: `Authorized as ${user.email}` },
+      { id: 'image-type', label: 'Image format', status: 'passed' as const, message: `${extension.toUpperCase()} accepted; ${Math.ceil(file.size / 1024)} KB (maximum 5 MB)` },
+      {
+        id: 'image-size',
+        label: isLogo ? 'Logo dimensions' : 'Cover dimensions',
+        status: 'passed' as const,
+        message: `${dimensions.width} x ${dimensions.height} px; original dimensions preserved`,
+      },
+      ...(isLogo ? [] : [
+        { id: 'image-framing', label: 'DiDi framing', status: 'warning' as const, message: 'DiDi may display the cover as 4:3 or crop it to the centered 2:1 area. Keep logos, faces and text away from the top and bottom edges.' },
+        { id: 'image-review', label: 'DiDi review', status: 'warning' as const, message: 'Only one cover can be under review at a time; another submission may be rejected until review finishes.' },
+      ]),
+    ];
     return {
       originalName: file.originalname,
       tempPath: file.filename,
       canProceed: true,
-      summary: 'Original cover validated and stored without resizing, cropping, padding or recompression. DiDi will receive the uploaded JPG or PNG file as-is.',
-      checks: [
-        { id: 'access', label: 'Access permission', status: 'passed' as const, message: `Authorized as ${user.email}` },
-        { id: 'image-type', label: 'Image format', status: 'passed' as const, message: `${extension.toUpperCase()} accepted; ${Math.ceil(file.size / 1024)} KB (maximum 5 MB)` },
-        { id: 'image-size', label: 'Cover dimensions', status: 'passed' as const, message: `${dimensions.width} x ${dimensions.height} px; original dimensions preserved` },
-        { id: 'image-framing', label: 'DiDi framing', status: 'warning' as const, message: 'DiDi may display the cover as 4:3 or crop it to the centered 2:1 area. Keep logos, faces and text away from the top and bottom edges.' },
-        { id: 'image-review', label: 'DiDi review', status: 'warning' as const, message: 'Only one cover can be under review at a time; another submission may be rejected until review finishes.' },
-      ],
+      summary: isLogo
+        ? 'Original logo validated and stored without resizing, cropping, padding or recompression. DiDi will receive the uploaded JPG or PNG file as-is.'
+        : 'Original cover validated and stored without resizing, cropping, padding or recompression. DiDi will receive the uploaded JPG or PNG file as-is.',
+      checks,
       stats: { validRows: 1, totalRows: 1 },
     };
   }
