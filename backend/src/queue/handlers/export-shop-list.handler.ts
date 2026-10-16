@@ -112,11 +112,18 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
   const shops = await fetchAllShopsBasic(appId, appSecret, (page, total) => {
     logger.log(`Shop list page ${page}/${total}`);
   });
-  const initialSync = await ctx.syncBrandShops(shops);
-  ctx.addNote(
-    `${initialSync.total} tiendas sincronizadas en la marca `
-    + `(${initialSync.created} nuevas, ${initialSync.updated} actualizadas).`,
-  );
+  let initialSync = { total: 0, created: 0, updated: 0 };
+  try {
+    initialSync = await ctx.syncBrandShops(shops);
+    ctx.addNote(
+      `${initialSync.total} tiendas sincronizadas en la marca `
+      + `(${initialSync.created} nuevas, ${initialSync.updated} actualizadas).`,
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    logger.warn(`Local shop synchronization failed; export will continue: ${reason}`);
+    ctx.addNote('⚠ No se pudo actualizar el inventario local; la generación del reporte continuará.');
+  }
   ctx.addNote(`${shops.length} shops found. Fetching details…`);
   logger.log(`${brand.brandName}: ${shops.length} shops`);
 
@@ -189,7 +196,13 @@ async function exportShopList(ctx: HandlerContext): Promise<unknown> {
   ctx.addNote(`Details fetched: ${rows.length}/${shops.length} shops. Building file…`);
 
   if (detailedShops.length > 0) {
-    await ctx.syncBrandShops(detailedShops);
+    try {
+      await ctx.syncBrandShops(detailedShops);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      logger.warn(`Detailed local shop synchronization failed; export will continue: ${reason}`);
+      ctx.addNote('⚠ No se pudieron actualizar los detalles locales; el reporte seguirá disponible.');
+    }
   }
 
   if (shops.length > 0 && rows.length === 0) {

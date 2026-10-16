@@ -12,6 +12,7 @@ import {
   TargetedPromotionReaderService,
   TargetedPromotionRefreshResult,
 } from '../file-integrations/targeted-promotion-reader.service';
+import { withAtomicShopMappingSync } from '../shops/shop-sync.util';
 
 // ── Job payload (what travels in the BullMQ queue) ───────────────────────────
 
@@ -307,70 +308,65 @@ export class HandlerProcessor extends WorkerHost {
       syncBrandShops: async (shops) => {
         if (!brand) throw new Error('Task has no brand linked');
 
-        const unique = [...new Map(
-          shops
-            .filter(shop => shop.shopId?.trim() && shop.appShopId?.trim())
-            .map(shop => [shop.shopId.trim(), { ...shop, shopId: shop.shopId.trim(), appShopId: shop.appShopId.trim() }]),
-        ).values()];
-        if (unique.length === 0) return { total: 0, created: 0, updated: 0 };
+        const validShops = shops.filter(shop => shop.shopId?.trim() && shop.appShopId?.trim());
+        if (validShops.length === 0) return { total: 0, created: 0, updated: 0 };
 
-        const existing = await this.prisma.shop.findMany({
-          where: { shopId: { in: unique.map(shop => shop.shopId) } },
-          select: { shopId: true },
-        });
-        const existingIds = new Set(existing.map(shop => shop.shopId));
-
-        for (let offset = 0; offset < unique.length; offset += 100) {
-          const chunk = unique.slice(offset, offset + 100);
-          await this.prisma.$transaction(async tx => {
-            for (const shop of chunk) {
-              const saved = await tx.shop.upsert({
-                where: { shopId: shop.shopId },
-                create: {
-                  shopId: shop.shopId,
-                  appShopId: shop.appShopId,
-                  brandId: brand.id,
-                  name: shop.name || null,
-                  city: shop.city || null,
-                  latitude: shop.latitude === undefined || shop.latitude === '' ? null : String(shop.latitude),
-                  longitude: shop.longitude === undefined || shop.longitude === '' ? null : String(shop.longitude),
-                  pickingModel: shop.pickingModel,
-                  driverCashBlocked: shop.driverCashBlocked ?? true,
-                  status: 'integrated',
-                  createdById: task?.createdById ?? undefined,
-                },
-                update: {
-                  appShopId: shop.appShopId,
-                  brandId: brand.id,
-                  status: 'integrated',
-                  deletedAt: null,
-                  ...(shop.name !== undefined && { name: shop.name || null }),
-                  ...(shop.city !== undefined && { city: shop.city || null }),
-                  ...(shop.latitude !== undefined && shop.latitude !== '' && { latitude: String(shop.latitude) }),
-                  ...(shop.longitude !== undefined && shop.longitude !== '' && { longitude: String(shop.longitude) }),
-                  ...(shop.pickingModel !== undefined && { pickingModel: shop.pickingModel }),
-                  ...(shop.driverCashBlocked !== undefined && { driverCashBlocked: shop.driverCashBlocked }),
-                },
-              });
-              if (shop.schedules !== undefined) {
-                await tx.schedule.deleteMany({ where: { shopId: saved.id } });
-                if (shop.schedules.length) {
-                  await tx.schedule.createMany({
-                    data: shop.schedules.map(schedule => ({
-                      shopId: saved.id,
-                      day: schedule.day,
-                      openTime: new Date(`1970-01-01T${schedule.openTime}:00.000Z`),
-                      closeTime: new Date(`1970-01-01T${schedule.closeTime}:00.000Z`),
-                    })),
-                  });
-                }
+        return withAtomicShopMappingSync(this.prisma, brand.id, validShops, async ({
+          tx,
+          shops: normalizedShops,
+          existingByShopId,
+        }) => {
+          for (const shop of normalizedShops) {
+            const saved = await tx.shop.upsert({
+              where: { shopId: shop.shopId },
+              create: {
+                shopId: shop.shopId,
+                appShopId: shop.appShopId,
+                brandId: brand.id,
+                name: shop.name || null,
+                city: shop.city || null,
+                latitude: shop.latitude === undefined || shop.latitude === '' ? null : String(shop.latitude),
+                longitude: shop.longitude === undefined || shop.longitude === '' ? null : String(shop.longitude),
+                pickingModel: shop.pickingModel,
+                driverCashBlocked: shop.driverCashBlocked ?? true,
+                status: 'integrated',
+                createdById: task?.createdById ?? undefined,
+              },
+              update: {
+                appShopId: shop.appShopId,
+                brandId: brand.id,
+                status: 'integrated',
+                deletedAt: null,
+                ...(shop.name !== undefined && { name: shop.name || null }),
+                ...(shop.city !== undefined && { city: shop.city || null }),
+                ...(shop.latitude !== undefined && shop.latitude !== '' && { latitude: String(shop.latitude) }),
+                ...(shop.longitude !== undefined && shop.longitude !== '' && { longitude: String(shop.longitude) }),
+                ...(shop.pickingModel !== undefined && { pickingModel: shop.pickingModel }),
+                ...(shop.driverCashBlocked !== undefined && { driverCashBlocked: shop.driverCashBlocked }),
+              },
+            });
+            if (shop.schedules !== undefined) {
+              await tx.schedule.deleteMany({ where: { shopId: saved.id } });
+              if (shop.schedules.length) {
+                await tx.schedule.createMany({
+                  data: shop.schedules.map(schedule => ({
+                    shopId: saved.id,
+                    day: schedule.day,
+                    openTime: new Date(`1970-01-01T${schedule.openTime}:00.000Z`),
+                    closeTime: new Date(`1970-01-01T${schedule.closeTime}:00.000Z`),
+                  })),
+                });
               }
             }
-          });
-        }
+          }
 
-        const updated = unique.filter(shop => existingIds.has(shop.shopId)).length;
-        return { total: unique.length, created: unique.length - updated, updated };
+          const updated = normalizedShops.filter(shop => existingByShopId.has(shop.shopId)).length;
+          return {
+            total: normalizedShops.length,
+            created: normalizedShops.length - updated,
+            updated,
+          };
+        });
       },
       forEachBrandItemBatch: async (callback) => {
         if (!brand) throw new Error('Task has no brand linked');
