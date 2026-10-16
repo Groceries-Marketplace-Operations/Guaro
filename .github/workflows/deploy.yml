@@ -80,10 +80,36 @@ jobs:
             # Existing containers stay running until both builds succeed.
             docker compose -f docker-compose.prod.yml --env-file .env.prod build backend
             docker compose -f docker-compose.prod.yml --env-file .env.prod build frontend
-            # Apply backward-compatible migrations with the newly built image
-            # while the current backend is still serving traffic. A migration
-            # failure therefore leaves the running release untouched, and
-            # large concurrent indexes do not extend the container restart.
+            # The previous release attempted CREATE INDEX CONCURRENTLY through
+            # Prisma, which PostgreSQL rejected inside the migration
+            # transaction. Resolve only that known failed attempt so the
+            # corrected, replay-safe migration can be recorded below.
+            failed_filter_migration="$(
+              printf '%s\n' \
+                "SELECT count(*) FROM \"_prisma_migrations\" WHERE migration_name = '20261015005000_didi_order_webhook_filter_indexes' AND finished_at IS NULL AND rolled_back_at IS NULL;" \
+                | docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
+                    sh -c 'psql -X -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+            )"
+            if [ "$failed_filter_migration" -gt 0 ]; then
+              docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --no-deps backend \
+                npx prisma migrate resolve --rolled-back 20261015005000_didi_order_webhook_filter_indexes \
+                  --schema=./prisma/schema.prisma
+            fi
+            # Pre-apply the idempotent financial expansion while the current
+            # backend is still serving. These nullable/defaulted columns let
+            # psql build every large/sparse index online before Prisma runs.
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
+              sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+              < prisma/migrations/20261016020000_didi_order_webhook_financials/migration.sql
+            # psql autocommit is required: PostgreSQL forbids concurrent index
+            # operations inside transaction blocks. The script is retry-safe
+            # and repairs invalid indexes left by interrupted builds.
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
+              sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+              < prisma/deploy/didi_order_webhook_indexes_online.sql
+            # Record the replay-safe migrations with the newly built image.
+            # All production index statements are now no-ops, while fresh
+            # development databases retain a self-contained fallback.
             docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --no-deps backend \
               npx prisma migrate deploy --schema=./prisma/schema.prisma
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d

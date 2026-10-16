@@ -445,7 +445,7 @@ test('central request-log indexes are additive and contain no sensitive columns'
   assert.doesNotMatch(sql, /DROP|DELETE|TRUNCATE|raw_body|headers|auth_token|app_secret/i);
 });
 
-test('high-volume webhook filters use concurrent exact-ID indexes before schema expansion', () => {
+test('high-volume webhook filter migration has a verified local fallback without concurrent DDL', () => {
   const sql = readFileSync(
     resolve(
       __dirname,
@@ -453,10 +453,14 @@ test('high-volume webhook filters use concurrent exact-ID indexes before schema 
     ),
     'utf8',
   );
-  assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS[\s\S]+\("order_id", "application_id"\)/);
-  assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS[\s\S]+\("app_shop_id", "application_id"\)/);
-  assert.match(sql, /CREATE INDEX CONCURRENTLY IF NOT EXISTS[\s\S]+\("didi_shop_id", "application_id"\)/);
-  assert.doesNotMatch(sql, /BEGIN|pg_trgm|raw_body|headers|auth_token|app_secret/i);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS[\s\S]+\("order_id", "application_id"\)/);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS[\s\S]+\("app_shop_id", "application_id"\)/);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS[\s\S]+\("didi_shop_id", "application_id"\)/);
+  assert.match(sql, /pg_class[\s\S]+pg_index[\s\S]+indisvalid[\s\S]+indisready/);
+  assert.doesNotMatch(
+    sql,
+    /CREATE\s+INDEX\s+CONCURRENTLY|pg_trgm|raw_body|headers|auth_token|app_secret/i,
+  );
 });
 
 test('financial migration stores three optional amounts and one-time profit recognition without payload PII', () => {
@@ -473,10 +477,14 @@ test('financial migration stores three optional amounts and one-time profit reco
   assert.match(sql, /"profit_recognized" BOOLEAN NOT NULL DEFAULT false/);
   assert.match(sql, /didi_order_webhook_event_prices_check[\s\S]+NOT VALID/);
   assert.match(sql, /didi_order_webhook_event_profit_snapshot_check[\s\S]+NOT VALID/);
+  assert.match(sql, /WHEN duplicate_object THEN NULL/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS "order_price_minor" BIGINT/);
+  assert.match(sql, /pg_constraint[\s\S]+application_order_webhook_profit_config_check/);
+  assert.match(sql, /SET LOCAL lock_timeout = '5s'/);
   assert.doesNotMatch(sql, /raw_body|headers|customer|address|phone|auth_token|app_secret/i);
 });
 
-test('financial filters use sparse concurrent indexes without indexing legacy null rows', () => {
+test('financial index migration has sparse verified local fallbacks without concurrent DDL', () => {
   const sql = readFileSync(
     resolve(
       __dirname,
@@ -490,10 +498,56 @@ test('financial filters use sparse concurrent indexes without indexing legacy nu
     'real_pay_price_minor',
     'profit_mxn',
   ]) {
-    assert.match(sql, new RegExp(`CREATE INDEX CONCURRENTLY IF NOT EXISTS[\\s\\S]+WHERE "${column}" IS NOT NULL`));
+    assert.match(sql, new RegExp(`CREATE INDEX IF NOT EXISTS[\\s\\S]+WHERE "${column}" IS NOT NULL`));
   }
   assert.match(sql, /WHERE "profit_recognized" = true/);
-  assert.doesNotMatch(sql, /BEGIN|pg_trgm|raw_body|headers|auth_token|app_secret/i);
+  assert.match(sql, /pg_class[\s\S]+pg_index[\s\S]+indpred IS NOT NULL/);
+  assert.doesNotMatch(
+    sql,
+    /CREATE\s+INDEX\s+CONCURRENTLY|pg_trgm|raw_body|headers|auth_token|app_secret/i,
+  );
+});
+
+test('production builds all webhook filter indexes online through psql autocommit', () => {
+  const sql = readFileSync(
+    resolve(__dirname, '../../prisma/deploy/didi_order_webhook_indexes_online.sql'),
+    'utf8',
+  );
+  assert.equal((sql.match(/CREATE INDEX CONCURRENTLY IF NOT EXISTS/g) ?? []).length, 8);
+  assert.match(sql, /DROP INDEX CONCURRENTLY IF EXISTS/);
+  assert.match(sql, /NOT index_state\.indisvalid[\s\S]+NOT index_state\.indisready/);
+  assert.match(sql, /pg_attribute[\s\S]+expected\.indexed_columns/);
+  assert.match(sql, /\("order_id", "application_id"\)/);
+  assert.match(sql, /\("app_shop_id", "application_id"\)/);
+  assert.match(sql, /\("didi_shop_id", "application_id"\)/);
+  for (const column of [
+    'order_price_minor',
+    'real_price_minor',
+    'real_pay_price_minor',
+    'profit_mxn',
+  ]) {
+    assert.match(sql, new RegExp(`WHERE "${column}" IS NOT NULL`));
+  }
+  assert.match(sql, /WHERE "profit_recognized" = true/);
+  assert.doesNotMatch(sql, /\bBEGIN\b|\bCOMMIT\b|raw_body|headers|auth_token|app_secret/i);
+});
+
+test('production deploy expands schema, creates online indexes, then records Prisma migrations', () => {
+  const workflow = readFileSync(resolve(__dirname, '../../.github/workflows/deploy.yml'), 'utf8');
+  const expansion = workflow.indexOf(
+    'prisma/migrations/20261016020000_didi_order_webhook_financials/migration.sql',
+  );
+  const onlineIndexes = workflow.indexOf('prisma/deploy/didi_order_webhook_indexes_online.sql');
+  const migrateDeploy = workflow.indexOf('npx prisma migrate deploy --schema=./prisma/schema.prisma');
+
+  assert.ok(expansion >= 0);
+  assert.ok(onlineIndexes > expansion);
+  assert.ok(migrateDeploy > onlineIndexes);
+  assert.match(workflow, /psql -X -v ON_ERROR_STOP=1/);
+  assert.match(
+    workflow,
+    /migrate resolve --rolled-back 20261015005000_didi_order_webhook_filter_indexes/,
+  );
 });
 
 test('confirmation-budget migration adds a bounded budget without rewriting legacy rows', () => {
