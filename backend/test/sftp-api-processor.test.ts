@@ -251,10 +251,54 @@ test('network uncertainty retains audit and file marker without pausing other st
     assert.equal(h.uploads[0].status, 'unknown'); assert.equal(h.posts.length, 1);
   } finally { mock.restoreAll(); }
 });
-test('interrupted worker is marked for review without replaying remote calls', async () => {
+test('interrupted worker preserves schedules and file deduplication while new files can run', async () => {
   const h = harness('full', { interrupted: true });
-  try { await h.processor.process({ data: { runId: 'run' } } as any); assert.equal(h.run.status, 'needs_review'); assert.equal(h.posts.length, 0); }
-  finally { mock.restoreAll(); }
+  const nextRunAt = new Date('2026-10-18T11:05:00Z');
+  Object.assign(h.rule, { nextRunAt });
+  h.records.push({ id: 'interrupted', ruleId: 'rule', runId: 'run', fileName: '0043.csv', status: 'processing' });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, 'needs_review');
+    assert.equal(h.posts.length, 0);
+    assert.equal(h.rule.active, true);
+    assert.equal((h.rule as any).nextRunAt, nextRunAt);
+    assert.equal(h.records[0].status, 'needs_review');
+    h.files.push({ ...h.files[0], name: '0044.csv' });
+    h.run.status = 'pending';
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, 'accepted');
+    assert.deepEqual(h.paths.get, ['/upload/0044.csv']);
+    assert.equal(h.uploads.length, 1);
+    assert.equal(h.uploads[0].shopId, '0044');
+    assert.equal(h.records[0].status, 'needs_review');
+  } finally { mock.restoreAll(); }
+});
+
+test('failure saving an API result preserves schedules and marks the upload uncertain', async () => {
+  const h = harness('full');
+  const nextRunAt = new Date('2026-10-18T11:05:00Z');
+  Object.assign(h.rule, { nextRunAt });
+  mock.method(h.prisma.sftpApiUpload, 'update', async () => { throw new Error('database interrupted'); });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, 'needs_review');
+    assert.equal(h.posts.length, 1);
+    assert.equal(h.uploads[0].status, 'unknown');
+    assert.equal(h.records[0].status, 'needs_review');
+    assert.equal(h.rule.active, true);
+    assert.equal((h.rule as any).nextRunAt, nextRunAt);
+  } finally { mock.restoreAll(); }
+});
+
+test('interruption recovery does not reactivate an already paused schedule', async () => {
+  const h = harness('full', { interrupted: true });
+  Object.assign(h.rule, { active: false, nextRunAt: null });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, 'needs_review');
+    assert.equal(h.rule.active, false);
+    assert.equal((h.rule as any).nextRunAt, null);
+  } finally { mock.restoreAll(); }
 });
 test('invalid UPC symbols are saved in the file report and prevent sending that file', async () => {
   const h = harness('full', { content: 'ABC-123|Leche|||18||7||20' });
