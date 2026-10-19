@@ -30,7 +30,7 @@ export class SftpApiProcessor extends WorkerHost {
     const claimed = await this.prisma.sftpApiRun.updateMany({ where: { id, status: 'pending' }, data: { status: 'running', startedAt: new Date() } });
     if (!claimed.count) {
       const previous = await this.prisma.sftpApiRun.findUnique({ where: { id } });
-      if (previous?.status === 'running') await this.review(id, previous.ruleId, 'La ejecución se interrumpió. Revisa los envíos antes de reactivar los horarios.');
+      if (previous?.status === 'running') await this.review(id, 'La ejecución se interrumpió. Revisa los envíos antes de reprocesar los archivos afectados. La programación no se modifica.');
       return;
     }
     const run = await this.prisma.sftpApiRun.findUniqueOrThrow({ where: { id } });
@@ -198,7 +198,7 @@ export class SftpApiProcessor extends WorkerHost {
       await this.finish(id, failed ? 'partial_failure' : run.mode === 'full' ? 'accepted' : 'succeeded', failed ? `${failed} errores de archivo o tienda; las demás tiendas continuaron. Consulta los reportes.` : undefined);
     } catch (error) {
       const uncertain = await this.prisma.sftpApiUpload.count({ where: { runId: id, status: 'sending' } });
-      if (uncertain) await this.review(id, rule.id, 'Ejecución interrumpida tras preparar un envío; requiere revisión.');
+      if (uncertain) await this.review(id, 'Ejecución interrumpida tras preparar un envío; requiere revisión. La programación no se modifica.');
       else {
         await this.prisma.sftpApiProcessedFile.updateMany({ where: { runId: id, status: 'processing' }, data: { status: 'failed', error: safeError(error), processedAt: new Date() } });
         await this.finish(id, 'failed', safeError(error));
@@ -226,11 +226,10 @@ export class SftpApiProcessor extends WorkerHost {
   private async finish(id: string, status: string, error?: string) {
     await this.prisma.sftpApiRun.updateMany({ where: { id, status: 'running' }, data: { status, error: error ?? null, finishedAt: new Date() } });
   }
-  private async review(id: string, ruleId: string, error: string) {
+  private async review(id: string, error: string) {
     await this.prisma.$transaction([
       this.prisma.sftpApiUpload.updateMany({ where: { runId: id, status: 'sending' }, data: { status: 'unknown', error } }),
       this.prisma.sftpApiProcessedFile.updateMany({ where: { runId: id, status: 'processing' }, data: { status: 'needs_review', error, processedAt: new Date() } }),
-      this.prisma.sftpApiRule.update({ where: { id: ruleId }, data: { active: false, nextRunAt: null } }),
       this.prisma.sftpApiRun.updateMany({ where: { id, status: 'running' }, data: { status: 'needs_review', error, finishedAt: new Date() } }),
     ]);
   }
