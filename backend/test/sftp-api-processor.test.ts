@@ -5,6 +5,8 @@ import { test, mock } from 'node:test';
 import SftpClient = require('ssh2-sftp-client');
 import { SftpApiProcessor } from '../src/sftp-api/sftp-api.processor';
 import { decrypt, encrypt } from '../src/common/crypto.util';
+import fs = require('node:fs/promises');
+import sftpUtil = require('../src/sftp-api/sftp-api.util');
 
 const key = '01'.repeat(32);
 function harness(mode: 'full' | 'delta', options: { fail?: boolean; reject?: boolean; previous?: boolean; interrupted?: boolean; content?: string; files?: { name: string; content?: string; ageMinutes?: number }[]; rejectShop?: string; authFailShop?: string; uncertainShop?: string } = {}) {
@@ -68,6 +70,88 @@ function harness(mode: 'full' | 'delta', options: { fail?: boolean; reject?: boo
   const processor = new SftpApiProcessor(prisma, { getOrThrow: () => key } as any, { acquire: async (app: string, shop: string, check: () => Promise<void>) => { await check(); limits.push(app + ':' + shop); return async () => { limits.push('cooldown'); }; } } as any);
   return { processor, prisma, run, rule, uploads, posts, application, sftpApplication, connections, requests, paths, files, records, limits };
 }
+
+test('full processes more than 100 MiB with encrypted staging and cleans up afterward', async () => {
+  const h = harness('full', { files: Array.from({ length: 6 }, (_, i) => ({ name: `00${43 + i}.csv` })) });
+  // Transfer 132 MiB through the actual download/size/hash path. Parsing is
+  // isolated here; CSV validation is covered by the real-parser tests below.
+  const buffer = Buffer.alloc(22 * 1024 * 1024, 'x');
+  h.files.forEach(file => { file.buffer = buffer; });
+  mock.method(sftpUtil, 'parseFile', (_content: string, name: string) => new Map([
+    [name.slice(0, 4), new Map([['001234', { app_item_id: '001234', upc: '001234', item_name: 'Leche', stock: 7, price: 2000, status: 1 }]])],
+  ]));
+  const originalWrite = fs.writeFile;
+  const originalRead = fs.readFile;
+  const stagedPaths: string[] = [];
+  mock.method(fs, 'writeFile', async (path: string, data: string, options: any) => {
+    assert.ok(!data.includes('Leche'));
+    assert.equal(JSON.parse(decrypt(data, key)).stores[0][1][0].item_name, 'Leche');
+    stagedPaths.push(path);
+    return originalWrite(path, data, options);
+  });
+  mock.method(fs, 'readFile', async (path: string, options: any) => {
+    if (stagedPaths.includes(path)) assert.equal(h.paths.get.length, 6, 'validate the entire selection before sending');
+    return originalRead(path, options);
+  });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, 'accepted');
+    assert.equal(h.posts.length, 6);
+    assert.equal(stagedPaths.length, 6);
+    assert.ok(h.records.every(record => record.status === 'processed'));
+    for (const path of stagedPaths) await assert.rejects(fs.stat(path), { code: 'ENOENT' });
+    await assert.rejects(fs.stat(require('node:path').dirname(stagedPaths[0])), { code: 'ENOENT' });
+  } finally { mock.restoreAll(); }
+});
+
+test('full selects the latest valid menu per shop across staged multi-shop files', async () => {
+  const h = harness('full', { files: [
+    { name: 'old.csv', ageMinutes: 4, content: '0043|001|Leche|20|7\n0044|002|Pan|10|3' },
+    { name: 'new.csv', ageMinutes: 2, content: '0043|003|Arroz|30|8' },
+    { name: 'invalid.csv', ageMinutes: 1, content: '0044|004|Pan|invalid|2' },
+  ] });
+  h.rule.shopSource = 'column';
+  h.rule.mapping = { app_shop_id: 'A', app_item_id: 'B', upc: 'B', item_name: 'C', price: 'D', stock: 'E', activity_price: '' } as any;
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, 'partial_failure');
+    assert.deepEqual(h.uploads.map(u => [u.shopId, u.fileName]), [['0044', 'old.csv'], ['0043', 'new.csv']]);
+    assert.deepEqual(h.posts.map(p => p.items[0].app_item_id), ['002', '003']);
+    assert.equal(h.records.find(r => r.fileName === 'invalid.csv').status, 'failed');
+  } finally { mock.restoreAll(); }
+});
+
+for (const [count, size, error] of [[501, 1, /501 archivos.*500/], [21, 25 * 1024 * 1024, /525\.00 MiB.*500 MiB/]] as const) {
+  test(`volume limit rejects ${count} files of ${size} bytes before downloading`, async () => {
+    const h = harness('full');
+    mock.method(SftpClient.prototype, 'list', async () => Array.from({ length: count }, (_, i) => ({
+      name: `${i}.csv`, type: '-', size, modifyTime: Date.now() - 120_000,
+    })));
+    try {
+      await h.processor.process({ data: { runId: 'run' } } as any);
+      assert.equal(h.run.status, 'failed');
+      assert.match((h.run as any).error, error);
+      assert.equal(h.paths.get.length, 0);
+      assert.equal(h.posts.length, 0);
+      assert.equal(h.rule.active, true);
+    } finally { mock.restoreAll(); }
+  });
+}
+
+test('staging files are removed after a failure saving an API result', async () => {
+  const h = harness('full');
+  const originalMkdtemp = fs.mkdtemp;
+  let directory = '';
+  mock.method(fs, 'mkdtemp', async (prefix: string) => { directory = await originalMkdtemp(prefix); return directory; });
+  mock.method(h.prisma.sftpApiUpload, 'update', async () => { throw new Error('database interrupted'); });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, 'needs_review');
+    assert.equal(h.rule.active, true);
+    assert.ok(directory);
+    await assert.rejects(fs.stat(directory), { code: 'ENOENT' });
+  } finally { mock.restoreAll(); }
+});
 
 for (const failure of ['rejectShop', 'authFailShop', 'uncertainShop'] as const) {
   test(`${failure}: later shops continue and the failed store has a durable report`, async () => {

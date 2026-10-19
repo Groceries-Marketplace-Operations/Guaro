@@ -4,7 +4,9 @@ import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
 import { Prisma, SftpApiRule } from '@prisma/client';
 import { createHash } from 'node:crypto';
-import { posix } from 'node:path';
+import { join, posix } from 'node:path';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { Writable } from 'node:stream';
 import SftpClient = require('ssh2-sftp-client');
 import { decrypt, encrypt } from '../common/crypto.util';
@@ -17,8 +19,10 @@ import { SftpApiStockLimiter, STOCK_BATCH_SIZE } from './sftp-api-stock-limiter'
 const FULL_ENDPOINT = '/v3/item/item/uploadGrocery';
 const STOCK_ENDPOINT = '/v1/item/item/setstockSync';
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_RUN_BYTES = 500 * 1024 * 1024;
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-type Parsed = { name: string; hash: string; modified: number; stores: Map<string, Map<string, Item>>; reports: string[] };
+type Parsed = { name: string; hash: string; shops: string[]; path: string };
+type StagedFile = { stores: [string, Item[]][]; reports: string[] };
 
 @Injectable()
 @Processor('sftp-api', { concurrency: 2 })
@@ -45,6 +49,7 @@ export class SftpApiProcessor extends WorkerHost {
     const client = new SftpClient(`sftp-api-${id}`);
     let failed = 0;
     let skipped = 0;
+    let stagingDirectory: string | undefined;
     try {
       const { application, sftpApplication } = await resolveSftpApiApplications(this.prisma, rule);
       const rootPath = posix.normalize(sftpApplication.rootPath?.trim() || '/upload');
@@ -74,9 +79,10 @@ export class SftpApiProcessor extends WorkerHost {
       }
       // Full uses the latest snapshot per store, delta applies files oldest first.
       selected.sort((a, b) => a.modifyTime - b.modifyTime || a.name.localeCompare(b.name));
-      if (selected.length > 500 || selected.reduce((sum, f) => sum + f.size, 0) > 100 * 1024 * 1024) {
-        throw new Error('La lectura supera 500 archivos o 100 MB. Ajusta el regex o la carpeta.');
-      }
+      if (selected.length > 500) throw new Error(`La lectura contiene ${selected.length} archivos nuevos; el límite es 500. Ajusta el regex o la carpeta.`);
+      const totalBytes = selected.reduce((sum, f) => sum + f.size, 0);
+      if (totalBytes > MAX_RUN_BYTES) throw new Error(`La lectura suma ${(totalBytes / 1024 / 1024).toFixed(2)} MiB; el límite es 500 MiB. Ajusta el regex o la carpeta.`);
+      stagingDirectory = await mkdtemp(join(tmpdir(), 'guaro-sftp-api-'));
       const parsed: Parsed[] = [];
       for (const entry of selected) {
         await this.ensureRunning(id);
@@ -101,10 +107,15 @@ export class SftpApiProcessor extends WorkerHost {
           const reports: string[] = [];
           const stores = parseFile(content, entry.name, rule as unknown as ParseConfig, run.mode as Mode, reports);
           const fileHash = hash(buffer);
+          // Keep only the index in memory. Encrypt temporary product data using the
+          // existing application key; never use remote filenames as local paths.
+          const stagedPath = join(stagingDirectory, `${parsed.length}.enc`);
+          const staged: StagedFile = { stores: [...stores].map(([shop, items]) => [shop, [...items.values()]]), reports };
+          await writeFile(stagedPath, encrypt(JSON.stringify(staged), key), { mode: 0o600 });
           await this.prisma.sftpApiProcessedFile.update({ where: { ruleId_fileName: { ruleId: rule.id, fileName: entry.name } }, data: { fileHash, error: reports.join('\n') || null } });
           await this.prisma.sftpApiRun.update({ where: { id }, data: { filesRead: { increment: 1 } } });
           await this.prisma.sftpApiRule.update({ where: { id: rule.id }, data: { lastReadAt: new Date() } });
-          parsed.push({ name: entry.name, hash: fileHash, modified: entry.modifyTime, stores, reports });
+          parsed.push({ name: entry.name, hash: fileHash, shops: [...stores.keys()], path: stagedPath });
         } catch (error) {
           failed++;
           await this.completeFile(rule.id, entry.name, 'failed', safeError(error));
@@ -113,17 +124,18 @@ export class SftpApiProcessor extends WorkerHost {
       await client.end().catch(() => undefined);
       // Validate the entire selection before replacing any remote menu.
       const latestByShop = new Map<string, Parsed>();
-      for (const file of parsed) for (const shop of file.stores.keys()) latestByShop.set(shop, file);
+      for (const file of parsed) for (const shop of file.shops) latestByShop.set(shop, file);
       const configHash = hash(JSON.stringify({ version: 2, base: DIDI_BASE, appId: application.appId, sftpApplicationId: rule.sftpApplicationId, mode: run.mode, mapping: rule.mapping, shopSource: rule.shopSource, shopRegex: rule.shopRegex }));
       for (const file of parsed) {
+        await this.ensureRunning(id);
+        const staged = JSON.parse(decrypt(await readFile(file.path, 'utf8'), key)) as StagedFile;
         const fileErrors: string[] = [];
         let fileUncertain = false;
         let attempted = false;
-        for (const [shop, map] of file.stores) {
+        for (const [shop, items] of staged.stores) {
           if (run.mode === 'full' && latestByShop.get(shop) !== file) continue;
           await this.ensureRunning(id);
           attempted = true;
-          const items = [...map.values()];
           const batches: Item[][] = [];
           if (run.mode === 'full') batches.push(items);
           else for (let offset = 0; offset < items.length; offset += STOCK_BATCH_SIZE) batches.push(items.slice(offset, offset + STOCK_BATCH_SIZE));
@@ -192,7 +204,8 @@ export class SftpApiProcessor extends WorkerHost {
             }
           }
         }
-        await this.completeFile(rule.id, file.name, fileUncertain ? 'needs_review' : fileErrors.length ? 'partial_failure' : attempted ? 'processed' : 'superseded', [...fileErrors, ...file.reports].join('\n') || undefined);
+        await this.completeFile(rule.id, file.name, fileUncertain ? 'needs_review' : fileErrors.length ? 'partial_failure' : attempted ? 'processed' : 'superseded', [...fileErrors, ...staged.reports].join('\n') || undefined);
+        await rm(file.path, { force: true });
       }
       await this.prisma.sftpApiRun.update({ where: { id }, data: { filesSkipped: skipped } });
       await this.finish(id, failed ? 'partial_failure' : run.mode === 'full' ? 'accepted' : 'succeeded', failed ? `${failed} errores de archivo o tienda; las demás tiendas continuaron. Consulta los reportes.` : undefined);
@@ -203,7 +216,11 @@ export class SftpApiProcessor extends WorkerHost {
         await this.prisma.sftpApiProcessedFile.updateMany({ where: { runId: id, status: 'processing' }, data: { status: 'failed', error: safeError(error), processedAt: new Date() } });
         await this.finish(id, 'failed', safeError(error));
       }
-    } finally { await client.end().catch(() => undefined); }
+    } finally {
+      await client.end().catch(() => undefined);
+      // This path is exclusively created by mkdtemp above, never supplied by SFTP.
+      if (stagingDirectory) await rm(stagingDirectory, { recursive: true, force: true });
+    }
   }
 
   private async completeFile(ruleId: string, fileName: string, status: string, error?: string) {
