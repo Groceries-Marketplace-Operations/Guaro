@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import Topbar from '../components/layout/Topbar';
 import { useAuth } from '../auth/AuthContext';
-import { useT } from '../i18n';
+import { intlLocaleForLang, useLang, useT } from '../i18n';
 import {
   adminApi,
   autoFetchApi,
@@ -96,6 +96,7 @@ export default function Dashboard() {
   const nav = useNavigate();
   const { account } = useAuth();
   const t = useT();
+  const { lang } = useLang();
   const firstName = account?.name?.split(' ')[0] ?? '';
   const isBpoOnly = Boolean(account?.roles.includes('bpo')
     && !account.roles.includes('admin')
@@ -253,7 +254,7 @@ export default function Dashboard() {
   const totalQueueFailed = Object.values(queuesQuery.data?.queues ?? {}).reduce(
     (sum, queue) => sum + (queue.counts.failed ?? 0), 0,
   );
-  const dateLabel = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
+  const dateLabel = new Intl.DateTimeFormat(intlLocaleForLang(lang), { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
 
   return <>
     <Topbar breadcrumb={[{ label: t('nav.dashboard') }]} />
@@ -341,7 +342,7 @@ export default function Dashboard() {
       {canSeeTasks && <section className="dashboard-panel recent-panel">
         <header><div><span className="dashboard-panel-kicker">{t('pages.dashboard.activity')}</span><h2>{t('pages.dashboard.recentTasks')}</h2></div><Link to="/tasks">{t('pages.dashboard.viewAll')} →</Link></header>
         {recent.length === 0 ? <div className="empty-state"><p>{t('pages.dashboard.noTasksYet')}</p></div> : <div className="dashboard-table-wrap"><table><thead><tr><th>{t('pages.dashboard.colBrand')}</th><th>{t('pages.dashboard.colTaskType')}</th><th>{t('pages.dashboard.section')}</th><th>{t('pages.dashboard.activeStep')}</th><th>{t('pages.dashboard.colStatus')}</th><th>{t('pages.dashboard.colCreated')}</th></tr></thead><tbody>
-          {recent.slice(0, 8).map(task => <tr key={task.id} onClick={() => nav(`/tasks/${task.id}`)}><td><strong>{task.brand?.brandName ?? '—'}</strong></td><td>{task.taskType?.name ?? '—'}</td><td><span className="section-chip">{sectionNames.get(task.taskType?.sectionId ?? '') ?? '—'}</span></td><td className="text-muted">{activeStep(task)}</td><td><StatusBadge status={task.status} /></td><td className="text-muted">{new Intl.DateTimeFormat(undefined, { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(task.createdAt))}</td></tr>)}
+          {recent.slice(0, 8).map(task => <tr key={task.id} onClick={() => nav(`/tasks/${task.id}`)}><td><strong>{task.brand?.brandName ?? '—'}</strong></td><td>{task.taskType?.name ?? '—'}</td><td><span className="section-chip">{sectionNames.get(task.taskType?.sectionId ?? '') ?? '—'}</span></td><td className="text-muted">{activeStep(task)}</td><td><StatusBadge status={task.status} /></td><td className="text-muted">{new Intl.DateTimeFormat(intlLocaleForLang(lang), { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(task.createdAt))}</td></tr>)}
         </tbody></table></div>}
       </section>}
     </main>

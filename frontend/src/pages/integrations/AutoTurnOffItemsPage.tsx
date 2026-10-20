@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { autoTurnOffApi, brandsApi, shopsApi, webhooksApi } from '../../api';
-import { useLang, useT } from '../../i18n';
+import { intlLocaleForLang, useLang, useT } from '../../i18n';
+import type { Lang } from '../../i18n';
 import type {
   AutoTurnOffExecution,
   AutoTurnOffPool,
@@ -62,21 +63,26 @@ const statusColor: Record<string, string> = {
   pending: 'var(--text-muted)', running: 'var(--orange)', done: 'var(--green-text)', partial_success: 'var(--amber-text)', failed: 'var(--red-text)', cancelled: 'var(--text-muted)',
 };
 
-function executionStatusLabel(status: string, es: boolean) {
-  const labels: Record<string, [string, string]> = {
-    pending: ['En cola', 'Queued'],
-    running: ['Ejecutando', 'Running'],
-    done: ['Exitosa', 'Successful'],
-    partial_success: ['Éxito parcial', 'Partial success'],
-    failed: ['Fallida', 'Failed'],
-    cancelled: ['Cancelada', 'Cancelled'],
-  };
-  return (labels[status] ?? [status, status])[es ? 0 : 1];
+function languageIndex(lang: Lang) {
+  return lang === 'es' ? 0 : lang === 'zh-CN' ? 2 : 1;
 }
 
-function errorMessage(error: unknown) {
+function executionStatusLabel(status: string, lang: Lang) {
+  const labels: Record<string, [string, string, string]> = {
+    pending: ['En cola', 'Queued', '排队中'],
+    running: ['Ejecutando', 'Running', '执行中'],
+    done: ['Exitosa', 'Successful', '成功'],
+    partial_success: ['Éxito parcial', 'Partial success', '部分成功'],
+    failed: ['Fallida', 'Failed', '失败'],
+    cancelled: ['Cancelada', 'Cancelled', '已取消'],
+  };
+  return (labels[status] ?? [status, status, status])[languageIndex(lang)];
+}
+
+function errorMessage(error: unknown, lang: Lang) {
   const message = (error as ApiError).response?.data?.message;
-  return Array.isArray(message) ? message.join(', ') : (message ?? 'Unexpected error');
+  const fallback = lang === 'es' ? 'Error inesperado' : lang === 'zh-CN' ? '发生意外错误' : 'Unexpected error';
+  return Array.isArray(message) ? message.join(', ') : (message ?? fallback);
 }
 
 function toMinutes(value: number, unit: FrequencyUnit) {
@@ -103,56 +109,57 @@ function toLocalDateTimeInput(iso: string) {
   return local.toISOString().slice(0, 16);
 }
 
-function formatFrequency(minutes: number, es: boolean) {
-  if (minutes % 1440 === 0) return `${minutes / 1440} ${es ? 'día(s)' : 'day(s)'}`;
-  if (minutes % 60 === 0) return `${minutes / 60} ${es ? 'hora(s)' : 'hour(s)'}`;
+function formatFrequency(minutes: number, lang: Lang) {
+  if (minutes % 1440 === 0) return `${minutes / 1440} ${lang === 'es' ? 'día(s)' : lang === 'zh-CN' ? '天' : 'day(s)'}`;
+  if (minutes % 60 === 0) return `${minutes / 60} ${lang === 'es' ? 'hora(s)' : lang === 'zh-CN' ? '小时' : 'hour(s)'}`;
   return `${minutes} min`;
 }
 
-function formatRuleSchedule(rule: AutoTurnOffRule, es: boolean) {
+function formatRuleSchedule(rule: AutoTurnOffRule, lang: Lang) {
   if (rule.scheduleMode === 'daily_times') {
-    return `${es ? 'A las' : 'At'} ${rule.executionTimes.join(', ')}`;
+    return `${lang === 'es' ? 'A las' : lang === 'zh-CN' ? '每天' : 'At'} ${rule.executionTimes.join(', ')}`;
   }
-  return `${es ? 'Cada' : 'Every'} ${formatFrequency(rule.intervalMinutes, es)}`;
+  return `${lang === 'es' ? 'Cada' : lang === 'zh-CN' ? '每' : 'Every'} ${formatFrequency(rule.intervalMinutes, lang)}`;
 }
 
-function progressStep(step: string | undefined, es: boolean) {
+function progressStep(step: string | undefined, lang: Lang) {
   const key = step?.split(':')[0] ?? 'queued';
-  const labels: Record<string, [string, string]> = {
-    queued: ['En cola', 'Queued'],
-    queued_local: ['En cola con datos locales', 'Queued with local data'],
-    queued_resolved: ['Tienda resuelta; en cola', 'Store resolved; queued'],
-    preparing: ['Preparando ejecución', 'Preparing execution'],
-    resolving_shops: ['Resolviendo tiendas', 'Resolving stores'],
-    resolving_deferred_shops: ['Resolviendo tiendas pendientes', 'Resolving deferred stores'],
-    processing_shops: ['Procesando tiendas', 'Processing stores'],
-    processing_local_data: ['Procesando datos locales', 'Processing local data'],
-    authenticating: ['Autenticando tienda', 'Authenticating store'],
-    authenticating_local: ['Autenticando para datos locales', 'Authenticating for local data'],
-    waiting_shop_resolution: ['Pendiente al final: resolver tienda', 'Deferred: resolve store'],
-    waiting_menu_download: ['UPC faltante en catálogo local', 'UPC missing from local catalog'],
-    matching_upcs: ['Relacionando UPCs', 'Matching UPCs'],
-    matching_local_upcs: ['Relacionando UPCs locales', 'Matching local UPCs'],
-    updating_stock: ['Actualizando stock', 'Updating stock'],
-    updating_local_stock: ['Apagando ítems locales', 'Turning off local items'],
-    shop_not_found: ['Tienda no encontrada', 'Store not found'],
-    shop_failed: ['Falló una tienda', 'A store failed'],
-    shop_partial_success: ['Tienda con éxito parcial', 'Store partially succeeded'],
-    queue_failed: ['Falló la cola', 'Queue failed'],
-    upc_not_found: ['UPC no encontrado', 'UPC not found'],
-    finalizing: ['Finalizando', 'Finalizing'],
-    completed: ['Completada', 'Completed'],
-    partial_success: ['Éxito parcial', 'Partial success'],
-    failed: ['Fallida', 'Failed'],
-    cancelled: ['Cancelada', 'Cancelled'],
+  const labels: Record<string, [string, string, string]> = {
+    queued: ['En cola', 'Queued', '排队中'],
+    queued_local: ['En cola con datos locales', 'Queued with local data', '使用本地数据排队中'],
+    queued_resolved: ['Tienda resuelta; en cola', 'Store resolved; queued', '店铺已解析；排队中'],
+    preparing: ['Preparando ejecución', 'Preparing execution', '正在准备执行'],
+    resolving_shops: ['Resolviendo tiendas', 'Resolving stores', '正在解析店铺'],
+    resolving_deferred_shops: ['Resolviendo tiendas pendientes', 'Resolving deferred stores', '正在解析延后处理的店铺'],
+    processing_shops: ['Procesando tiendas', 'Processing stores', '正在处理店铺'],
+    processing_local_data: ['Procesando datos locales', 'Processing local data', '正在处理本地数据'],
+    authenticating: ['Autenticando tienda', 'Authenticating store', '正在验证店铺身份'],
+    authenticating_local: ['Autenticando para datos locales', 'Authenticating for local data', '正在为本地数据进行身份验证'],
+    waiting_shop_resolution: ['Pendiente al final: resolver tienda', 'Deferred: resolve store', '已延后：解析店铺'],
+    waiting_menu_download: ['UPC faltante en catálogo local', 'UPC missing from local catalog', '本地目录中缺少 UPC'],
+    matching_upcs: ['Relacionando UPCs', 'Matching UPCs', '正在匹配 UPC'],
+    matching_local_upcs: ['Relacionando UPCs locales', 'Matching local UPCs', '正在匹配本地 UPC'],
+    updating_stock: ['Actualizando stock', 'Updating stock', '正在更新库存'],
+    updating_local_stock: ['Apagando ítems locales', 'Turning off local items', '正在下架本地商品'],
+    shop_not_found: ['Tienda no encontrada', 'Store not found', '未找到店铺'],
+    shop_failed: ['Falló una tienda', 'A store failed', '某店铺处理失败'],
+    shop_partial_success: ['Tienda con éxito parcial', 'Store partially succeeded', '店铺部分处理成功'],
+    queue_failed: ['Falló la cola', 'Queue failed', '队列处理失败'],
+    upc_not_found: ['UPC no encontrado', 'UPC not found', '未找到 UPC'],
+    finalizing: ['Finalizando', 'Finalizing', '正在完成'],
+    completed: ['Completada', 'Completed', '已完成'],
+    partial_success: ['Éxito parcial', 'Partial success', '部分成功'],
+    failed: ['Fallida', 'Failed', '失败'],
+    cancelled: ['Cancelada', 'Cancelled', '已取消'],
   };
-  return (labels[key] ?? [key, key])[es ? 0 : 1];
+  return (labels[key] ?? [key, key, key])[languageIndex(lang)];
 }
 
 export default function AutoTurnOffItemsPage() {
   const t = useT();
   const { lang } = useLang();
   const es = lang === 'es';
+  const zh = lang === 'zh-CN';
   const qc = useQueryClient();
   const [poolModal, setPoolModal] = useState(false);
   const [ruleModal, setRuleModal] = useState(false);
@@ -207,6 +214,61 @@ export default function AutoTurnOffItemsPage() {
     poolPaused: 'Pool desactivado: todas las ejecuciones automáticas futuras están pausadas. Las ejecuciones que ya están corriendo continúan, “Ejecutar ahora” sigue disponible y el stock ya actualizado no se revierte.',
     pausedByPool: 'Pausada por el pool',
     storedShops: 'tiendas almacenadas para esta marca', useAllShops: 'Usar todas', addStoredShop: 'Agregar tienda almacenada',
+    required: 'es obligatorio', completeRequired: 'Completa nombre, marca, tiendas y UPCs.',
+    addDailyTime: 'Agrega al menos una hora diaria.', timeFormat: 'Las horas deben usar el formato HH:mm.',
+    stockRange: 'El valor de stock debe ser un entero entre 0 y 2,147,483,647.', endAfterStart: 'La fecha de término debe ser posterior al inicio.',
+    catalogOnly: 'El apagado usa exclusivamente el catálogo local de la marca; si falta un UPC se reporta como fallido y no se descarga el menú.',
+    loading: 'Cargando…', page: 'Página', previousPage: 'Anterior', nextPage: 'Siguiente',
+    viewSubmittedItems: 'Ver items enviados', viewTurnedOffItems: 'Ver items apagados', unnamedItem: 'Sin nombre',
+    asyncPending: 'Solicitud aceptada por setStock; pendiente de confirmación asíncrona.', viewFailedItems: 'Ver items fallidos',
+    missingUpcs: 'no encontrados', allItemsTurnedOff: 'Todos los items fueron apagados', storeExecutionFailed: 'Falló la ejecución de la tienda',
+    mexico: 'México', colombia: 'Colombia', costaRica: 'Costa Rica',
+  } : zh ? {
+    title: '自动下架商品',
+    subtitle: '按规则、品牌、店铺和 UPC 使用可配置的库存值运行 Stock API。',
+    newPool: '新建池', editPool: '编辑池', poolName: '池名称', country: '国家/地区',
+    webhook: 'Webhook（可选）', noWebhook: '无 Webhook', active: '已启用', inactive: '未启用',
+    noPools: '尚未配置池。', rules: '条规则', addRule: '添加规则',
+    editRule: '编辑规则', newRule: '新建规则', ruleName: '规则名称', brand: '品牌',
+    shops: '目标 shop_id', upcs: 'UPC', frequency: '频率',
+    schedule: '调度', intervalSchedule: '按间隔', dailySchedule: '每日指定时间',
+    dailyTimes: '每日时间', addTime: '添加时间', removeTime: '移除',
+    dailyTimesHelp: '时间按池所在国家/地区的时区解释。',
+    endpoint: 'Stock API 版本', asyncEndpoint: 'setStock（异步）', syncEndpoint: 'setstockSync（同步）',
+    stockValue: '库存值', stockValueHelp: '此整数将发送给规则中的每个 UPC。使用 0 下架商品，或使用更大的值设置可用库存。',
+    shopHelp: '每行输入一个 DiDi shop_id，或用逗号分隔。shop_id 必须包含 19 位数字且以 57 开头。',
+    frequencyHelp: 'setStock 的最小间隔为 10 分钟；setstockSync 允许从 1 分钟开始。',
+    syncLimit: 'setstockSync 每条规则最多接受 2,000 个 UPC。',
+    startsAt: '开始下架', endsAt: '自动停止', noEnd: '无结束日期', status: '状态', queued: '排队中', runningStatus: '执行中', scheduledStatus: '已调度',
+    failedStatus: '失败', cancelledStatus: '已取消', stop: '停止', stopping: '正在停止…',
+    partialStatus: '部分成功', shopResults: '店铺结果', hideShopResults: '隐藏店铺',
+    every: '每', minutes: '分钟', hours: '小时', days: '天',
+    selectBrand: '选择品牌', selectAll: '全选', clear: '清除',
+    searchShop: '搜索店铺…', noShops: '未找到该品牌的店铺。',
+    upcHelp: '每行输入一个，或用逗号分隔。所有商品都将使用已配置的库存值发送。',
+    save: '保存', cancel: '取消', run: '立即运行', running: '正在加入队列…',
+    history: '历史记录', hide: '隐藏', edit: '编辑', remove: '删除',
+    next: '下次', last: '上次', never: '从未', stores: '家店铺', items: 'UPC',
+    noRules: '此池尚无规则。', noHistory: '尚无执行记录。',
+    executed: '已执行', scheduled: '已调度', manual: '手动', succeeded: '成功',
+    fullShops: '家完全成功的店铺', partialShops: '家部分成功', failedShops: '家失败的店铺',
+    itemUpdates: '个商品更新成功', itemFailures: '个商品失败',
+    minFrequency: '受 Stock API 限制，最小频率为 10 分钟。',
+    createdBy: '创建者', updatedBy: '修改者', failureReason: '失败原因',
+    successfulItems: '成功商品', failedItems: '失败商品', result: '结果', finished: '完成时间',
+    endHelp: '可选。到达此日期后，规则将被禁用，且不再调度新的执行。',
+    poolPaused: '池已禁用：所有未来的自动执行已暂停。正在运行的执行会继续，“立即运行”仍可用，已更新的库存不会回滚。',
+    pausedByPool: '已由池暂停',
+    storedShops: '家为此品牌存储的店铺', useAllShops: '全部使用', addStoredShop: '添加已存储的店铺',
+    required: '为必填项', completeRequired: '请填写名称、品牌、店铺和 UPC。',
+    addDailyTime: '请至少添加一个每日时间。', timeFormat: '时间必须使用 HH:mm 格式。',
+    stockRange: '库存值必须是 0 到 2,147,483,647 之间的整数。', endAfterStart: '结束日期必须晚于开始日期。',
+    catalogOnly: '下架操作仅使用品牌的本地目录；缺失的 UPC 将记为失败，且不会下载菜单。',
+    loading: '加载中…', page: '页码', previousPage: '上一页', nextPage: '下一页',
+    viewSubmittedItems: '查看已提交的商品', viewTurnedOffItems: '查看已下架的商品', unnamedItem: '未命名商品',
+    asyncPending: 'setStock 已接受请求；正在等待异步确认。', viewFailedItems: '查看失败商品',
+    missingUpcs: '未找到', allItemsTurnedOff: '所有商品已下架', storeExecutionFailed: '店铺执行失败',
+    mexico: '墨西哥', colombia: '哥伦比亚', costaRica: '哥斯达黎加',
   } : {
     title: 'Auto Turn Off Items',
     subtitle: 'Run Stock API with a configurable stock value by rule, brand, stores and UPCs.',
@@ -244,6 +306,15 @@ export default function AutoTurnOffItemsPage() {
     poolPaused: 'Pool disabled: all future automatic runs are paused. Already running executions continue, “Run now” remains available, and previously updated stock is not reverted.',
     pausedByPool: 'Paused by pool',
     storedShops: 'stores stored for this brand', useAllShops: 'Use all', addStoredShop: 'Add stored shop',
+    required: 'is required', completeRequired: 'Complete name, brand, stores and UPCs.',
+    addDailyTime: 'Add at least one daily time.', timeFormat: 'Times must use HH:mm format.',
+    stockRange: 'Stock value must be an integer between 0 and 2,147,483,647.', endAfterStart: 'End date must be later than start date.',
+    catalogOnly: 'Turn off uses only the local brand catalog; a missing UPC is reported as failed and no menu is downloaded.',
+    loading: 'Loading…', page: 'Page', previousPage: 'Previous', nextPage: 'Next',
+    viewSubmittedItems: 'View submitted items', viewTurnedOffItems: 'View turned-off items', unnamedItem: 'Unnamed item',
+    asyncPending: 'Accepted by setStock; asynchronous confirmation is pending.', viewFailedItems: 'View failed items',
+    missingUpcs: 'not found', allItemsTurnedOff: 'All items were turned off', storeExecutionFailed: 'Store execution failed',
+    mexico: 'Mexico', colombia: 'Colombia', costaRica: 'Costa Rica',
   };
 
   const { data: pools = [], isLoading } = useQuery<AutoTurnOffPool[]>({
@@ -342,14 +413,14 @@ export default function AutoTurnOffItemsPage() {
   };
 
   const savePool = async () => {
-    if (!poolForm.name.trim()) return setError(`${copy.poolName} is required`);
+    if (!poolForm.name.trim()) return setError(`${copy.poolName} ${copy.required}`);
     setSaving(true); setError('');
     try {
       const payload = { name: poolForm.name.trim(), country: poolForm.country, active: poolForm.active, webhookId: poolForm.webhookId || null };
       if (editingPool) await autoTurnOffApi.updatePool(editingPool.id, payload);
       else await autoTurnOffApi.createPool(payload);
       await refreshPools(); setPoolModal(false);
-    } catch (err) { setError(errorMessage(err)); } finally { setSaving(false); }
+    } catch (err) { setError(errorMessage(err, lang)); } finally { setSaving(false); }
   };
 
   const saveRule = async () => {
@@ -358,23 +429,23 @@ export default function AutoTurnOffItemsPage() {
     const shopIds = parseShopIds(ruleForm.shopIds);
     const upcs = parseUpcs(ruleForm.upcs);
     if (!ruleForm.name.trim() || !ruleForm.brandId || shopIds.length === 0 || upcs.length === 0 || !ruleForm.startsAt) {
-      return setError(es ? 'Completa nombre, marca, tiendas y UPCs.' : 'Complete name, brand, stores and UPCs.');
+      return setError(copy.completeRequired);
     }
     const minimumMinutes = ruleForm.stockEndpoint === 'setStock' ? 10 : 1;
     if (ruleForm.scheduleMode === 'interval'
       && (!Number.isInteger(intervalMinutes) || intervalMinutes < minimumMinutes)) return setError(copy.frequencyHelp);
     if (ruleForm.scheduleMode === 'daily_times' && executionTimes.length === 0) {
-      return setError(es ? 'Agrega al menos una hora diaria.' : 'Add at least one daily time.');
+      return setError(copy.addDailyTime);
     }
     if (executionTimes.some(value => !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))) {
-      return setError(es ? 'Las horas deben usar el formato HH:mm.' : 'Times must use HH:mm format.');
+      return setError(copy.timeFormat);
     }
     if (ruleForm.stockEndpoint === 'setstockSync' && upcs.length > 2000) return setError(copy.syncLimit);
     if (!Number.isInteger(ruleForm.stockValue) || ruleForm.stockValue < 0 || ruleForm.stockValue > 2147483647) {
-      return setError(es ? 'El valor de stock debe ser un entero entre 0 y 2,147,483,647.' : 'Stock value must be an integer between 0 and 2,147,483,647.');
+      return setError(copy.stockRange);
     }
     if (ruleForm.endsAt && new Date(ruleForm.endsAt) <= new Date(ruleForm.startsAt)) {
-      return setError(es ? 'La fecha de término debe ser posterior al inicio.' : 'End date must be later than start date.');
+      return setError(copy.endAfterStart);
     }
     setSaving(true); setError('');
     try {
@@ -390,7 +461,7 @@ export default function AutoTurnOffItemsPage() {
       if (editingRule) await autoTurnOffApi.updateRule(editingRule.id, payload);
       else await autoTurnOffApi.createRule(rulePoolId, payload);
       await refreshPools(); setRuleModal(false);
-    } catch (err) { setError(errorMessage(err)); } finally { setSaving(false); }
+    } catch (err) { setError(errorMessage(err, lang)); } finally { setSaving(false); }
   };
 
   const togglePool = async (pool: AutoTurnOffPool) => {
@@ -413,7 +484,7 @@ export default function AutoTurnOffItemsPage() {
       await autoTurnOffApi.runRule(rule.id);
       setHistoryPoolId(rule.poolId);
       await qc.invalidateQueries({ queryKey: ['auto-turn-off-executions', rule.poolId] });
-    } catch (err) { setError(errorMessage(err)); } finally { setRunningId(null); }
+    } catch (err) { setError(errorMessage(err, lang)); } finally { setRunningId(null); }
   };
   const stopRule = async (rule: AutoTurnOffRule) => {
     setStoppingId(rule.id); setError('');
@@ -423,7 +494,7 @@ export default function AutoTurnOffItemsPage() {
         refreshPools(),
         qc.invalidateQueries({ queryKey: ['auto-turn-off-executions', rule.poolId] }),
       ]);
-    } catch (err) { setError(errorMessage(err)); } finally { setStoppingId(null); }
+    } catch (err) { setError(errorMessage(err, lang)); } finally { setStoppingId(null); }
   };
 
   return (
@@ -439,13 +510,11 @@ export default function AutoTurnOffItemsPage() {
         </div>
 
         <div style={{ background: 'var(--orange-muted)', color: 'var(--text-secondary)', borderRadius: 8, padding: '10px 14px', fontSize: '0.8rem', marginBottom: 18 }}>
-          {copy.frequencyHelp} {es
-            ? 'El apagado usa exclusivamente el catálogo local de la marca; si falta un UPC se reporta como fallido y no se descarga el menú.'
-            : 'Turn off uses only the local brand catalog; a missing UPC is reported as failed and no menu is downloaded.'}
+          {copy.frequencyHelp} {copy.catalogOnly}
         </div>
         {error && !poolModal && !ruleModal && <div className="error-banner" style={{ marginBottom: 14 }}>{error}</div>}
 
-        {isLoading && <p style={{ color: 'var(--text-muted)' }}>Loading…</p>}
+        {isLoading && <p style={{ color: 'var(--text-muted)' }}>{copy.loading}</p>}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {pools.map(pool => (
             <section key={pool.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -488,18 +557,18 @@ export default function AutoTurnOffItemsPage() {
                         <span style={tag}>{rule.upcs.length} {copy.items}</span>
                         <span style={tag}>{rule.stockEndpoint}</span>
                         <span style={tag}>{copy.stockValue}: {rule.stockValue ?? 0}</span>
-                        <span style={{ ...tag, color: 'var(--orange-dark)' }}>{formatRuleSchedule(rule, es)}</span>
+                        <span style={{ ...tag, color: 'var(--orange-dark)' }}>{formatRuleSchedule(rule, lang)}</span>
                         <span style={{ ...tag, color: !pool.active && !['running', 'pending'].includes(rule.executions?.[0]?.status ?? '') ? 'var(--amber-text)' : rule.executions?.[0] ? statusColor[rule.executions[0].status] : rule.active ? 'var(--green-text)' : 'var(--text-muted)' }}>
-                          {copy.status}: {!pool.active && !['running', 'pending'].includes(rule.executions?.[0]?.status ?? '') ? copy.pausedByPool : rule.executions?.[0] ? executionStatusLabel(rule.executions[0].status, es) : rule.active ? copy.scheduledStatus : copy.inactive}
+                          {copy.status}: {!pool.active && !['running', 'pending'].includes(rule.executions?.[0]?.status ?? '') ? copy.pausedByPool : rule.executions?.[0] ? executionStatusLabel(rule.executions[0].status, lang) : rule.active ? copy.scheduledStatus : copy.inactive}
                         </span>
                       </div>
                       <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 6 }}>
-                        {copy.startsAt}: {new Date(rule.startsAt).toLocaleString()} · {copy.endsAt}: {rule.endsAt ? new Date(rule.endsAt).toLocaleString() : copy.noEnd} · {copy.next}: {new Date(rule.nextRunAt).toLocaleString()} · {copy.last}: {rule.lastRunAt ? new Date(rule.lastRunAt).toLocaleString() : copy.never}
+                        {copy.startsAt}: {new Date(rule.startsAt).toLocaleString(intlLocaleForLang(lang))} · {copy.endsAt}: {rule.endsAt ? new Date(rule.endsAt).toLocaleString(intlLocaleForLang(lang)) : copy.noEnd} · {copy.next}: {new Date(rule.nextRunAt).toLocaleString(intlLocaleForLang(lang))} · {copy.last}: {rule.lastRunAt ? new Date(rule.lastRunAt).toLocaleString(intlLocaleForLang(lang)) : copy.never}
                       </div>
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                        {copy.createdBy}: {rule.createdBy?.name ?? rule.createdBy?.email ?? '—'} ({new Date(rule.createdAt).toLocaleString()}) · {copy.updatedBy}: {rule.updatedBy?.name ?? rule.updatedBy?.email ?? '—'} ({new Date(rule.updatedAt).toLocaleString()})
+                        {copy.createdBy}: {rule.createdBy?.name ?? rule.createdBy?.email ?? '—'} ({new Date(rule.createdAt).toLocaleString(intlLocaleForLang(lang))}) · {copy.updatedBy}: {rule.updatedBy?.name ?? rule.updatedBy?.email ?? '—'} ({new Date(rule.updatedAt).toLocaleString(intlLocaleForLang(lang))})
                       </div>
-                      {(rule.executions?.[0]?.status === 'running' || rule.executions?.[0]?.status === 'pending') && <Progress execution={rule.executions[0]} es={es} />}
+                      {(rule.executions?.[0]?.status === 'running' || rule.executions?.[0]?.status === 'pending') && <Progress execution={rule.executions[0]} lang={lang} />}
                       {rule.executions?.[0] && !['running', 'pending'].includes(rule.executions[0].status) && (
                         <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 6 }}>
                           {rule.executions[0].shopsSucceeded ?? 0} {copy.fullShops} · {rule.executions[0].shopsPartial ?? 0} {copy.partialShops} · {rule.executions[0].shopsFailed ?? 0} {copy.failedShops} · {rule.executions[0].itemsTurnedOff ?? 0} {copy.itemUpdates} · {rule.executions[0].itemsFailed ?? 0} {copy.itemFailures}
@@ -535,18 +604,18 @@ export default function AutoTurnOffItemsPage() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <strong>{execution.rule.name}</strong>
                         <span style={{ color: 'var(--text-muted)' }}>{execution.rule.brand.brandName}</span>
-                        <span style={{ color: statusColor[execution.status], fontWeight: 700 }}>{executionStatusLabel(execution.status, es)}</span>
+                        <span style={{ color: statusColor[execution.status], fontWeight: 700 }}>{executionStatusLabel(execution.status, lang)}</span>
                         <span>{execution.shopsSucceeded ?? 0} {copy.fullShops}</span>
                         <span>{execution.shopsPartial ?? 0} {copy.partialShops}</span>
                         <span>{execution.shopsFailed ?? 0} {copy.failedShops}</span>
                         <span>{execution.itemsTurnedOff ?? 0} {copy.itemUpdates}</span>
                         <span>{execution.itemsFailed ?? 0} {copy.itemFailures}</span>
-                        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>{copy[execution.trigger]} · {new Date(execution.createdAt).toLocaleString()}</span>
+                        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>{copy[execution.trigger]} · {new Date(execution.createdAt).toLocaleString(intlLocaleForLang(lang))}</span>
                         <button className="btn btn-ghost btn-sm" onClick={() => toggleShopResults(execution.id)}>
                           {shopResultsExecutionId === execution.id ? copy.hideShopResults : copy.shopResults}
                         </button>
                       </div>
-                      {(execution.status === 'running' || execution.status === 'pending') && <Progress execution={execution} es={es} />}
+                      {(execution.status === 'running' || execution.status === 'pending') && <Progress execution={execution} lang={lang} />}
                       {execution.errorMessage && (
                         <div style={{ color: execution.status === 'failed' ? 'var(--red-text)' : 'var(--amber-text)', fontSize: '0.72rem', marginTop: 6 }}>
                           {copy.failureReason}: {execution.errorMessage}
@@ -563,7 +632,7 @@ export default function AutoTurnOffItemsPage() {
                           loading={loadingShopResults}
                           page={shopResultsPage}
                           setPage={setShopResultsPage}
-                          es={es}
+                          lang={lang}
                           copy={copy}
                         />
                       )}
@@ -584,7 +653,7 @@ export default function AutoTurnOffItemsPage() {
           <div className="modal-body">
             {error && <div className="error-banner" style={{ marginBottom: 12 }}>{error}</div>}
             <div className="form-group"><label className="form-label">{copy.poolName}</label><input className="form-input" value={poolForm.name} onChange={event => setPoolForm({ ...poolForm, name: event.target.value })} /></div>
-            <div className="form-group"><label className="form-label">{copy.country}</label><select className="form-input" value={poolForm.country} disabled={!!editingPool} onChange={event => setPoolForm({ ...poolForm, country: event.target.value as PoolForm['country'] })}><option value="MX">México</option><option value="CO">Colombia</option><option value="CR">Costa Rica</option></select></div>
+            <div className="form-group"><label className="form-label">{copy.country}</label><select className="form-input" value={poolForm.country} disabled={!!editingPool} onChange={event => setPoolForm({ ...poolForm, country: event.target.value as PoolForm['country'] })}><option value="MX">{copy.mexico}</option><option value="CO">{copy.colombia}</option><option value="CR">{copy.costaRica}</option></select></div>
             <div className="form-group"><label className="form-label">{copy.webhook}</label><select className="form-input" value={poolForm.webhookId} onChange={event => setPoolForm({ ...poolForm, webhookId: event.target.value })}><option value="">{copy.noWebhook}</option>{webhooks.map(webhook => <option key={webhook.id} value={webhook.id}>{webhook.name}</option>)}</select></div>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: '0.84rem' }}><input type="checkbox" checked={poolForm.active} onChange={event => setPoolForm({ ...poolForm, active: event.target.checked })} />{copy.active}</label>
           </div>
@@ -661,7 +730,7 @@ export default function AutoTurnOffItemsPage() {
                 <div style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', borderRadius: 8, padding: 10, marginBottom: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: brandShops.length > 0 ? 8 : 0 }}>
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.76rem', flex: 1 }}>
-                      {loadingBrandShops ? 'Loading…' : `${brandShops.length} ${copy.storedShops}`}
+                      {loadingBrandShops ? copy.loading : `${brandShops.length} ${copy.storedShops}`}
                     </span>
                     {brandShops.length > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRuleForm(current => ({ ...current, shopIds: brandShops.map(shop => shop.shopId).join('\n') }))}>{copy.useAllShops}</button>}
                   </div>
@@ -694,15 +763,15 @@ const pill = (active: boolean) => ({
   background: active ? 'var(--green-bg)' : 'var(--surface-2)', color: active ? 'var(--green-text)' : 'var(--text-muted)',
 } as const);
 
-function Progress({ execution, es }: {
+function Progress({ execution, lang }: {
   execution: Pick<AutoTurnOffExecution, 'currentStep' | 'progressPercent' | 'progressCurrent' | 'progressTotal' | 'status'>;
-  es: boolean;
+  lang: Lang;
 }) {
   const percent = Math.min(100, Math.max(0, execution.progressPercent ?? 0));
   return (
     <div style={{ marginTop: 7 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.7rem', marginBottom: 4 }}>
-        <span>{progressStep(execution.currentStep, es)}</span>
+        <span>{progressStep(execution.currentStep, lang)}</span>
         <span>{percent}% ({execution.progressCurrent ?? 0}/{execution.progressTotal ?? 0})</span>
       </div>
       <div className="auto-turn-off-progress">
@@ -712,7 +781,7 @@ function Progress({ execution, es }: {
   );
 }
 
-function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
+function ShopResultsPanel({ result, loading, page, setPage, lang, copy }: {
   result?: {
     data: AutoTurnOffShopExecution[];
     total: number;
@@ -723,7 +792,7 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
   loading: boolean;
   page: number;
   setPage: Dispatch<SetStateAction<number>>;
-  es: boolean;
+  lang: Lang;
   copy: {
     shopResults: string;
     status: string;
@@ -731,6 +800,18 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
     failedItems: string;
     result: string;
     finished: string;
+    page: string;
+    loading: string;
+    viewSubmittedItems: string;
+    viewTurnedOffItems: string;
+    unnamedItem: string;
+    asyncPending: string;
+    viewFailedItems: string;
+    previousPage: string;
+    nextPage: string;
+    missingUpcs: string;
+    allItemsTurnedOff: string;
+    storeExecutionFailed: string;
   };
 }) {
   const totalPages = Math.max(1, Math.ceil((result?.total ?? 0) / (result?.limit ?? 50)));
@@ -738,10 +819,10 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
     <div style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
       <div style={{ padding: '8px 10px', background: 'var(--surface-2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <strong style={{ fontSize: '0.74rem' }}>{copy.shopResults} ({result?.total ?? 0})</strong>
-        <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>{es ? 'Página' : 'Page'} {page}/{totalPages}</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>{copy.page} {page}/{totalPages}</span>
       </div>
       {loading && !result ? (
-        <div style={{ padding: 12, color: 'var(--text-muted)' }}>{es ? 'Cargando…' : 'Loading…'}</div>
+        <div style={{ padding: 12, color: 'var(--text-muted)' }}>{copy.loading}</div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
@@ -758,15 +839,15 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
             </thead>
             <tbody>
               {(result?.data ?? []).map(shop => {
-                const detail = shopResultDetail(shop, es);
-                const failedItems = shopFailedItems(shop, result?.requestedUpcs ?? []);
+                const detail = shopResultDetail(shop, lang, copy);
+                const failedItems = shopFailedItems(shop, result?.requestedUpcs ?? [], copy.storeExecutionFailed);
                 const successfulItems = shop.result?.successfulItems ?? [];
                 return (
                   <tr key={shop.id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={shopCell}>{shop.shopId}</td>
                     <td style={shopCell}>{shop.appShopId ?? '—'}</td>
                     <td style={{ ...shopCell, color: statusColor[shop.status], fontWeight: 700, whiteSpace: 'nowrap' }}>
-                      {executionStatusLabel(shop.status, es)}
+                      {executionStatusLabel(shop.status, lang)}
                     </td>
                     <td style={{ ...shopCell, color: 'var(--green-text)', textAlign: 'center' }}>{shop.itemsSucceeded}</td>
                     <td style={{ ...shopCell, color: shop.itemsFailed > 0 ? 'var(--red)' : 'var(--text-muted)', textAlign: 'center' }}>{shop.itemsFailed}</td>
@@ -776,18 +857,18 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
                         <details style={{ marginTop: 6 }}>
                           <summary style={{ color: 'var(--green-text)', cursor: 'pointer', fontWeight: 700 }}>
                             {shop.result?.endpoint === 'setStock'
-                              ? (es ? 'Ver items enviados' : 'View submitted items')
-                              : (es ? 'Ver items apagados' : 'View turned-off items')} ({successfulItems.length})
+                              ? copy.viewSubmittedItems
+                              : copy.viewTurnedOffItems} ({successfulItems.length})
                           </summary>
                           <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
                             {successfulItems.map((item, index) => (
                               <div key={`${shop.id}-${item.appItemId}-${index}`} style={{ background: 'var(--green-bg)', borderRadius: 5, padding: '6px 8px' }}>
-                                <strong>{item.name || (es ? 'Sin nombre' : 'Unnamed item')}</strong>
+                                <strong>{item.name || copy.unnamedItem}</strong>
                                 <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
                                   UPC: {item.upc || '—'} · app_item_id: {item.appItemId}
                                 </div>
                                 {item.confirmation === 'accepted' && <div style={{ color: 'var(--amber-text)', marginTop: 2 }}>
-                                  {es ? 'Solicitud aceptada por setStock; pendiente de confirmación asíncrona.' : 'Accepted by setStock; asynchronous confirmation is pending.'}
+                                  {copy.asyncPending}
                                 </div>}
                               </div>
                             ))}
@@ -797,7 +878,7 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
                       {failedItems.length > 0 && (
                         <details style={{ marginTop: 6 }}>
                           <summary style={{ color: 'var(--red)', cursor: 'pointer', fontWeight: 700 }}>
-                            {es ? 'Ver items fallidos' : 'View failed items'} ({failedItems.length})
+                            {copy.viewFailedItems} ({failedItems.length})
                           </summary>
                           <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
                             {failedItems.map((item, index) => (
@@ -811,7 +892,7 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
                       )}
                     </td>
                     <td style={{ ...shopCell, whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
-                      {shop.finishedAt ? new Date(shop.finishedAt).toLocaleString() : '—'}
+                      {shop.finishedAt ? new Date(shop.finishedAt).toLocaleString(intlLocaleForLang(lang)) : '—'}
                     </td>
                   </tr>
                 );
@@ -822,30 +903,33 @@ function ShopResultsPanel({ result, loading, page, setPage, es, copy }: {
       )}
       <div style={{ padding: 8, display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: '1px solid var(--border)' }}>
         <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => setPage(current => Math.max(1, current - 1))}>
-          {es ? 'Anterior' : 'Previous'}
+          {copy.previousPage}
         </button>
         <button className="btn btn-ghost btn-sm" disabled={page >= totalPages} onClick={() => setPage(current => Math.min(totalPages, current + 1))}>
-          {es ? 'Siguiente' : 'Next'}
+          {copy.nextPage}
         </button>
       </div>
     </div>
   );
 }
 
-function shopResultDetail(shop: AutoTurnOffShopExecution, es: boolean) {
+function shopResultDetail(shop: AutoTurnOffShopExecution, lang: Lang, copy: {
+  missingUpcs: string;
+  allItemsTurnedOff: string;
+}) {
   const value = shop.result;
   if (value?.error) return value.error;
   if (value?.missingUpcs?.length) {
-    return `${value.missingUpcs.length} UPC(s) ${es ? 'no encontrados' : 'not found'}: ${value.missingUpcs.slice(0, 5).join(', ')}`;
+    return `${value.missingUpcs.length} UPC(s) ${copy.missingUpcs}: ${value.missingUpcs.slice(0, 5).join(', ')}`;
   }
   if (value?.failedItems?.length) {
     return value.failedItems.slice(0, 5).map(item => `${item.appItemId}: ${item.reason}`).join('; ');
   }
-  if (shop.status === 'done') return es ? 'Todos los items fueron apagados' : 'All items were turned off';
-  return progressStep(shop.currentStep, es);
+  if (shop.status === 'done') return copy.allItemsTurnedOff;
+  return progressStep(shop.currentStep, lang);
 }
 
-function shopFailedItems(shop: AutoTurnOffShopExecution, requestedUpcs: string[]) {
+function shopFailedItems(shop: AutoTurnOffShopExecution, requestedUpcs: string[], fallbackReason: string) {
   const explicit = shop.result?.failedItems ?? [];
   if (explicit.length > 0) {
     return explicit.map(item => ({
@@ -855,7 +939,7 @@ function shopFailedItems(shop: AutoTurnOffShopExecution, requestedUpcs: string[]
     }));
   }
   if (shop.itemsFailed <= 0) return [];
-  const reason = shop.result?.error ?? 'Store execution failed';
+  const reason = shop.result?.error ?? fallbackReason;
   return requestedUpcs.map(upc => ({ kind: 'UPC', id: upc, reason }));
 }
 

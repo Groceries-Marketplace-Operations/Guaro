@@ -1,13 +1,14 @@
-import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, NotFoundException, Param, ParseEnumPipe, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { Response } from 'express';
 import * as ExcelJS from 'exceljs';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage, memoryStorage } from 'multer';
-import { readFile, unlink } from 'fs/promises';
-import { mkdirSync } from 'fs';
+import { stat, unlink } from 'fs/promises';
+import { createReadStream, mkdirSync } from 'fs';
 import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
-import { AccountRole, TaskStatus } from '@prisma/client';
+import { pipeline } from 'stream/promises';
+import { AccountRole, Country, TaskStatus } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -28,6 +29,12 @@ import {
   isAllowedCreateStoresXlsxMime,
   MAX_CREATE_STORES_IMPORT_BYTES,
 } from './create-stores-completion';
+import {
+  buildCreateBrandImportTemplate,
+  CREATE_BRAND_XLSX_MIME,
+  isAllowedCreateBrandXlsxMime,
+  MAX_CREATE_BRAND_IMPORT_BYTES,
+} from './create-brand-completion';
 
 @Controller('tasks')
 @Permissions('tasks.view')
@@ -48,8 +55,19 @@ export class TasksController {
     @Query('status') status?: TaskStatus,
     @Query('brandId') brandId?: string,
     @Query('sectionId') sectionId?: string,
+    @Query('country', new ParseEnumPipe(Country, { optional: true })) country?: Country,
+    @Query('taskTypeId', new ParseUUIDPipe({ optional: true })) taskTypeId?: string,
   ) {
-    return this.tasksService.findAll(u.roles, u.id, u.sectionId, { page, limit, q, status, brandId, sectionId });
+    return this.tasksService.findAll(u.roles, u.id, u.sectionId, {
+      page,
+      limit,
+      q,
+      status,
+      brandId,
+      sectionId,
+      country,
+      taskTypeId,
+    });
   }
 
   @Get('filter-options')
@@ -162,6 +180,16 @@ export class TasksController {
     response.send(buffer);
   }
 
+  @Get('templates/create-brand.xlsx')
+  @Permissions('tasks.execute')
+  @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  async createBrandTemplate(@Res() response: Response) {
+    const buffer = await buildCreateBrandImportTemplate();
+    response.setHeader('Content-Type', CREATE_BRAND_XLSX_MIME);
+    response.setHeader('Content-Disposition', 'attachment; filename="tequila-created-brand-template.xlsx"');
+    response.send(buffer);
+  }
+
   @Get('assignable-bpos')
   @Permissions('tasks.assign')
   @Roles(AccountRole.admin, AccountRole.super_admin)
@@ -242,6 +270,29 @@ export class TasksController {
     return this.tasksService.importCreatedStores(id, stepId, file, u);
   }
 
+  @Post(':id/steps/:stepId/import-created-brand')
+  @Permissions('tasks.execute')
+  @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: MAX_CREATE_BRAND_IMPORT_BYTES, files: 1 },
+    fileFilter: (_, file, cb) => {
+      const validExtension = extname(file.originalname).toLocaleLowerCase('en-US') === '.xlsx';
+      const validMime = isAllowedCreateBrandXlsxMime(file.mimetype);
+      const valid = validExtension && validMime;
+      cb(valid ? null : new BadRequestException('Only .xlsx files are allowed'), valid);
+    },
+  }))
+  importCreatedBrand(
+    @Param('id') id: string,
+    @Param('stepId') stepId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() u: JwtUser,
+  ) {
+    if (!file) throw new BadRequestException('An XLSX file is required');
+    return this.tasksService.importCreatedBrand(id, stepId, file, u);
+  }
+
   @Patch(':id/steps/:stepId/fail')
   @Permissions('tasks.execute')
   @Roles(AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
@@ -306,6 +357,7 @@ export class TasksController {
     @Param('stepId') stepId: string,
     @Query('format') format: string | undefined,
     @CurrentUser() u: JwtUser,
+    @Res() response: Response,
   ) {
     if (format !== undefined && format !== 'xlsx' && format !== 'json') {
       throw new BadRequestException('Export format must be xlsx or json');
@@ -316,22 +368,47 @@ export class TasksController {
       { roles: u.roles, accountId: u.id, sectionId: u.sectionId },
       format ?? 'xlsx',
     );
-    let data: Buffer;
+    let fileSize: number;
     if (content) {
-      data = content;
+      fileSize = content.length;
     } else {
       const filepath = join(process.cwd(), 'uploads', 'exports', fileKey);
       try {
-        data = await readFile(filepath);
+        const fileStats = await stat(filepath);
+        if (!fileStats.isFile()) throw new Error('Export path is not a file');
+        fileSize = fileStats.size;
       } catch {
-        throw new NotFoundException('File not found or already downloaded');
+        throw new NotFoundException('Export file not found');
       }
     }
-    return {
-      fileKey,
-      mimeType,
-      contentBase64: data.toString('base64'),
-    };
+
+    response.setHeader('Content-Type', mimeType);
+    response.setHeader('Content-Disposition', `attachment; filename="${fileKey}"`);
+    response.setHeader('Content-Length', fileSize);
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Accel-Buffering', 'no');
+    response.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length');
+
+    if (content) {
+      response.end(content);
+      return;
+    }
+
+    const filepath = join(process.cwd(), 'uploads', 'exports', fileKey);
+    try {
+      await pipeline(createReadStream(filepath), response);
+    } catch (error) {
+      // A client can cancel a large download after the headers were sent. Do
+      // not let the global JSON error handler write a second response.
+      if (response.headersSent) {
+        if (!response.destroyed) {
+          response.destroy(error instanceof Error ? error : undefined);
+        }
+        return;
+      }
+      throw error;
+    }
   }
 
   @Post('upload-excel')

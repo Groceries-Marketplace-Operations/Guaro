@@ -175,6 +175,33 @@ export interface ApplicationOrderWebhook {
     mxnPerUsdRate: string | null;
     nativeCurrency: 'MXN' | 'COP' | 'CRC';
   };
+  forwarding: ApplicationOrderWebhookForwarding;
+}
+
+export type ApplicationOrderWebhookForwardingDeliveryStatus =
+  | 'queued'
+  | 'processing'
+  | 'delivered'
+  | 'failed';
+
+export interface ApplicationOrderWebhookForwardingDelivery {
+  id: string;
+  status: ApplicationOrderWebhookForwardingDeliveryStatus;
+  attempts: number;
+  httpStatus: number | null;
+  createdAt: string;
+  startedAt: string | null;
+  deliveredAt: string | null;
+  failedAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface ApplicationOrderWebhookForwarding {
+  enabled: boolean;
+  url: string | null;
+  hostname: string | null;
+  updatedAt: string | null;
+  lastDelivery: ApplicationOrderWebhookForwardingDelivery | null;
 }
 
 export type ApplicationShopInventoryFetchStatus = 'never' | 'queued' | 'running' | 'succeeded' | 'failed';
@@ -545,6 +572,30 @@ export interface Task {
   createdAt: string;
 }
 
+export interface TaskFilterOptions {
+  sections: Array<{ id: string; name: string; order: number }>;
+  brands: Array<{ id: string; brandId: string; brandName: string; country: Country }>;
+  taskTypes: Array<{
+    id: string;
+    name: string;
+    sectionId: string;
+    order: number;
+    section: { name: string };
+  }>;
+  countries: Country[];
+}
+
+export interface TaskListParams {
+  page?: number;
+  limit?: number;
+  q?: string;
+  status?: TaskStatus;
+  brandId?: string;
+  sectionId?: string;
+  country?: Country;
+  taskTypeId?: string;
+}
+
 export interface BrandAssignmentRule {
   id: string;
   kaType: KaType;
@@ -751,10 +802,11 @@ export interface AssistantContext {
   templates: Array<{ name: string; url: string; type: string }>;
   formatExamples: Array<{
     title: string;
+    titleZh?: string;
     headers: string[];
     rows: string[][];
     rowLabels: string[];
-    notes: Array<{ es: string; en: string }>;
+    notes: Array<{ es: string; en: string; zh?: string }>;
   }>;
   greeting: string;
 }

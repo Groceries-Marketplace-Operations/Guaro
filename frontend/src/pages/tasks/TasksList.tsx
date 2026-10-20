@@ -10,7 +10,7 @@ import { tasksApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { hasPermission } from '../../auth/permissions';
 import { useT } from '../../i18n';
-import type { Account, Task, TaskStatus, Paginated } from '../../types';
+import type { Account, Country, Task, TaskStatus, Paginated } from '../../types';
 import './tasks-list.css';
 
 const LIMIT = 25;
@@ -38,6 +38,8 @@ export default function TasksList() {
   const [page, setPage] = useState(1);
   const [statusF, setStatusF] = useState<TaskStatus | ''>('');
   const [brandF, setBrandF] = useState('');
+  const [countryF, setCountryF] = useState<Country | ''>('');
+  const [taskTypeF, setTaskTypeF] = useState('');
   const [sectionF, setSectionF] = useState(() => (
     sectionFilterStorageKey ? localStorage.getItem(sectionFilterStorageKey) ?? '' : ''
   ));
@@ -69,6 +71,8 @@ export default function TasksList() {
   });
   const sections = filterOptions?.sections ?? [];
   const brands = filterOptions?.brands ?? [];
+  const countries = filterOptions?.countries ?? [];
+  const taskTypes = filterOptions?.taskTypes ?? [];
   const activeSectionF = !filterOptions || !sectionF || sections.some(section => section.id === sectionF)
     ? sectionF
     : '';
@@ -85,6 +89,8 @@ export default function TasksList() {
     ...(statusF && { status: statusF }),
     ...(brandF && { brandId: brandF }),
     ...(activeSectionF && { sectionId: activeSectionF }),
+    ...(countryF && { country: countryF }),
+    ...(taskTypeF && { taskTypeId: taskTypeF }),
   };
 
   const { data: result, isLoading } = useQuery<Paginated<Task>>({
@@ -149,7 +155,7 @@ export default function TasksList() {
     else eligibleVisibleIds.forEach(id => next.add(id));
     return next;
   });
-  const activeFilterCount = [q.trim(), statusF, activeSectionF, brandF].filter(Boolean).length;
+  const activeFilterCount = [q.trim(), statusF, activeSectionF, brandF, countryF, taskTypeF].filter(Boolean).length;
   const resultStart = total === 0 ? 0 : ((page - 1) * LIMIT) + 1;
   const resultEnd = Math.min(page * LIMIT, total);
   const clearFilters = () => {
@@ -157,6 +163,8 @@ export default function TasksList() {
     setDq('');
     setStatusF('');
     setBrandF('');
+    setCountryF('');
+    setTaskTypeF('');
     setSectionF('');
     setPage(1);
     if (sectionFilterStorageKey) localStorage.removeItem(sectionFilterStorageKey);
@@ -247,6 +255,47 @@ export default function TasksList() {
                 searchPlaceholder={t('pages.tasksList.typeToFindBrand')}
                 emptyMessage={t('pages.tasksList.noBrandsFound')}
                 ariaLabel={t('pages.tasksList.brandFilter')}
+              />
+            </div>
+            <div className="tasks-filter-field">
+              <span>{t('pages.tasksList.countryFilter')}</span>
+              <SearchableSelect
+                {...searchableSelectCopy}
+                value={countryF}
+                options={countries.map(country => ({
+                  value: country,
+                  label: t(`pages.tasksList.country${country}`),
+                  keywords: country,
+                }))}
+                onChange={value => {
+                  setCountryF(value as Country | '');
+                  setPage(1);
+                }}
+                placeholder={t('pages.tasksList.countryAll')}
+                searchPlaceholder={t('pages.tasksList.countryAll')}
+                emptyMessage={t('pages.tasksList.noFilterOptions')}
+                ariaLabel={t('pages.tasksList.countryFilter')}
+              />
+            </div>
+            <div className="tasks-filter-field">
+              <span>{t('pages.tasksList.taskTypeFilter')}</span>
+              <SearchableSelect
+                {...searchableSelectCopy}
+                value={taskTypeF}
+                options={taskTypes.map(taskType => ({
+                  value: taskType.id,
+                  label: taskType.name,
+                  description: taskType.section?.name,
+                  keywords: taskType.section?.name,
+                }))}
+                onChange={value => {
+                  setTaskTypeF(value);
+                  setPage(1);
+                }}
+                placeholder={t('pages.tasksList.taskTypeAll')}
+                searchPlaceholder={t('pages.tasksList.taskTypeAll')}
+                emptyMessage={t('pages.tasksList.noFilterOptions')}
+                ariaLabel={t('pages.tasksList.taskTypeFilter')}
               />
             </div>
           </div>

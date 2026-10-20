@@ -1,0 +1,184 @@
+.order-webhook-forwarding {
+  padding-top: 20px;
+  margin-top: 22px;
+  border-top: 1px solid var(--border);
+}
+
+.order-webhook-forwarding-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 14px;
+}
+
+.order-webhook-forwarding-heading h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: .9rem;
+}
+
+.order-webhook-forwarding-heading p {
+  max-width: 520px;
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: .72rem;
+  line-height: 1.5;
+}
+
+.order-webhook-forwarding-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: .7rem;
+}
+
+.order-webhook-forwarding-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.order-webhook-forwarding-toggle > span {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  transition: background .16s ease, border-color .16s ease;
+}
+
+.order-webhook-forwarding-toggle > span::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform .16s ease, background .16s ease;
+  content: '';
+}
+
+.order-webhook-forwarding-toggle input:checked + span {
+  border-color: var(--green-text);
+  background: var(--green-bg);
+}
+
+.order-webhook-forwarding-toggle input:checked + span::after {
+  background: var(--green-text);
+  transform: translateX(14px);
+}
+
+.order-webhook-forwarding-toggle input:focus-visible + span {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.order-webhook-forwarding-notice {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--blue-border, var(--border));
+  border-radius: var(--radius-md);
+  color: var(--blue-text);
+  background: var(--blue-bg);
+  font-size: .71rem;
+  line-height: 1.45;
+}
+
+.order-webhook-forwarding .form-group { margin-bottom: 10px; }
+
+.order-webhook-forwarding-host {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: .68rem;
+}
+
+.order-webhook-forwarding-host strong {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.order-webhook-forwarding-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.order-webhook-forwarding-success {
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  color: var(--green-text);
+  background: var(--green-bg);
+  font-size: .72rem;
+}
+
+.order-webhook-forwarding-delivery {
+  padding: 12px;
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.order-webhook-forwarding-delivery h4 {
+  margin: 0 0 10px;
+  font-size: .73rem;
+}
+
+.order-webhook-forwarding-delivery > p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: .7rem;
+}
+
+.order-webhook-forwarding-delivery-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.order-webhook-forwarding-delivery-grid span,
+.order-webhook-forwarding-delivery-grid strong {
+  display: block;
+}
+
+.order-webhook-forwarding-delivery-grid span {
+  margin-bottom: 3px;
+  color: var(--text-muted);
+  font-size: .6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.order-webhook-forwarding-delivery-grid strong {
+  overflow-wrap: anywhere;
+  font-size: .7rem;
+}
+
+.order-webhook-forwarding-delivery-grid strong.is-delivered { color: var(--green-text); }
+.order-webhook-forwarding-delivery-grid strong.is-failed { color: var(--red-text); }
+.order-webhook-forwarding-delivery-grid strong.is-queued,
+.order-webhook-forwarding-delivery-grid strong.is-processing { color: var(--blue-text); }
+
+.order-webhook-forwarding-delivery-error {
+  padding: 8px 10px;
+  margin-top: 10px;
+  border-radius: var(--radius-md);
+  color: var(--red-text);
+  background: var(--red-bg);
+  font-size: .68rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 620px) {
+  .order-webhook-forwarding-heading { flex-direction: column; gap: 10px; }
+  .order-webhook-forwarding-delivery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

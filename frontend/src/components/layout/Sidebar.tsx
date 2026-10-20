@@ -191,32 +191,32 @@ export default function Sidebar() {
             <IconBriefcase /> {t('nav.forcedOpenStores')}
           </NavLink>}
           {can('integrations.auto_stores_fetch') && <NavLink to="/integrations/auto-stores-fetch" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconBriefcase /> Auto Stores Fetch
+            <IconBriefcase /> {t('nav.autoStoresFetch')}
           </NavLink>}
           {can('integrations.auto_menu_fetch') && <NavLink to="/integrations/auto-menu-fetch" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconLayers /> Auto Menu Fetch
+            <IconLayers /> {t('nav.autoMenuFetch')}
           </NavLink>}
           {can('integrations.auto_turn_off') && <NavLink to="/integrations/auto-turn-off" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> {t('nav.autoTurnOffItems')}
           </NavLink>}
           {can('integrations.emergencies') && <NavLink to="/integrations/emergencies" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconBriefcase /> Emergencias
+            <IconBriefcase /> {t('nav.emergencies')}
           </NavLink>}
           {can('integrations.promotions_sftp') && <NavLink to="/integrations/complex-promotions-sftp" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconLayers /> Promociones SFTP
+            <IconLayers /> {t('nav.promotionsSftp')}
           </NavLink>}
           {can('integrations.sftp_api') && <NavLink to="/integrations/sftp-api" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconApp /> SFTP to API
+            <IconApp /> {t('nav.sftpApi')}
           </NavLink>}
           {can('integrations.custom') && <NavLink to="/integrations/custom" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconSettings /> Custom integrations
+            <IconSettings /> {t('nav.customIntegrations')}
           </NavLink>}
           {can('integrations.promotion_api') && <NavLink to="/integrations/promotion-api" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconApp /> Promociones API
+            <IconApp /> {t('nav.promotionsApi')}
           </NavLink>}
-          {showStoreOnboarding && <NavLink data-sidebar-base-label={`Store Onboarding${!onboardingFeature.globalEnabled ? ' — OFF' : ''}`} to="/integrations/store-onboarding" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconClipboard /> <span>Store Onboarding</span>
-            {canManageStoreOnboarding && !onboardingFeature.globalEnabled && <span className="sidebar-status-badge" aria-label="Store Onboarding desactivado">OFF</span>}
+          {showStoreOnboarding && <NavLink data-sidebar-base-label={`${t('nav.storeOnboarding')}${!onboardingFeature.globalEnabled ? ' — OFF' : ''}`} to="/integrations/store-onboarding" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconClipboard /> <span>{t('nav.storeOnboarding')}</span>
+            {canManageStoreOnboarding && !onboardingFeature.globalEnabled && <span className="sidebar-status-badge" aria-label={`${t('nav.storeOnboarding')} — OFF`}>OFF</span>}
           </NavLink>}
         </div>
       )}
@@ -235,7 +235,7 @@ export default function Sidebar() {
             </NavLink>
           )}
           {can('sftp_applications.manage') && <NavLink to="/sftp-applications" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconApp /> Aplicaciones SFTP
+            <IconApp /> {t('nav.sftpApplications')}
           </NavLink>}
           {can('bpo.team') && (
             <NavLink to="/bpo-management" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
@@ -251,10 +251,10 @@ export default function Sidebar() {
             <IconSettings /> {t('nav.config')}
           </NavLink>}
           {isSA && <NavLink to="/role-access" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconUsers /> Roles y permisos
+            <IconUsers /> {t('nav.rolesPermissions')}
           </NavLink>}
           {isSA && <NavLink to="/admin/app-shop-inventory" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <IconApp /> Inventario de tiendas
+            <IconApp /> {t('nav.shopInventory')}
           </NavLink>}
           {can('settings.manage') && (
             <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>

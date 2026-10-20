@@ -4,6 +4,7 @@ import Topbar from '../components/layout/Topbar';
 import Modal from '../components/ui/Modal';
 import Paginator from '../components/ui/Paginator';
 import '../components/applications/order-webhook-logs.css';
+import OrderWebhookForwardingForm from '../components/applications/OrderWebhookForwardingForm';
 import { applicationsApi } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useT } from '../i18n';
@@ -624,6 +625,16 @@ export default function ApplicationsPage() {
                   </button>
                 </div>
               )}
+
+              <OrderWebhookForwardingForm
+                key={webhookApp.id}
+                applicationId={webhookApp.id}
+                forwarding={webhookQuery.data.forwarding}
+                onSaved={updatedWebhook => {
+                  qc.setQueryData(['application-order-webhook', webhookApp.id], updatedWebhook);
+                  qc.invalidateQueries({ queryKey: ['applications'] });
+                }}
+              />
             </>
           )}
           </div>

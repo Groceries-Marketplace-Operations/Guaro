@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { tasksApi } from '../../api';
 import { useLang } from '../../i18n';
@@ -53,6 +53,11 @@ function ValidationDetails({ validation }: { validation: FileValidationResult })
 export default function ValidationAssistant({ taskTypeId, readiness, latestValidation }: Props) {
   const { lang } = useLang();
   const es = lang === 'es';
+  const zh = lang === 'zh-CN';
+  const localized = useCallback(
+    (english: string, spanish: string, chinese: string) => zh ? chinese : es ? spanish : english,
+    [es, zh],
+  );
   const [collapsed, setCollapsed] = useState(false);
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -80,28 +85,32 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
     return [
       {
         status: context ? 'passed' as const : 'warning' as const,
-        label: es ? 'Permiso de acceso' : 'Access permission',
-        detail: context?.accessMessage ?? (es ? 'Comprobando acceso…' : 'Checking access…'),
+        label: localized('Access permission', 'Permiso de acceso', '访问权限'),
+        detail: context?.accessMessage ?? localized('Checking access…', 'Comprobando acceso…', '正在检查访问权限…'),
       },
       {
         status: requiredReady ? 'passed' as const : 'warning' as const,
-        label: es ? 'Campos requeridos' : 'Required fields',
+        label: localized('Required fields', 'Campos requeridos', '必填字段'),
         detail: requiredReady
-          ? (es ? 'Completos' : 'Complete')
-          : (es ? `Faltan: ${readiness.missingRequired.join(', ')}` : `Missing: ${readiness.missingRequired.join(', ')}`),
+          ? localized('Complete', 'Completos', '已完成')
+          : localized(`Missing: ${readiness.missingRequired.join(', ')}`, `Faltan: ${readiness.missingRequired.join(', ')}`, `缺少：${readiness.missingRequired.join(', ')}`),
       },
       {
         status: readiness.hasUrlErrors ? 'failed' as const : 'passed' as const,
-        label: es ? 'Enlaces' : 'Links',
-        detail: readiness.hasUrlErrors ? (es ? 'Hay una URL inválida' : 'An invalid URL needs attention') : (es ? 'Formato correcto' : 'Format is valid'),
+        label: localized('Links', 'Enlaces', '链接'),
+        detail: readiness.hasUrlErrors
+          ? localized('An invalid URL needs attention', 'Hay una URL inválida', '存在需要处理的无效网址')
+          : localized('Format is valid', 'Formato correcto', '格式有效'),
       },
       ...(readiness.fileFields > 0 ? [{
         status: fileReady ? 'passed' as const : 'warning' as const,
-        label: es ? 'Archivo Excel' : 'Excel file',
-        detail: fileReady ? (es ? 'Validado por el servidor' : 'Validated by the server') : (es ? 'Pendiente de validar' : 'Waiting for validation'),
+        label: localized('Excel file', 'Archivo Excel', 'Excel 文件'),
+        detail: fileReady
+          ? localized('Validated by the server', 'Validado por el servidor', '服务器已验证')
+          : localized('Waiting for validation', 'Pendiente de validar', '等待验证'),
       }] : []),
     ];
-  }, [context, readiness, es]);
+  }, [context, readiness, localized]);
 
   const sendQuestion = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -118,7 +127,7 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
       setMessages(current => [...current, {
         id: uid(),
         role: 'assistant',
-        text: message ?? (es ? 'No pude responder ahora. Las validaciones del formulario siguen activas.' : 'I could not answer just now. Form validation is still active.'),
+        text: message ?? localized('I could not answer just now. Form validation is still active.', 'No pude responder ahora. Las validaciones del formulario siguen activas.', '暂时无法回答。表单验证仍然有效。'),
       }]);
     } finally {
       setAsking(false);
@@ -126,7 +135,7 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
   };
 
   return (
-    <aside className={`validation-assistant ${collapsed ? 'is-collapsed' : ''}`} aria-label={es ? 'Asistente de validación Naranja' : 'Naranja validation assistant'}>
+    <aside className={`validation-assistant ${collapsed ? 'is-collapsed' : ''}`} aria-label={localized('Naranja validation assistant', 'Asistente de validación Naranja', 'Naranja 验证助手')}>
       <header className="validation-assistant-header">
         <div className={`validation-assistant-avatar ${mascotState}`} aria-hidden="true">
           <span className="validation-assistant-ring" />
@@ -134,7 +143,7 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
         </div>
         <div className="validation-assistant-heading">
           <strong>Naranja</strong>
-          <span>{es ? 'Asistente de validación' : 'Validation assistant'}</span>
+          <span>{localized('Validation assistant', 'Asistente de validación', '验证助手')}</span>
         </div>
         <button type="button" className="assistant-collapse" onClick={() => setCollapsed(value => !value)} aria-expanded={!collapsed}>
           {collapsed ? '+' : '−'}
@@ -143,8 +152,8 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
 
       {!collapsed && (
         <>
-          <section className="assistant-readiness" aria-label={es ? 'Validaciones del sistema' : 'System validations'}>
-            <div className="assistant-section-label">{es ? 'Validaciones del sistema' : 'System checks'}</div>
+          <section className="assistant-readiness" aria-label={localized('System validations', 'Validaciones del sistema', '系统验证')}>
+            <div className="assistant-section-label">{localized('System checks', 'Validaciones del sistema', '系统检查')}</div>
             {readinessItems.map(item => (
               <div className="assistant-readiness-item" key={item.label}>
                 <CheckIcon status={item.status} />
@@ -161,21 +170,23 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
             )}
             {error && (
               <div className="assistant-message assistant-message-bot is-error">
-                {es ? 'No pude confirmar tu acceso a esta tarea.' : 'I could not confirm access to this task.'}
+                {localized('I could not confirm access to this task.', 'No pude confirmar tu acceso a esta tarea.', '无法确认你对此任务的访问权限。')}
               </div>
             )}
             {context && (
               <>
                 <div className="assistant-message assistant-message-bot">
-                  <p>{es
-                    ? `Hola, soy Naranja. Validaré “${context.taskTypeName}” contigo antes de crearla. Puedes preguntarme por la plantilla, columnas, permisos o errores.`
-                    : `Hi, I’m Naranja. I’ll validate “${context.taskTypeName}” with you before it is created. Ask me about the template, columns, permissions, or errors.`}
+                  <p>{localized(
+                    `Hi, I’m Naranja. I’ll validate “${context.taskTypeName}” with you before it is created. Ask me about the template, columns, permissions, or errors.`,
+                    `Hola, soy Naranja. Validaré “${context.taskTypeName}” contigo antes de crearla. Puedes preguntarme por la plantilla, columnas, permisos o errores.`,
+                    `你好，我是 Naranja。在创建“${context.taskTypeName}”之前，我会与你一起完成验证。你可以询问模板、列、权限或错误。`,
+                  )}
                   </p>
                 </div>
                 {context.formatExamples.map(example => (
                   <div className="assistant-message assistant-message-bot assistant-format-example" key={example.title}>
-                    <strong>{es ? 'Ejemplo y configuraciones válidas' : 'Example and valid configurations'}</strong>
-                    <span className="assistant-example-title">{example.title}</span>
+                    <strong>{localized('Example and valid configurations', 'Ejemplo y configuraciones válidas', '示例和有效配置')}</strong>
+                    <span className="assistant-example-title">{zh ? example.titleZh ?? example.title : example.title}</span>
                     <div className="assistant-example-table-wrap">
                       <table>
                         <thead><tr>{example.headers.map(header => <th key={header}>{header}</th>)}</tr></thead>
@@ -184,7 +195,7 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
                         </tr>)}</tbody>
                       </table>
                     </div>
-                    <ul>{example.notes.map(note => <li key={note.en}>{es ? note.es : note.en}</li>)}</ul>
+                    <ul>{example.notes.map(note => <li key={note.en}>{zh ? note.zh ?? note.en : es ? note.es : note.en}</li>)}</ul>
                   </div>
                 ))}
               </>
@@ -198,8 +209,12 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
             {latestValidation && (
               <div className="assistant-message assistant-message-bot">
                 <p>{latestValidation.canProceed
-                  ? (es ? `Listo. ${latestValidation.stats.validRows} fila(s) pasaron la validación y el archivo quedó preparado.` : `Ready. ${latestValidation.stats.validRows} row(s) passed validation and the file is prepared.`)
-                  : (es ? 'Encontré problemas en el archivo. Te muestro exactamente qué debes corregir.' : 'I found issues in the file. Here is exactly what needs to be corrected.')}
+                  ? localized(
+                    `Ready. ${latestValidation.stats.validRows} row(s) passed validation and the file is prepared.`,
+                    `Listo. ${latestValidation.stats.validRows} fila(s) pasaron la validación y el archivo quedó preparado.`,
+                    `完成。${latestValidation.stats.validRows} 行已通过验证，文件已准备就绪。`,
+                  )
+                  : localized('I found issues in the file. Here is exactly what needs to be corrected.', 'Encontré problemas en el archivo. Te muestro exactamente qué debes corregir.', '文件中存在问题。以下是需要修正的具体内容。')}
                 </p>
                 <ValidationDetails validation={latestValidation} />
               </div>
@@ -215,11 +230,11 @@ export default function ValidationAssistant({ taskTypeId, readiness, latestValid
             <input
               value={question}
               onChange={event => setQuestion(event.target.value)}
-              placeholder={es ? 'Pregunta sobre el formato…' : 'Ask about the format…'}
-              aria-label={es ? 'Hablar con Naranja' : 'Talk to Naranja'}
+              placeholder={localized('Ask about the format…', 'Pregunta sobre el formato…', '询问格式…')}
+              aria-label={localized('Talk to Naranja', 'Hablar con Naranja', '与 Naranja 对话')}
               maxLength={500}
             />
-            <button type="submit" disabled={!question.trim() || asking} aria-label={es ? 'Enviar pregunta' : 'Send question'}>↑</button>
+            <button type="submit" disabled={!question.trim() || asking} aria-label={localized('Send question', 'Enviar pregunta', '发送问题')}>↑</button>
           </form>
         </>
       )}

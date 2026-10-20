@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { integrationsApi } from '../../api';
-import { useLang, useT } from '../../i18n';
+import { intlLocaleForLang, useLang, useT } from '../../i18n';
 import type {
   AutoOpenPool,
   AutoOpenPoolStore,
@@ -83,7 +83,7 @@ export default function AutoOpenPoolStoresExplorer({ pool }: Props) {
   const [inclusion, setInclusion] = useState<InclusionFilter>('');
   const [page, setPage] = useState(1);
   const regionId = `auto-open-pool-stores-${pool.id}`;
-  const number = useMemo(() => new Intl.NumberFormat(lang === 'es' ? 'es-MX' : 'en-US'), [lang]);
+  const number = useMemo(() => new Intl.NumberFormat(intlLocaleForLang(lang)), [lang]);
   const membershipKey = useMemo(
     () => pool.brands.map(membership => membership.brandId).sort().join('|'),
     [pool.brands],
@@ -246,7 +246,7 @@ export default function AutoOpenPoolStoresExplorer({ pool }: Props) {
               {storesQuery.isFetching && !storesQuery.isLoading && <span>{t('pages.integrations.poolStores.updating')}</span>}
               {response?.calculatedAt && (
                 <span>{t('pages.integrations.poolStores.calculatedAt', {
-                  date: new Date(response.calculatedAt).toLocaleString(lang === 'es' ? 'es-MX' : 'en-US'),
+                  date: new Date(response.calculatedAt).toLocaleString(intlLocaleForLang(lang)),
                 })}</span>
               )}
             </div>

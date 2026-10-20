@@ -1,12 +1,20 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 import { useLang, useT } from '../../i18n';
+import type { Lang } from '../../i18n';
 import ThemeSelector from '../ui/ThemeSelector';
 import { useSidebar } from './SidebarContext';
 
 interface Props {
   breadcrumb?: { label: string; href?: string }[];
 }
+
+const LanguageIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+  </svg>
+);
 
 export default function Topbar({ breadcrumb = [] }: Props) {
   const { account } = useAuth();
@@ -52,13 +60,20 @@ export default function Topbar({ breadcrumb = [] }: Props) {
 
       <div className="topbar-right">
         <ThemeSelector compact />
-        <button
-          onClick={() => setLang(lang === 'en' ? 'es' : 'en')}
-          className="btn btn-ghost btn-sm"
-          style={{ fontWeight: 600, fontSize: '0.75rem', letterSpacing: '0.04em', padding: '3px 10px' }}
-        >
-          {lang === 'en' ? 'ES' : 'EN'}
-        </button>
+        <label className="theme-selector language-selector is-compact">
+          <LanguageIcon />
+          <span className="sr-only">{t('language.label')}</span>
+          <select
+            value={lang}
+            onChange={event => setLang(event.target.value as Lang)}
+            aria-label={t('language.label')}
+            title={t('language.label')}
+          >
+            <option value="en">EN</option>
+            <option value="es">ES</option>
+            <option value="zh-CN">简体中文</option>
+          </select>
+        </label>
         <span className={`role-badge ${topRole}`}>{topRole.replace('_', ' ')}</span>
         <div className="avatar" title={account?.name}>{initials}</div>
       </div>

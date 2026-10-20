@@ -4,6 +4,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
   PayloadTooLargeException,
@@ -29,6 +30,7 @@ import {
   getAuthToken,
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
+import { DidiOrderForwardingService } from './didi-order-forwarding.service';
 
 export const DIDI_ORDER_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 export const DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS = 10_000;
@@ -239,6 +241,7 @@ export function parseDidiOrderWebhookPayload(rawBody: Buffer): DidiOrderWebhookP
 
 @Injectable()
 export class DidiOrderWebhooksService {
+  private readonly logger = new Logger(DidiOrderWebhooksService.name);
   private readonly encryptionKey: string;
   private readonly shopListCoordinator: DidiStoreBindingCoordinator;
   private readonly remoteShopResolutionCache = new Map<
@@ -255,6 +258,7 @@ export class DidiOrderWebhooksService {
     private readonly prisma: PrismaService,
     config: ConfigService,
     @Optional() shopListCoordinator?: DidiStoreBindingCoordinator,
+    @Optional() private readonly orderForwarding?: DidiOrderForwardingService,
   ) {
     this.encryptionKey = config.getOrThrow('APP_SECRET_ENCRYPTION_KEY');
     this.shopListCoordinator = shopListCoordinator ?? new DidiStoreBindingCoordinator();
@@ -304,6 +308,30 @@ export class DidiOrderWebhooksService {
       const payload = parseDidiOrderWebhookRoot(webhookRoot);
       if (payload.appId !== application.appId) {
         throw new BadRequestException('Payload app_id does not match webhook application');
+      }
+
+      // Durably persist the canonical body before shop resolution. Publishing
+      // that row to Redis remains detached, so queue latency/outage cannot
+      // consume the order-confirmation budget. Persistence errors are isolated
+      // as well: forwarding can never alter the DiDi confirmation outcome.
+      let forwardingDeliveryId: string | null | undefined;
+      try {
+        forwardingDeliveryId = await this.orderForwarding?.persist({
+          applicationId: application.id,
+          requestId: requestLog.id,
+          orderId: payload.orderId,
+          eventType: payload.type,
+          rawBody,
+        });
+      } catch {
+        this.logger.warn('An order webhook forwarding delivery could not be persisted');
+      }
+      if (forwardingDeliveryId) {
+        try {
+          this.orderForwarding?.publish(forwardingDeliveryId);
+        } catch {
+          this.logger.warn('An order webhook forwarding delivery could not be published');
+        }
       }
 
       stage = 'shop_resolution';

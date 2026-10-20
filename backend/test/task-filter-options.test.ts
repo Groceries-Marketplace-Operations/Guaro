@@ -1,23 +1,27 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { AccountRole } from '@prisma/client';
+import { AccountRole, Country, FormFieldTipo } from '@prisma/client';
 import { TasksService } from '../src/tasks/tasks.service';
 
 test('task filter brands are derived from the viewer task scope', async () => {
   const taskScope = { AND: [{ createdById: 'account-1' }] };
-  let brandGroupQuery: Record<string, unknown> | undefined;
+  let taskTypeQuery: Record<string, unknown> | undefined;
   let brandQuery: Record<string, unknown> | undefined;
+  let formCountryQuery: Record<string, unknown> | undefined;
   const prisma = {
     section: {
       findMany: async () => [{ id: 'section-1', name: 'Operations', order: 1 }],
     },
-    task: {
-      groupBy: async (args: Record<string, unknown>) => {
-        brandGroupQuery = args;
-        return [
-          { brandId: 'brand-2' },
-          { brandId: 'brand-1' },
-        ];
+    taskType: {
+      findMany: async (args: Record<string, unknown>) => {
+        taskTypeQuery = args;
+        return [{
+          id: 'task-type-1',
+          name: 'Create Stores',
+          sectionId: 'section-1',
+          order: 2,
+          section: { name: 'Operations' },
+        }];
       },
     },
     brand: {
@@ -27,6 +31,12 @@ test('task filter brands are derived from the viewer task scope', async () => {
           { id: 'brand-1', brandId: 'EXT-1', brandName: 'Alpha', country: 'CO' },
           { id: 'brand-2', brandId: 'EXT-2', brandName: 'Zulu', country: 'MX' },
         ];
+      },
+    },
+    formValue: {
+      findMany: async (args: Record<string, unknown>) => {
+        formCountryQuery = args;
+        return [{ valor: Country.CR }, { valor: Country.MX }, { valor: 'UNKNOWN' }];
       },
     },
   };
@@ -42,23 +52,66 @@ test('task filter brands are derived from the viewer task scope', async () => {
   const result = await service.filterOptions([AccountRole.user], 'account-1', 'section-1');
 
   assert.deepEqual(result.brands.map(brand => brand.brandName), ['Alpha', 'Zulu']);
-  assert.deepEqual(brandGroupQuery?.where, {
-    AND: [taskScope, { brandId: { not: null } }],
+  assert.deepEqual(result.taskTypes, [{
+    id: 'task-type-1',
+    name: 'Create Stores',
+    sectionId: 'section-1',
+    order: 2,
+    section: { name: 'Operations' },
+  }]);
+  assert.deepEqual(result.countries, [Country.CO, Country.CR, Country.MX]);
+  assert.deepEqual(taskTypeQuery, {
+    where: { tasks: { some: taskScope } },
+    select: {
+      id: true,
+      name: true,
+      sectionId: true,
+      order: true,
+      section: { select: { name: true } },
+    },
+    orderBy: [{ name: 'asc' }, { order: 'asc' }],
   });
-  assert.deepEqual(brandGroupQuery?.by, ['brandId']);
   assert.deepEqual(brandQuery, {
-    where: { id: { in: ['brand-2', 'brand-1'] } },
+    where: { tasks: { some: taskScope } },
     select: { id: true, brandId: true, brandName: true, country: true },
     orderBy: [{ brandName: 'asc' }, { id: 'asc' }],
   });
+  assert.deepEqual(formCountryQuery, {
+    where: {
+      task: { AND: [taskScope, { brandId: null }] },
+      formField: { tipo: FormFieldTipo.select_country },
+      valor: { not: null },
+    },
+    select: { valor: true },
+    distinct: ['valor'],
+  });
 });
 
-test('task filter options skip the brand lookup when the task scope has no brands', async () => {
-  let brandLookupCount = 0;
+test('task filter options return empty scoped collections when the viewer has no visible tasks', async () => {
+  const taskScope = { AND: [] };
+  let taskTypeQuery: Record<string, unknown> | undefined;
+  let brandQuery: Record<string, unknown> | undefined;
+  let formCountryQuery: Record<string, unknown> | undefined;
   const prisma = {
     section: { findMany: async () => [] },
-    task: { groupBy: async () => [] },
-    brand: { findMany: async () => { brandLookupCount += 1; return []; } },
+    taskType: {
+      findMany: async (args: Record<string, unknown>) => {
+        taskTypeQuery = args;
+        return [];
+      },
+    },
+    brand: {
+      findMany: async (args: Record<string, unknown>) => {
+        brandQuery = args;
+        return [];
+      },
+    },
+    formValue: {
+      findMany: async (args: Record<string, unknown>) => {
+        formCountryQuery = args;
+        return [];
+      },
+    },
   };
   const service = new TasksService(
     prisma as never,
@@ -67,12 +120,18 @@ test('task filter options skip the brand lookup when the task scope has no brand
     { accessibleSectionIds: async () => [] } as never,
     {} as never,
   );
-  (service as unknown as { taskWhere: () => Promise<Record<string, unknown>> }).taskWhere = async () => ({ AND: [] });
+  (service as unknown as { taskWhere: () => Promise<Record<string, unknown>> }).taskWhere = async () => taskScope;
 
   const result = await service.filterOptions([AccountRole.user], 'account-1', null);
 
-  assert.deepEqual(result.brands, []);
-  assert.equal(brandLookupCount, 0);
+  assert.deepEqual(result, { sections: [], brands: [], taskTypes: [], countries: [] });
+  assert.deepEqual(taskTypeQuery?.where, { tasks: { some: taskScope } });
+  assert.deepEqual(brandQuery?.where, { tasks: { some: taskScope } });
+  assert.deepEqual(formCountryQuery?.where, {
+    task: { AND: [taskScope, { brandId: null }] },
+    formField: { tipo: FormFieldTipo.select_country },
+    valor: { not: null },
+  });
 });
 
 test('task shop options are bounded and search all supported store identifiers', async () => {

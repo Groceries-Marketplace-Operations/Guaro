@@ -7,6 +7,11 @@ import { decrypt, encrypt } from '../common/crypto.util';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import { UpdateOrderWebhookFinanceDto } from './dto/update-order-webhook-finance.dto';
+import { UpdateOrderWebhookForwardingDto } from './dto/update-order-webhook-forwarding.dto';
+import {
+  ForwardingUrlError,
+  validateForwardingUrl,
+} from '../didi-order-webhooks/didi-order-forwarding-url.util';
 
 const SELECT_SAFE = {
   id: true, appId: true, appName: true, country: true, didiBindingEnvironment: true,
@@ -34,10 +39,12 @@ const ORDER_WEBHOOK_SELECT = {
 export class ApplicationsService {
   private readonly encKey: string;
   private readonly frontendUrl: string;
+  private readonly production: boolean;
 
   constructor(private prisma: PrismaService, config: ConfigService) {
     this.encKey = config.getOrThrow('APP_SECRET_ENCRYPTION_KEY');
     this.frontendUrl = config.get<string>('FRONTEND_URL', 'http://localhost:5173/guaro').replace(/\/+$/, '');
+    this.production = config.get<string>('NODE_ENV') === 'production';
   }
 
   async findAll(filters: { page?: number; limit?: number; q?: string; country?: Country } = {}) {
@@ -74,6 +81,13 @@ export class ApplicationsService {
 
     if (existing) {
       await this.assertCountryCanChange(existing.id, dto.country);
+      // A restored credential is a new trust boundary. Keep any previously
+      // configured receiver URL encrypted for an administrator to review, but
+      // never reactivate it implicitly with the Application.
+      await this.prisma.didiOrderWebhookForwardTarget.updateMany({
+        where: { applicationId: existing.id },
+        data: { enabled: false, revision: { increment: 1 } },
+      });
       return this.prisma.application.update({
         where: { id: existing.id },
         data: {
@@ -159,6 +173,12 @@ export class ApplicationsService {
 
   async remove(id: string) {
     await this.findOne(id);
+    // Fail closed before removing the Application. If the following soft
+    // delete fails, forwarding still remains safely disabled.
+    await this.prisma.didiOrderWebhookForwardTarget.updateMany({
+      where: { applicationId: id },
+      data: { enabled: false, revision: { increment: 1 } },
+    });
     return this.prisma.application.update({
       where: { id },
       data: {
@@ -313,6 +333,72 @@ export class ApplicationsService {
     return this.orderWebhookResponse(updated);
   }
 
+  async updateOrderWebhookForwarding(
+    id: string,
+    dto: UpdateOrderWebhookForwardingDto,
+  ) {
+    await this.orderWebhookApplication(id);
+    const existing = await this.prisma.didiOrderWebhookForwardTarget.findUnique({
+      where: { applicationId: id },
+      select: {
+        id: true,
+        enabled: true,
+        revision: true,
+        urlEncrypted: true,
+      },
+    });
+
+    let validated: ReturnType<typeof validateForwardingUrl> | undefined;
+    if (dto.url !== undefined) {
+      try {
+        validated = validateForwardingUrl(dto.url, this.production);
+      } catch (error) {
+        if (error instanceof ForwardingUrlError) {
+          throw new BadRequestException(error.message);
+        }
+        throw error;
+      }
+    }
+    if (!existing && !validated) {
+      throw new BadRequestException('Forwarding URL is required when creating the target');
+    }
+
+    if (existing) {
+      let urlChanged = false;
+      if (validated) {
+        try {
+          urlChanged = decrypt(existing.urlEncrypted, this.encKey) !== validated.url;
+        } catch {
+          urlChanged = true;
+        }
+      }
+      const configurationChanged = urlChanged || existing.enabled !== dto.enabled;
+      await this.prisma.didiOrderWebhookForwardTarget.update({
+        where: { id: existing.id },
+        data: {
+          enabled: dto.enabled,
+          ...(configurationChanged ? { revision: { increment: 1 } } : {}),
+          ...(validated
+            ? {
+              urlEncrypted: encrypt(validated.url, this.encKey),
+              hostname: validated.hostname,
+            }
+            : {}),
+        },
+      });
+    } else {
+      await this.prisma.didiOrderWebhookForwardTarget.create({
+        data: {
+          applicationId: id,
+          enabled: dto.enabled,
+          urlEncrypted: encrypt(validated!.url, this.encKey),
+          hostname: validated!.hostname,
+        },
+      });
+    }
+    return this.getOrderWebhook(id);
+  }
+
   private async orderWebhookApplication(id: string) {
     const application = await this.prisma.application.findUnique({
       where: { id },
@@ -326,7 +412,7 @@ export class ApplicationsService {
     application: Awaited<ReturnType<ApplicationsService['orderWebhookApplication']>>,
     clearToken?: string,
   ) {
-    const [lastReceived, lastAccepted, lastFailed] = await Promise.all([
+    const [lastReceived, lastAccepted, lastFailed, forwarding] = await Promise.all([
       this.prisma.didiOrderWebhookEvent.findFirst({
         where: { applicationId: application.id },
         orderBy: { createdAt: 'desc' },
@@ -342,6 +428,7 @@ export class ApplicationsService {
         orderBy: { failedAt: 'desc' },
         select: { errorMessage: true, remoteErrmsg: true },
       }),
+      this.orderWebhookForwardingResponse(application.id),
     ]);
     const common = {
       applicationId: application.id,
@@ -363,6 +450,7 @@ export class ApplicationsService {
             ? 'COP'
             : 'CRC',
       },
+      forwarding,
     };
 
     if (
@@ -397,6 +485,56 @@ export class ApplicationsService {
       ...common,
       enabled: true,
       url: `${this.frontendUrl}/api/didi-order-webhooks/${token}`,
+    };
+  }
+
+  private async orderWebhookForwardingResponse(applicationId: string) {
+    const target = await this.prisma.didiOrderWebhookForwardTarget.findUnique({
+      where: { applicationId },
+      select: {
+        enabled: true,
+        urlEncrypted: true,
+        hostname: true,
+        updatedAt: true,
+        deliveries: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            status: true,
+            attempts: true,
+            httpStatus: true,
+            createdAt: true,
+            startedAt: true,
+            deliveredAt: true,
+            failedAt: true,
+            errorMessage: true,
+          },
+        },
+      },
+    });
+    if (!target) {
+      return {
+        enabled: false,
+        url: null,
+        hostname: null,
+        updatedAt: null,
+        lastDelivery: null,
+      };
+    }
+
+    let url: string;
+    try {
+      url = decrypt(target.urlEncrypted, this.encKey);
+    } catch {
+      throw new InternalServerErrorException('Forwarding URL could not be decrypted');
+    }
+    return {
+      enabled: target.enabled,
+      url,
+      hostname: target.hostname,
+      updatedAt: target.updatedAt,
+      lastDelivery: target.deliveries[0] ?? null,
     };
   }
 

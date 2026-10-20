@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { integrationsApi, webhooksApi, brandsApi } from '../../api';
-import { useLang, useT } from '../../i18n';
+import { intlLocaleForLang, useLang, useT } from '../../i18n';
 import type { AutoOpenCapabilities, AutoOpenPool, AutoOpenExecution, Webhook, Brand, Country } from '../../types';
 import AutoOpenPoolStoresExplorer from './AutoOpenPoolStoresExplorer';
 import './auto-open.css';
@@ -265,7 +265,7 @@ export default function IntegrationsPage() {
     ? allBrands.filter(brand => brand.kaType === 'KA')
     : allBrands;
 
-  const number = useMemo(() => new Intl.NumberFormat(lang === 'es' ? 'es-MX' : 'en-US'), [lang]);
+  const number = useMemo(() => new Intl.NumberFormat(intlLocaleForLang(lang)), [lang]);
   const poolOverview = useMemo(() => pools.reduce((summary, pool) => {
     summary.brands += pool.brands.length;
     summary.totalStores += pool.storeSummary?.totalStores ?? 0;

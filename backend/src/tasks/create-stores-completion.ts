@@ -17,11 +17,11 @@ const MAX_XLSX_ZIP_ENTRIES = 128;
 const MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES = 8 * 1024 * 1024;
 const MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES = 16 * 1024 * 1024;
 const MAX_XLSX_ENTRY_NAME_BYTES = 512;
-const MAX_XLSX_WORKSHEETS = 8;
-const MAX_XLSX_DIMENSION_ROWS = 100_000;
-const MAX_XLSX_DIMENSION_COLUMNS = 256;
-const MAX_XLSX_MATERIALIZED_ROWS = 5_000;
-const MAX_XLSX_CONTENT_CELLS = 10_000;
+export const MAX_XLSX_WORKSHEETS = 8;
+export const MAX_XLSX_DIMENSION_ROWS = 100_000;
+export const MAX_XLSX_DIMENSION_COLUMNS = 256;
+export const MAX_XLSX_MATERIALIZED_ROWS = 5_000;
+export const MAX_XLSX_CONTENT_CELLS = 10_000;
 
 const ZIP_LOCAL_FILE_HEADER = 0x04034b50;
 const ZIP_CENTRAL_DIRECTORY_HEADER = 0x02014b50;
@@ -233,7 +233,7 @@ export async function buildCreateStoresWorkbook(
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
-function normalizedHeader(value: string) {
+export function normalizedXlsxHeader(value: string) {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -241,7 +241,7 @@ function normalizedHeader(value: string) {
     .replace(/[^a-z0-9]/g, '');
 }
 
-function plainCellText(
+export function plainXlsxCellText(
   cell: ExcelJS.Cell,
   label: string,
   rowNumber: number,
@@ -261,7 +261,7 @@ function plainCellText(
   );
 }
 
-function isBlankCell(cell: ExcelJS.Cell) {
+export function isBlankXlsxCell(cell: ExcelJS.Cell) {
   const value = cell.value;
   return value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
 }
@@ -324,7 +324,7 @@ function countXmlStartTags(content: Buffer, tagName: string, maximum: number, en
  * Bounds the ZIP work before ExcelJS sees it. XLSX is a ZIP container and a
  * small compressed upload can otherwise expand to an unbounded amount of RAM.
  */
-function inspectXlsxArchive(content: Buffer) {
+export function inspectXlsxArchive(content: Buffer) {
   const endOffset = findEndOfCentralDirectory(content);
   if (
     (endOffset >= 20 && content.readUInt32LE(endOffset - 20) === ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR)
@@ -561,7 +561,7 @@ export async function parseCreateStoresWorkbook(
   const columns = new Map<CreateStoresColumn, number>();
   headerRow.eachCell({ includeEmpty: false }, (cell, columnNumber) => {
     if (typeof cell.value !== 'string') return;
-    const header = normalizedHeader(cell.value);
+    const header = normalizedXlsxHeader(cell.value);
     const definition = CREATE_STORES_HEADERS.find(candidate => candidate.aliases.includes(header));
     if (!definition) return;
     if (columnNumber > 32) {
@@ -589,7 +589,7 @@ export async function parseCreateStoresWorkbook(
       throw new BadRequestException('The first worksheet contains too many materialized rows');
     }
     row.eachCell({ includeEmpty: false }, (cell, columnNumber) => {
-      if (isBlankCell(cell)) return;
+      if (isBlankXlsxCell(cell)) return;
       contentCells += 1;
       if (contentCells > MAX_XLSX_CONTENT_CELLS) {
         throw new BadRequestException('The first worksheet contains too many populated cells');
@@ -606,16 +606,16 @@ export async function parseCreateStoresWorkbook(
       storeName: row.getCell(columns.get('storeName')!),
       coverage: row.getCell(columns.get('coverage')!),
     };
-    if (Object.values(cells).every(isBlankCell)) return;
+    if (Object.values(cells).every(isBlankXlsxCell)) return;
     if (stores.length >= MAX_STORES_PER_COMPLETION) {
       throw new BadRequestException(`A maximum of ${MAX_STORES_PER_COMPLETION} stores can be imported at once`);
     }
 
     stores.push({
-      appShopId: plainCellText(cells.appShopId, 'appshopid', rowNumber, true),
-      shopId: plainCellText(cells.shopId, 'shopid', rowNumber, true),
-      storeName: plainCellText(cells.storeName, 'nombre de la tienda', rowNumber, false),
-      coverage: plainCellText(cells.coverage, 'coverage', rowNumber, false),
+      appShopId: plainXlsxCellText(cells.appShopId, 'appshopid', rowNumber, true),
+      shopId: plainXlsxCellText(cells.shopId, 'shopid', rowNumber, true),
+      storeName: plainXlsxCellText(cells.storeName, 'nombre de la tienda', rowNumber, false),
+      coverage: plainXlsxCellText(cells.coverage, 'coverage', rowNumber, false),
     });
   });
 

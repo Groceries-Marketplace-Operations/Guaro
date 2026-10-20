@@ -25,12 +25,17 @@ import {
   parseCreateStoresCompletion,
   requiresCreateStoresCompletion,
 } from './create-stores-completion';
+import {
+  formatCreateBrandNote,
+  parseCreateBrandCompletion,
+  requiresCreateBrandCompletion,
+} from './create-brand-completion';
 
 type Tx = Prisma.TransactionClient;
 type LockedStep = Prisma.StepInstanceGetPayload<{
   include: {
     stepDefinition: { include: { candidates: true } };
-    task: { include: { taskType: { select: { name: true } } } };
+    task: { include: { taskType: { select: { id: true, name: true } } } };
   };
 }>;
 const HANDLER_FENCE_TIMEOUT_MS = 2 * 60 * 60 * 1000 + 5 * 60 * 1000;
@@ -150,6 +155,15 @@ export class TaskEngineService {
         const completion = parseCreateStoresCompletion(result);
         normalizedResult = completion;
         normalizedNote = formatCreateStoresNote(completion);
+      } else if (requiresCreateBrandCompletion(
+        step.stepDefinition.action,
+        step.task.taskType.id,
+        step.task.taskType.name,
+        step.stepDefinition.name,
+      )) {
+        const completion = parseCreateBrandCompletion(result);
+        normalizedResult = completion;
+        normalizedNote = formatCreateBrandNote(completion);
       }
       const now = new Date();
       const currentPeriod = step.startedAt
@@ -610,7 +624,7 @@ export class TaskEngineService {
       where: { id: stepInstanceId },
       include: {
         stepDefinition: { include: { candidates: true } },
-        task: { include: { taskType: { select: { name: true } } } },
+        task: { include: { taskType: { select: { id: true, name: true } } } },
       },
     });
   }

@@ -275,6 +275,7 @@ function formatExamples(
     return [
       {
         title: 'Excel · Permanent Business Hours Update',
+        titleZh: 'Excel · 永久营业时间更新',
         headers: expectedColumns(handlerName),
         rows: [
           [shopId, '08:00-22:00', '08:00-13:00,14:00-22:00', '00:00-24:00', 'Closed', '', '9:00 - 18:00', '18:00-24:00'],
@@ -285,13 +286,14 @@ function formatExamples(
           second?.name ? `app_shop_id real: ${second.name}` : 'Ejemplo usando app_shop_id',
         ],
         notes: [
-          { es: 'La primera columna acepta un shop_id o un app_shop_id por fila.', en: 'The first column accepts either a shop_id or an app_shop_id on each row.' },
-          { es: 'Cada fila debe conservar las siete columnas de Monday a Sunday.', en: 'Every row must keep all seven columns from Monday through Sunday.' },
-          { es: 'Debe existir al menos un día abierto; una fila con los siete días cerrados se rechaza.', en: 'At least one day must be open; a row with all seven days closed is rejected.' },
+          { es: 'La primera columna acepta un shop_id o un app_shop_id por fila.', en: 'The first column accepts either a shop_id or an app_shop_id on each row.', zh: '每行第一列可以填写 shop_id 或 app_shop_id。' },
+          { es: 'Cada fila debe conservar las siete columnas de Monday a Sunday.', en: 'Every row must keep all seven columns from Monday through Sunday.', zh: '每行必须保留从 Monday 到 Sunday 的全部七列。' },
+          { es: 'Debe existir al menos un día abierto; una fila con los siete días cerrados se rechaza.', en: 'At least one day must be open; a row with all seven days closed is rejected.', zh: '至少必须有一天营业；七天全部关闭的行将被拒绝。' },
         ],
       },
       {
         title: 'Valid schedule configurations / Configuraciones válidas por día',
+        titleZh: '有效的每日营业时间配置',
         headers: ['Configuration / Configuración', 'Valid value / Valor válido', 'Result / Resultado'],
         rows: [
           ['Single / Un horario', '08:00-22:00', 'One range / Un rango'],
@@ -303,8 +305,8 @@ function formatExamples(
         ],
         rowLabels: [],
         notes: [
-          { es: 'Las horas de inicio válidas son 00:00–23:59; la hora final también admite 24:00.', en: 'Valid start times are 00:00–23:59; the end time may also be 24:00.' },
-          { es: 'Los minutos deben tener dos dígitos y estar entre 00 y 59.', en: 'Minutes require two digits and must be between 00 and 59.' },
+          { es: 'Las horas de inicio válidas son 00:00–23:59; la hora final también admite 24:00.', en: 'Valid start times are 00:00–23:59; the end time may also be 24:00.', zh: '有效的开始时间为 00:00–23:59；结束时间也可以是 24:00。' },
+          { es: 'Los minutos deben tener dos dígitos y estar entre 00 y 59.', en: 'Minutes require two digits and must be between 00 and 59.', zh: '分钟必须使用两位数字，且范围为 00 到 59。' },
         ],
       },
     ];
@@ -314,6 +316,7 @@ function formatExamples(
     return [
       {
         title: 'Excel · Specific Days Business Hours Update',
+        titleZh: 'Excel · 特定日期营业时间更新',
         headers: ['Shop ID / App Shop ID', 'Date 1', 'Schedule 1', 'Date 2', 'Schedule 2', 'Date 3', 'Schedule 3'],
         rows: [
           [shopId, '2026-12-24', '08:00-18:00', '2026-12-25', 'Closed', '2026-12-31', '08:00-13:00,14:00-20:00'],
@@ -324,13 +327,14 @@ function formatExamples(
           second?.name ? `app_shop_id real: ${second.name}` : 'Ejemplo usando app_shop_id',
         ],
         notes: [
-          { es: 'La primera columna acepta un shop_id o un app_shop_id por fila.', en: 'The first column accepts either a shop_id or an app_shop_id on each row.' },
-          { es: 'Después agrega pares Date / Schedule. Puedes repetir tantos pares como necesites en la misma fila.', en: 'Then add Date / Schedule pairs. Repeat as many pairs as needed on the same row.' },
-          { es: 'La fecha puede ser una celda de fecha de Excel o texto YYYY-MM-DD.', en: 'The date may be an Excel date cell or YYYY-MM-DD text.' },
+          { es: 'La primera columna acepta un shop_id o un app_shop_id por fila.', en: 'The first column accepts either a shop_id or an app_shop_id on each row.', zh: '每行第一列可以填写 shop_id 或 app_shop_id。' },
+          { es: 'Después agrega pares Date / Schedule. Puedes repetir tantos pares como necesites en la misma fila.', en: 'Then add Date / Schedule pairs. Repeat as many pairs as needed on the same row.', zh: '然后添加 Date / Schedule 配对；同一行可按需重复任意数量的配对。' },
+          { es: 'La fecha puede ser una celda de fecha de Excel o texto YYYY-MM-DD.', en: 'The date may be an Excel date cell or YYYY-MM-DD text.', zh: '日期可以是 Excel 日期单元格，也可以是 YYYY-MM-DD 格式的文本。' },
         ],
       },
       {
         title: 'Valid date configurations / Configuraciones válidas por fecha',
+        titleZh: '有效的日期配置',
         headers: ['Configuration / Configuración', 'Date / Fecha', 'Schedule / Horario', 'Result / Resultado'],
         rows: [
           ['Single / Un horario', '2026-12-24', '08:00-18:00', 'One range / Un rango'],
@@ -342,8 +346,8 @@ function formatExamples(
         ],
         rowLabels: [],
         notes: [
-          { es: 'Cada horario admite las mismas variantes que el horario permanente.', en: 'Each schedule accepts the same variants as permanent business hours.' },
-          { es: 'Un par completamente vacío al final de la fila se ignora.', en: 'A completely empty pair at the end of the row is ignored.' },
+          { es: 'Cada horario admite las mismas variantes que el horario permanente.', en: 'Each schedule accepts the same variants as permanent business hours.', zh: '每个营业时间都支持与永久营业时间相同的格式。' },
+          { es: 'Un par completamente vacío al final de la fila se ignora.', en: 'A completely empty pair at the end of the row is ignored.', zh: '行末完全为空的配对会被忽略。' },
         ],
       },
     ];
@@ -431,41 +435,60 @@ export class TaskValidationService {
     const context = await this.getContext(taskTypeId, user);
     const q = question.toLocaleLowerCase();
     const spanish = locale?.toLowerCase().startsWith('es');
+    const chinese = locale?.toLowerCase().startsWith('zh');
     const rules = context.fileRules[0];
     let answer: string;
 
-    if (/permiso|permission|acceso|access/.test(q)) {
-      answer = spanish
-        ? `Sí. Tu cuenta ${user.email} tiene acceso a ${context.taskTypeName}. La misma autorización se vuelve a comprobar al subir el archivo y al crear la tarea.`
-        : `Yes. ${user.email} has access to ${context.taskTypeName}. The same authorization is checked again when uploading and creating the task.`;
-    } else if (/plantilla|template/.test(q)) {
+    if (/permiso|permission|acceso|access|权限|访问/.test(q)) {
+      answer = chinese
+        ? `是的。你的账户 ${user.email} 有权访问 ${context.taskTypeName}。上传文件和创建任务时，系统会再次检查相同的授权。`
+        : spanish
+          ? `Sí. Tu cuenta ${user.email} tiene acceso a ${context.taskTypeName}. La misma autorización se vuelve a comprobar al subir el archivo y al crear la tarea.`
+          : `Yes. ${user.email} has access to ${context.taskTypeName}. The same authorization is checked again when uploading and creating the task.`;
+    } else if (/plantilla|template|模板/.test(q)) {
       answer = context.templates.length
-        ? (spanish ? `Usa la plantilla configurada: ${context.templates.map(t => t.name).join(', ')}. Puedes abrirla desde la sección Plantillas.` : `Use the configured template: ${context.templates.map(t => t.name).join(', ')}. You can open it from Templates.`)
-        : (spanish ? 'Esta tarea no tiene una plantilla configurada. Validaré los campos definidos directamente en el sistema.' : 'This task has no configured template. I will validate the fields defined directly in the system.');
-    } else if (/columna|column|formato|format|excel|xlsx/.test(q) && rules) {
+        ? (chinese
+          ? `请使用已配置的模板：${context.templates.map(t => t.name).join(', ')}。你可以在“模板”部分打开。`
+          : spanish
+            ? `Usa la plantilla configurada: ${context.templates.map(t => t.name).join(', ')}. Puedes abrirla desde la sección Plantillas.`
+            : `Use the configured template: ${context.templates.map(t => t.name).join(', ')}. You can open it from Templates.`)
+        : (chinese
+          ? '此任务没有配置模板。我会直接验证系统中定义的字段。'
+          : spanish
+            ? 'Esta tarea no tiene una plantilla configurada. Validaré los campos definidos directamente en el sistema.'
+            : 'This task has no configured template. I will validate the fields defined directly in the system.');
+    } else if (/columna|column|formato|format|excel|xlsx|列|格式|表格/.test(q) && rules) {
       const exampleText = context.formatExamples.length > 0
         ? `\n${context.formatExamples.map(example => [
-            `${example.title}:`,
+            `${chinese ? example.titleZh : example.title}:`,
             example.headers.join(' | '),
-            ...example.rows.map(row => row.map(value => value || (spanish ? '[vacío]' : '[blank]')).join(' | ')),
-            ...example.notes.map(note => `- ${spanish ? note.es : note.en}`),
+            ...example.rows.map(row => row.map(value => value || (chinese ? '[空白]' : spanish ? '[vacío]' : '[blank]')).join(' | ')),
+            ...example.notes.map(note => `- ${chinese ? note.zh : spanish ? note.es : note.en}`),
           ].join('\n')).join('\n\n')}`
         : '';
-      answer = spanish
-        ? `Acepto .xlsx de hasta ${rules.maxSizeMb} MB. Las columnas esperadas, en orden, son: ${rules.expectedColumns.join(', ')}.${exampleText}`
-        : `I accept .xlsx files up to ${rules.maxSizeMb} MB. Expected columns, in order: ${rules.expectedColumns.join(', ')}.${exampleText}`;
-    } else if (/error|falla|failed|invalid|inválid/.test(q)) {
-      answer = spanish
-        ? 'Al subir el archivo te indicaré la fila y el motivo exacto. Corrige esas filas y vuelve a subirlo; el sistema no guardará un archivo rechazado.'
-        : 'When you upload the file I will show the exact row and reason. Fix those rows and upload it again; rejected files are not kept.';
-    } else if (/requer|falta|missing|field|campo/.test(q)) {
-      answer = spanish
-        ? `Los campos requeridos son: ${context.requiredFields.join(', ') || 'ninguno'}.`
-        : `Required fields: ${context.requiredFields.join(', ') || 'none'}.`;
+      answer = chinese
+        ? `我接受最大 ${rules.maxSizeMb} MB 的 .xlsx 文件。预期列按顺序为：${rules.expectedColumns.join(', ')}。${exampleText}`
+        : spanish
+          ? `Acepto .xlsx de hasta ${rules.maxSizeMb} MB. Las columnas esperadas, en orden, son: ${rules.expectedColumns.join(', ')}.${exampleText}`
+          : `I accept .xlsx files up to ${rules.maxSizeMb} MB. Expected columns, in order: ${rules.expectedColumns.join(', ')}.${exampleText}`;
+    } else if (/error|falla|failed|invalid|inválid|错误|失败|无效/.test(q)) {
+      answer = chinese
+        ? '上传文件时，我会显示确切的行号和原因。请修正这些行后重新上传；系统不会保留被拒绝的文件。'
+        : spanish
+          ? 'Al subir el archivo te indicaré la fila y el motivo exacto. Corrige esas filas y vuelve a subirlo; el sistema no guardará un archivo rechazado.'
+          : 'When you upload the file I will show the exact row and reason. Fix those rows and upload it again; rejected files are not kept.';
+    } else if (/requer|falta|missing|field|campo|必填|缺失|字段|要求/.test(q)) {
+      answer = chinese
+        ? `必填字段：${context.requiredFields.join(', ') || '无'}。`
+        : spanish
+          ? `Los campos requeridos son: ${context.requiredFields.join(', ') || 'ninguno'}.`
+          : `Required fields: ${context.requiredFields.join(', ') || 'none'}.`;
     } else {
-      answer = spanish
-        ? 'Puedo ayudarte con: plantilla, columnas del Excel, permisos, campos requeridos o errores de validación.'
-        : 'I can help with the template, Excel columns, permissions, required fields, or validation errors.';
+      answer = chinese
+        ? '我可以帮助你了解模板、Excel 列、权限、必填字段或验证错误。'
+        : spanish
+          ? 'Puedo ayudarte con: plantilla, columnas del Excel, permisos, campos requeridos o errores de validación.'
+          : 'I can help with the template, Excel columns, permissions, required fields, or validation errors.';
     }
 
     return { answer };

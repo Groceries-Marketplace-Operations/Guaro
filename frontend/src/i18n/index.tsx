@@ -1,8 +1,24 @@
+/* eslint-disable react-refresh/only-export-components -- context, hooks and locale helpers are intentionally colocated */
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { translations } from './translations';
 
-type Lang = 'en' | 'es';
+export const supportedLanguages = ['en', 'es', 'zh-CN'] as const;
+export type Lang = typeof supportedLanguages[number];
+
+const intlLocales: Record<Lang, string> = {
+  en: 'en-US',
+  es: 'es-MX',
+  'zh-CN': 'zh-CN',
+};
+
+function isSupportedLanguage(value: string | null): value is Lang {
+  return supportedLanguages.some(language => language === value);
+}
+
+export function intlLocaleForLang(lang: Lang): string {
+  return intlLocales[lang];
+}
 
 interface LangContextValue {
   lang: Lang;
@@ -14,7 +30,10 @@ const LangContext = createContext<LangContextValue>({ lang: 'en', setLang: () =>
 export function LangProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => {
     const stored = localStorage.getItem('lang');
-    return (stored === 'en' || stored === 'es') ? stored : 'en';
+    if (isSupportedLanguage(stored)) return stored;
+    // Accept the short code once so early local builds that stored `zh` keep
+    // the user's intent, then persist the canonical BCP 47 code on change.
+    return stored === 'zh' ? 'zh-CN' : 'en';
   });
 
   const setLang = useCallback((l: Lang) => {

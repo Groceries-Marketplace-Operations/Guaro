@@ -217,6 +217,13 @@ enum DidiOrderWebhookShopResolutionSource {
   payload
 }
 
+enum DidiOrderWebhookForwardDeliveryStatus {
+  queued
+  processing
+  delivered
+  failed
+}
+
 enum DidiOrderWebhookRequestStage {
   received
   validation
@@ -761,6 +768,7 @@ model Application {
   upcActivityPriceRules      UpcActivityPriceRule[]
   didiOrderWebhookEvents     DidiOrderWebhookEvent[]
   didiOrderWebhookRequests   DidiOrderWebhookRequest[]
+  didiOrderWebhookForwardTarget DidiOrderWebhookForwardTarget?
   shopInventory              ApplicationShopInventory?
 
   @@unique([id, country]) // target of composite FK (see constraints.sql)
@@ -1127,6 +1135,49 @@ model DidiOrderWebhookRequest {
   @@index([appShopId, applicationId], map: "didi_order_webhook_request_app_shop_id_idx")
   @@index([didiShopId, applicationId], map: "didi_order_webhook_request_didi_shop_id_idx")
   @@map("didi_order_webhook_request")
+}
+
+model DidiOrderWebhookForwardTarget {
+  id            String   @id @default(uuid()) @db.Uuid
+  applicationId String   @unique @map("application_id") @db.Uuid
+  enabled       Boolean  @default(true)
+  revision      Int      @default(1)
+  urlEncrypted  String   @map("url_encrypted") @db.Text
+  hostname      String
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  application Application                            @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  deliveries  DidiOrderWebhookForwardDelivery[]
+
+  @@index([enabled])
+  @@map("didi_order_webhook_forward_target")
+}
+
+model DidiOrderWebhookForwardDelivery {
+  id               String                                @id @default(uuid()) @db.Uuid
+  targetId         String                                @map("target_id") @db.Uuid
+  orderId          String                                @map("order_id")
+  eventType        String                                @map("event_type")
+  targetRevision   Int                                   @map("target_revision")
+  status           DidiOrderWebhookForwardDeliveryStatus @default(queued)
+  urlEncrypted     String                                @map("url_encrypted") @db.Text
+  hostname         String
+  payloadEncrypted String?                               @map("payload_encrypted") @db.Text
+  attempts         Int                                   @default(0)
+  httpStatus       Int?                                  @map("http_status")
+  errorMessage     String?                               @map("error_message") @db.Text
+  startedAt        DateTime?                             @map("started_at") @db.Timestamptz
+  deliveredAt      DateTime?                             @map("delivered_at") @db.Timestamptz
+  failedAt         DateTime?                             @map("failed_at") @db.Timestamptz
+  createdAt        DateTime                              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime                              @updatedAt @map("updated_at") @db.Timestamptz
+
+  target DidiOrderWebhookForwardTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([targetId, orderId, eventType])
+  @@index([status, createdAt])
+  @@map("didi_order_webhook_forward_delivery")
 }
 
 model BrandItem {

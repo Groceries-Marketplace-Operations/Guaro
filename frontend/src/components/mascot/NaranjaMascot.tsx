@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLang } from '../../i18n';
+import type { Lang } from '../../i18n';
 import { MASCOT_EVENT } from './mascot-events';
 import type { MascotEventDetail, MascotSubject } from './mascot-events';
 
@@ -24,34 +25,38 @@ function storeMinimizedPreference(minimized: boolean) {
   }
 }
 
-function message(detail: MascotEventDetail, spanish: boolean) {
+function message(detail: MascotEventDetail, lang: Lang) {
   const { state, operation, subject } = detail;
-  const nouns: Record<MascotSubject, [string, string]> = {
-    change: ['el cambio', 'the change'],
-    task: ['la tarea', 'the task'],
-    brand: ['la marca', 'the brand'],
-    shop: ['la tienda', 'the store'],
-    application: ['la aplicación', 'the application'],
-    integration: ['la integración', 'the integration'],
-    section: ['la sección', 'the section'],
-    user: ['el usuario', 'the user'],
-    configuration: ['la configuración', 'the configuration'],
+  const languageIndex = lang === 'es' ? 0 : lang === 'zh-CN' ? 2 : 1;
+  const chinese = lang === 'zh-CN';
+  const nouns: Record<MascotSubject, [string, string, string]> = {
+    change: ['el cambio', 'the change', '更改'],
+    task: ['la tarea', 'the task', '任务'],
+    brand: ['la marca', 'the brand', '品牌'],
+    shop: ['la tienda', 'the store', '门店'],
+    application: ['la aplicación', 'the application', '应用'],
+    integration: ['la integración', 'the integration', '集成'],
+    section: ['la sección', 'the section', '版块'],
+    user: ['el usuario', 'the user', '用户'],
+    configuration: ['la configuración', 'the configuration', '配置'],
   };
-  const target = nouns[subject][spanish ? 0 : 1];
+  const target = nouns[subject][languageIndex];
+  const spanish = lang === 'es';
   const verb = {
-    create: spanish ? ['Creando', 'Creé'] : ['Creating', 'Created'],
-    save: spanish ? ['Guardando', 'Guardé'] : ['Saving', 'Saved'],
-    delete: spanish ? ['Eliminando', 'Eliminé'] : ['Deleting', 'Deleted'],
-    upload: spanish ? ['Validando y subiendo', 'Validé y subí'] : ['Validating and uploading', 'Validated and uploaded'],
-    run: spanish ? ['Iniciando', 'Inicié'] : ['Starting', 'Started'],
-    stop: spanish ? ['Deteniendo', 'Detuve'] : ['Stopping', 'Stopped'],
-    restore: spanish ? ['Restaurando', 'Restauré'] : ['Restoring', 'Restored'],
-    answer: spanish ? ['Pensando', 'Preparé'] : ['Thinking', 'Prepared'],
+    create: chinese ? ['正在创建', '已创建'] : spanish ? ['Creando', 'Creé'] : ['Creating', 'Created'],
+    save: chinese ? ['正在保存', '已保存'] : spanish ? ['Guardando', 'Guardé'] : ['Saving', 'Saved'],
+    delete: chinese ? ['正在删除', '已删除'] : spanish ? ['Eliminando', 'Eliminé'] : ['Deleting', 'Deleted'],
+    upload: chinese ? ['正在验证并上传', '已验证并上传'] : spanish ? ['Validando y subiendo', 'Validé y subí'] : ['Validating and uploading', 'Validated and uploaded'],
+    run: chinese ? ['正在启动', '已启动'] : spanish ? ['Iniciando', 'Inicié'] : ['Starting', 'Started'],
+    stop: chinese ? ['正在停止', '已停止'] : spanish ? ['Deteniendo', 'Detuve'] : ['Stopping', 'Stopped'],
+    restore: chinese ? ['正在恢复', '已恢复'] : spanish ? ['Restaurando', 'Restauré'] : ['Restoring', 'Restored'],
+    answer: chinese ? ['正在思考', '已准备'] : spanish ? ['Pensando', 'Preparé'] : ['Thinking', 'Prepared'],
   }[operation];
-  if (state === 'idle') return spanish ? 'Lista para ayudarte.' : 'Ready to help.';
-  if (state === 'working') return `${verb[0]} ${target}…`;
-  if (state === 'success') return spanish ? `¡Listo! ${verb[1]} ${target}.` : `Done! ${verb[1]} ${target}.`;
-  return spanish ? `No pude completar ${target}. Revisa el detalle mostrado.` : `I could not complete ${target}. Check the displayed details.`;
+  const separator = chinese ? '' : ' ';
+  if (state === 'idle') return chinese ? '随时可以帮助你。' : spanish ? 'Lista para ayudarte.' : 'Ready to help.';
+  if (state === 'working') return `${verb[0]}${separator}${target}…`;
+  if (state === 'success') return chinese ? `完成！${verb[1]}${target}。` : spanish ? `¡Listo! ${verb[1]} ${target}.` : `Done! ${verb[1]} ${target}.`;
+  return chinese ? `无法完成${target}。请查看显示的详细信息。` : spanish ? `No pude completar ${target}. Revisa el detalle mostrado.` : `I could not complete ${target}. Check the displayed details.`;
 }
 
 export default function NaranjaMascot() {
@@ -83,9 +88,10 @@ export default function NaranjaMascot() {
     return () => window.removeEventListener(MASCOT_EVENT, onAction);
   }, []);
 
-  const copy = useMemo(() => message(event, spanish), [event, spanish]);
-  const hideLabel = spanish ? 'Ocultar Naranja' : 'Hide Naranja';
-  const showLabel = spanish ? 'Mostrar Naranja' : 'Show Naranja';
+  const chinese = lang === 'zh-CN';
+  const copy = useMemo(() => message(event, lang), [event, lang]);
+  const hideLabel = chinese ? '隐藏 Naranja' : spanish ? 'Ocultar Naranja' : 'Hide Naranja';
+  const showLabel = chinese ? '显示 Naranja' : spanish ? 'Mostrar Naranja' : 'Show Naranja';
 
   const hideMascot = () => {
     minimizedRef.current = true;
@@ -104,7 +110,7 @@ export default function NaranjaMascot() {
     <aside
       className={`naranja-mascot is-${event.state} ${expanded ? 'is-expanded' : ''}${minimized ? ' is-minimized' : ''}`}
       aria-live="polite"
-      aria-label={spanish ? 'Naranja, asistente del sistema' : 'Naranja, system assistant'}
+      aria-label={chinese ? 'Naranja，系统助手' : spanish ? 'Naranja, asistente del sistema' : 'Naranja, system assistant'}
     >
       {minimized ? (
         <button
@@ -135,11 +141,11 @@ export default function NaranjaMascot() {
           >
             <span aria-hidden="true">−</span>
           </button>
-          <button type="button" className="naranja-character" onClick={() => setExpanded(value => !value)} aria-expanded={expanded} title={spanish ? 'Abrir Naranja' : 'Open Naranja'}>
+          <button type="button" className="naranja-character" onClick={() => setExpanded(value => !value)} aria-expanded={expanded} title={chinese ? '打开 Naranja' : spanish ? 'Abrir Naranja' : 'Open Naranja'}>
             <span className="naranja-aura" aria-hidden="true" />
             <img
               src={`${import.meta.env.BASE_URL}mascot/naranja-robot-v2.png`}
-              alt={spanish ? 'Naranja, mascota asistente' : 'Naranja, assistant mascot'}
+              alt={chinese ? 'Naranja 助手吉祥物' : spanish ? 'Naranja, mascota asistente' : 'Naranja, assistant mascot'}
             />
             <span className="naranja-thruster" aria-hidden="true"><i /><i /><i /></span>
             <span className="naranja-status" />

@@ -46,6 +46,11 @@ const CREATE_STORES_RESULT_KIND = 'create_new_stores_completion';
 const CREATE_STORES_IMPORT_MAX_BYTES = 2 * 1024 * 1024;
 const CREATE_STORES_MAX_ROWS = 1000;
 const CREATE_STORES_SHOP_ID_PATTERN = /^57\d{17}$/;
+const CREATE_NEW_BRAND_TASK_TYPE_ID = '73ea7698-8e91-49ae-b771-0e77ca90cb0a';
+const CREATE_BRAND_ACTION = 'capture_created_brand_details';
+const CREATE_BRAND_RESULT_KIND = 'create_new_brand_completion';
+const CREATE_BRAND_IMPORT_MAX_BYTES = 2 * 1024 * 1024;
+const CREATE_BRAND_ID_PATTERN = /^57\d{17}$/;
 
 interface CreateStoreRow {
   clientId: string;
@@ -53,6 +58,15 @@ interface CreateStoreRow {
   shopId: string;
   storeName: string;
   coverage: string;
+}
+
+interface CreateBrandResult {
+  kind: typeof CREATE_BRAND_RESULT_KIND;
+  version: 1;
+  brand: {
+    brandName: string;
+    brandId: string;
+  };
 }
 
 let createStoreRowSequence = 0;
@@ -86,6 +100,33 @@ function isCreateStoresCompletionResult(result: unknown): boolean {
     && (result as { kind?: unknown }).kind === CREATE_STORES_RESULT_KIND;
 }
 
+function isCreateBrandStep(task: Task | undefined, step: StepInstance | null): boolean {
+  if (!step?.stepDefinition) return false;
+  if (step.stepDefinition.action === CREATE_BRAND_ACTION) return true;
+  return normalizeWorkflowName(step.stepDefinition.name) === 'create brand'
+    && (
+      task?.taskType?.id === CREATE_NEW_BRAND_TASK_TYPE_ID
+      || normalizeWorkflowName(task?.taskType?.name) === 'create new brand'
+    );
+}
+
+function createBrandCompletionResult(result: unknown): CreateBrandResult | null {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const candidate = result as Partial<CreateBrandResult>;
+  if (
+    candidate.kind !== CREATE_BRAND_RESULT_KIND
+    || candidate.version !== 1
+    || !candidate.brand
+    || typeof candidate.brand.brandName !== 'string'
+    || typeof candidate.brand.brandId !== 'string'
+  ) return null;
+  return candidate as CreateBrandResult;
+}
+
+function createBrandValuesAreValid(brandName: string, brandId: string): boolean {
+  return !!brandName.trim() && CREATE_BRAND_ID_PATTERN.test(brandId.trim());
+}
+
 function createStoreRowsAreValid(rows: CreateStoreRow[]): boolean {
   return rows.length > 0 && rows.every(row => (
     row.appShopId.trim()
@@ -108,6 +149,19 @@ function safeExternalUrl(value: string | null | undefined): string | null {
     return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
   } catch {
     return null;
+  }
+}
+
+function exportFilename(contentDisposition: string | undefined, fallback: string): string {
+  if (!contentDisposition) return fallback;
+  const utf8Name = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const plainName = contentDisposition.match(/filename="?([^";]+)"?/i)?.[1];
+  const encodedName = utf8Name ?? plainName;
+  if (!encodedName) return fallback;
+  try {
+    return decodeURIComponent(encodedName).split(/[\\/]/).pop() || fallback;
+  } catch {
+    return encodedName.split(/[\\/]/).pop() || fallback;
   }
 }
 
@@ -135,6 +189,12 @@ export default function TaskDetail() {
   const [downloadingCreateStoresTemplate, setDownloadingCreateStoresTemplate] = useState(false);
   const [importedCreateStoresFile, setImportedCreateStoresFile] = useState<{ name: string; count: number } | null>(null);
   const createStoresImportRequestRef = useRef(0);
+  const [createBrandName, setCreateBrandName] = useState('');
+  const [createBrandId, setCreateBrandId] = useState('');
+  const [importingCreateBrand, setImportingCreateBrand] = useState(false);
+  const [downloadingCreateBrandTemplate, setDownloadingCreateBrandTemplate] = useState(false);
+  const [importedCreateBrandFile, setImportedCreateBrandFile] = useState<string | null>(null);
+  const createBrandImportRequestRef = useRef(0);
   const [failureReason, setFailureReason] = useState('bpo_timed_out');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -164,11 +224,20 @@ export default function TaskDetail() {
     if (nextAction === 'complete') {
       setCreateStoreRows([createEmptyStoreRow()]);
       setImportedCreateStoresFile(null);
+      const configuredBrandName = task?.formValues?.find(value => (
+        ['brand name', 'nombre de la marca', 'nombre marca'].includes(
+          normalizeWorkflowName(value.formField?.label),
+        )
+      ))?.valor;
+      setCreateBrandName(typeof configuredBrandName === 'string' ? configuredBrandName.trim() : '');
+      setCreateBrandId('');
+      setImportedCreateBrandFile(null);
     }
   };
 
   const closeActionModal = () => {
     createStoresImportRequestRef.current += 1;
+    createBrandImportRequestRef.current += 1;
     setAction(null);
     setActiveStep(null);
     setNote('');
@@ -176,6 +245,10 @@ export default function TaskDetail() {
     setCreateStoreRows([createEmptyStoreRow()]);
     setImportedCreateStoresFile(null);
     setImportingCreateStores(false);
+    setCreateBrandName('');
+    setCreateBrandId('');
+    setImportedCreateBrandFile(null);
+    setImportingCreateBrand(false);
   };
 
   const updateCreateStoreRow = (
@@ -267,6 +340,66 @@ export default function TaskDetail() {
     }
   };
 
+  const handleCreateBrandImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !activeStep) return;
+    if (!file.name.toLocaleLowerCase('en-US').endsWith('.xlsx')) {
+      setErr(t('pages.taskDetail.createBrandImportInvalidType'));
+      return;
+    }
+    if (file.size > CREATE_BRAND_IMPORT_MAX_BYTES) {
+      setErr(t('pages.taskDetail.createBrandImportTooLarge'));
+      return;
+    }
+
+    setImportingCreateBrand(true);
+    setErr('');
+    const requestId = createBrandImportRequestRef.current + 1;
+    createBrandImportRequestRef.current = requestId;
+    try {
+      const response = await tasksApi.importCreatedBrand(id!, activeStep.id, file);
+      if (createBrandImportRequestRef.current !== requestId) return;
+      const imported = response.data.brand;
+      if (!imported || typeof imported.brandName !== 'string' || typeof imported.brandId !== 'string') {
+        setErr(t('pages.taskDetail.createBrandImportError'));
+        return;
+      }
+      setCreateBrandName(imported.brandName);
+      setCreateBrandId(imported.brandId);
+      setImportedCreateBrandFile(file.name);
+    } catch (ex: unknown) {
+      if (createBrandImportRequestRef.current !== requestId) return;
+      const e = ex as { response?: { data?: { message?: string | string[] } } };
+      const message = e.response?.data?.message;
+      setErr(Array.isArray(message)
+        ? message.join(' ')
+        : message ?? t('pages.taskDetail.createBrandImportError'));
+    } finally {
+      if (createBrandImportRequestRef.current === requestId) setImportingCreateBrand(false);
+    }
+  };
+
+  const handleCreateBrandTemplateDownload = async () => {
+    setDownloadingCreateBrandTemplate(true);
+    setErr('');
+    try {
+      const response = await tasksApi.downloadCreateBrandTemplate();
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'plantilla-marca-creada.xlsx';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setErr(t('pages.taskDetail.createBrandTemplateError'));
+    } finally {
+      setDownloadingCreateBrandTemplate(false);
+    }
+  };
+
   const handleManualAssign = async (stepId: string) => {
     if (!manualAssignBpo) return;
     setSaving(true); setErr('');
@@ -284,8 +417,13 @@ export default function TaskDetail() {
   const handleAction = async () => {
     if (!activeStep || !action) return;
     const requiresStoreDetails = action === 'complete' && isCreateStoresStep(task, activeStep);
+    const requiresBrandDetails = action === 'complete' && isCreateBrandStep(task, activeStep);
     if (requiresStoreDetails && !createStoreRowsAreValid(createStoreRows)) {
       setErr(t('pages.taskDetail.createStoresValidation'));
+      return;
+    }
+    if (requiresBrandDetails && !createBrandValuesAreValid(createBrandName, createBrandId)) {
+      setErr(t('pages.taskDetail.createBrandValidation'));
       return;
     }
 
@@ -305,6 +443,17 @@ export default function TaskDetail() {
                 })),
               },
             }
+          : requiresBrandDetails
+            ? {
+                result: {
+                  kind: CREATE_BRAND_RESULT_KIND,
+                  version: 1,
+                  brand: {
+                    brandName: createBrandName.trim(),
+                    brandId: createBrandId.trim(),
+                  },
+                },
+              }
           : { note };
         await tasksApi.completeStep(id!, activeStep.id, completionPayload);
       }
@@ -346,15 +495,16 @@ export default function TaskDetail() {
   };
 
   const handleDownload = async (stepId: string, format: 'xlsx' | 'json') => {
+    setErr('');
     try {
       const res = await tasksApi.downloadStepExport(id!, stepId, format);
-      const binary = atob(res.data.contentBase64);
-      const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
-      const blob = new Blob([bytes], { type: res.data.mimeType });
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(res.data);
       const a = document.createElement('a');
       a.href = url;
-      a.download = res.data.fileKey;
+      a.download = exportFilename(
+        res.headers['content-disposition'],
+        `task-export-${stepId}.${format}`,
+      );
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -384,6 +534,12 @@ export default function TaskDetail() {
   );
 
   const steps = [...(task.stepInstances ?? [])].sort((a, b) => (a.stepDefinition?.order ?? 0) - (b.stepDefinition?.order ?? 0));
+  const completedBrandResults = steps.flatMap(step => {
+    const result = createBrandCompletionResult(step.result);
+    return step.status === 'done' && isCreateBrandStep(task, step) && result
+      ? [{ step, result }]
+      : [];
+  });
 
   return (
     <>
@@ -511,6 +667,7 @@ export default function TaskDetail() {
                       {s.status === 'done' && (
                         (s.result as { fileKey?: string } | null)?.fileKey
                         || (isCreateStoresStep(task, s) && isCreateStoresCompletionResult(s.result))
+                        || (isCreateBrandStep(task, s) && !!createBrandCompletionResult(s.result))
                       ) && (
                         <button
                           className="btn btn-sm btn-primary"
@@ -518,7 +675,9 @@ export default function TaskDetail() {
                         >
                           ↓ {isCreateStoresStep(task, s) && isCreateStoresCompletionResult(s.result)
                             ? t('pages.taskDetail.downloadStoreData')
-                            : t('pages.taskDetail.downloadFile')}
+                            : isCreateBrandStep(task, s) && createBrandCompletionResult(s.result)
+                              ? t('pages.taskDetail.downloadBrandData')
+                              : t('pages.taskDetail.downloadFile')}
                         </button>
                       )}
                       {s.status === 'done' && (s.result as { jsonFileKey?: string } | null)?.jsonFileKey && (
@@ -544,6 +703,27 @@ export default function TaskDetail() {
             </table>
           </div>
         </div>
+
+        {completedBrandResults.map(({ step, result }) => (
+          <section className="card mt-2 create-brand-result" key={`created-brand-${step.id}`}>
+            <div className="card-header create-brand-result__header">
+              <span className="card-title">{t('pages.taskDetail.createBrandResultTitle')}</span>
+              <button className="btn btn-sm btn-primary" onClick={() => handleDownload(step.id, 'xlsx')}>
+                ↓ {t('pages.taskDetail.downloadBrandData')}
+              </button>
+            </div>
+            <div className="create-brand-result__fields">
+              <div>
+                <div className="text-sm text-muted">{t('pages.taskDetail.createBrandName')}</div>
+                <div className="create-brand-result__value">{result.brand.brandName}</div>
+              </div>
+              <div>
+                <div className="text-sm text-muted">{t('pages.taskDetail.createBrandId')}</div>
+                <div className="create-brand-result__value create-brand-result__id">{result.brand.brandId}</div>
+              </div>
+            </div>
+          </section>
+        ))}
 
         {task.formValues && task.formValues.length > 0 && (
           <div className="card mt-2">
@@ -629,7 +809,9 @@ export default function TaskDetail() {
         <Modal
           title={action === 'complete' ? t('pages.taskDetail.modalCompleteStep') : action === 'block' ? t('pages.taskDetail.modalBlockStep') : t('pages.taskDetail.modalFailStep')}
           onClose={closeActionModal}
-          size={action === 'complete' && isCreateStoresStep(task, activeStep) ? 'wide' : 'default'}
+          size={action === 'complete' && (
+            isCreateStoresStep(task, activeStep) || isCreateBrandStep(task, activeStep)
+          ) ? 'wide' : 'default'}
           footer={<>
             <button className="btn btn-ghost" onClick={closeActionModal}>{t('common.cancel')}</button>
             <button
@@ -639,6 +821,10 @@ export default function TaskDetail() {
                 action === 'complete'
                 && isCreateStoresStep(task, activeStep)
                 && (importingCreateStores || !createStoreRowsAreValid(createStoreRows))
+              ) || (
+                action === 'complete'
+                && isCreateBrandStep(task, activeStep)
+                && (importingCreateBrand || !createBrandValuesAreValid(createBrandName, createBrandId))
               )}
             >
               {saving ? t('common.saving') : action === 'complete' ? t('pages.taskDetail.btnComplete') : action === 'block' ? t('pages.taskDetail.btnBlock') : t('pages.taskDetail.btnFail')}
@@ -802,6 +988,96 @@ export default function TaskDetail() {
               {!createStoreRowsAreValid(createStoreRows) && (
                 <p className="create-stores-editor__validation" role="status">
                   {t('pages.taskDetail.createStoresValidation')}
+                </p>
+              )}
+            </div>
+          ) : action === 'complete' && isCreateBrandStep(task, activeStep) ? (
+            <div className="create-stores-editor create-brand-editor">
+              <div className="create-stores-editor__intro">
+                <h3>{t('pages.taskDetail.createBrandTitle')}</h3>
+                <p>{t('pages.taskDetail.createBrandDescription')}</p>
+              </div>
+
+              <section className="create-stores-import" aria-labelledby="create-brand-import-title">
+                <div className="create-stores-import__copy">
+                  <h4 id="create-brand-import-title">{t('pages.taskDetail.createBrandImportTitle')}</h4>
+                  <p>{t('pages.taskDetail.createBrandImportDescription')}</p>
+                  <div className="create-stores-import__columns" aria-label={t('pages.taskDetail.createBrandImportColumnsLabel')}>
+                    <span>{t('pages.taskDetail.createBrandName')}</span>
+                    <span>{t('pages.taskDetail.createBrandId')}</span>
+                  </div>
+                </div>
+                <div className="create-stores-import__actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={handleCreateBrandTemplateDownload}
+                    disabled={downloadingCreateBrandTemplate || importingCreateBrand}
+                  >
+                    {downloadingCreateBrandTemplate
+                      ? t('pages.taskDetail.createBrandTemplateDownloading')
+                      : t('pages.taskDetail.createBrandTemplateDownload')}
+                  </button>
+                  <label className={`btn btn-primary create-stores-import__upload${importingCreateBrand ? ' is-disabled' : ''}`}>
+                    {importingCreateBrand
+                      ? t('pages.taskDetail.createBrandImporting')
+                      : t('pages.taskDetail.createBrandImportButton')}
+                    <input
+                      className="sr-only"
+                      type="file"
+                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      disabled={importingCreateBrand}
+                      onChange={handleCreateBrandImport}
+                    />
+                  </label>
+                </div>
+                {importedCreateBrandFile && (
+                  <p className="create-stores-import__success" role="status">
+                    {t('pages.taskDetail.createBrandImportSuccess', { file: importedCreateBrandFile })}
+                  </p>
+                )}
+              </section>
+
+              <div className="create-stores-editor__divider">
+                <span>{t('pages.taskDetail.createBrandManualEntry')}</span>
+              </div>
+              <section className="create-store-row">
+                <div className="create-store-row__fields create-brand-editor__fields">
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="created-brand-name">
+                      {t('pages.taskDetail.createBrandName')}
+                    </label>
+                    <input
+                      id="created-brand-name"
+                      className="form-input"
+                      value={createBrandName}
+                      onChange={event => setCreateBrandName(event.target.value)}
+                      autoComplete="off"
+                      maxLength={300}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="created-brand-id">
+                      {t('pages.taskDetail.createBrandId')}
+                    </label>
+                    <input
+                      id="created-brand-id"
+                      className="form-input"
+                      value={createBrandId}
+                      onChange={event => setCreateBrandId(event.target.value)}
+                      autoComplete="off"
+                      inputMode="numeric"
+                      pattern="57[0-9]{17}"
+                      maxLength={19}
+                      required
+                    />
+                  </div>
+                </div>
+              </section>
+              {!createBrandValuesAreValid(createBrandName, createBrandId) && (
+                <p className="create-stores-editor__validation" role="status">
+                  {t('pages.taskDetail.createBrandValidation')}
                 </p>
               )}
             </div>

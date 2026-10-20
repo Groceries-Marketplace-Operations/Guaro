@@ -161,6 +161,11 @@ export const applicationsApi = {
     `/applications/${id}/order-webhook/finance`,
     data,
   ),
+  updateOrderWebhookForwarding: (id: string, data: { enabled: boolean; url?: string }) =>
+    client.patch<import('../types').ApplicationOrderWebhook>(
+      `/applications/${id}/order-webhook/forwarding`,
+      data,
+    ),
   listOrderWebhookEvents: (id: string, params?: {
     page?: number;
     limit?: number;
@@ -248,12 +253,9 @@ export const orderWebhookEventsApi = {
 
 /* ── Tasks ──────────────────────────────────────────────────── */
 export const tasksApi = {
-  list: (params?: object) => client.get<{ data: unknown[]; total: number; page: number; limit: number }>('/tasks', { params }),
+  list: (params?: import('../types').TaskListParams) => client.get<{ data: unknown[]; total: number; page: number; limit: number }>('/tasks', { params }),
   dashboardSummary: () => client.get<import('../types').TaskDashboardSummary>('/tasks/dashboard-summary'),
-  filterOptions: () => client.get<{
-    sections: { id: string; name: string; order: number }[];
-    brands: { id: string; brandId: string; brandName: string; country: string }[];
-  }>('/tasks/filter-options'),
+  filterOptions: () => client.get<import('../types').TaskFilterOptions>('/tasks/filter-options'),
   shopOptions: (params: { brandId: string; q?: string; limit?: number }) => client.get<{
     data: { id: string; shopId: string; appShopId: string; name?: string; city?: string; brandId: string }[];
     total: number;
@@ -274,6 +276,17 @@ export const tasksApi = {
   },
   downloadCreateStoresTemplate: () =>
     client.get<Blob>('/tasks/templates/create-stores.xlsx', { responseType: 'blob' }),
+  importCreatedBrand: (taskId: string, stepId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return client.post<{
+      kind: 'create_new_brand_completion';
+      version: 1;
+      brand: { brandName: string; brandId: string };
+    }>(`/tasks/${taskId}/steps/${stepId}/import-created-brand`, formData);
+  },
+  downloadCreateBrandTemplate: () =>
+    client.get<Blob>('/tasks/templates/create-brand.xlsx', { responseType: 'blob' }),
   blockStep: (taskId: string, stepId: string, data: object) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/block`, data),
   failStep: (taskId: string, stepId: string, data: object) =>
@@ -290,9 +303,9 @@ export const tasksApi = {
     client.patch('/tasks/bulk-reassign', { taskIds, accountId }),
   assignableBpos: () => client.get<{ data: Account[] }>('/tasks/assignable-bpos'),
   downloadStepExport: (taskId: string, stepId: string, format: 'xlsx' | 'json' = 'xlsx') =>
-    client.get<{ fileKey: string; mimeType: string; contentBase64: string }>(
+    client.get<Blob>(
       `/tasks/${taskId}/steps/${stepId}/download`,
-      { params: { format } },
+      { params: { format }, responseType: 'blob' },
     ),
   assistantContext: (taskTypeId: string) =>
     client.get<import('../types').AssistantContext>(`/tasks/validation-assistant/${taskTypeId}/context`),

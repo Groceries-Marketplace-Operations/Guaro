@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { AccountRole, ExecutionType, FormFieldTipo, Prisma, StepFailureReason, StepStatus, TaskStatus } from '@prisma/client';
+import { AccountRole, Country, ExecutionType, FormFieldTipo, Prisma, StepFailureReason, StepStatus, TaskStatus } from '@prisma/client';
 import { stat } from 'fs/promises';
 import { join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,6 +18,15 @@ import {
   parseCreateStoresWorkbook,
   requiresCreateStoresCompletion,
 } from './create-stores-completion';
+import {
+  buildCreateBrandWorkbook,
+  isAllowedCreateBrandXlsxMime,
+  isCreateBrandCompletionResult,
+  MAX_CREATE_BRAND_IMPORT_BYTES,
+  parseCreateBrandCompletion,
+  parseCreateBrandWorkbook,
+  requiresCreateBrandCompletion,
+} from './create-brand-completion';
 
 const TASK_INCLUDE = {
   taskType: { select: { id: true, name: true, sectionId: true } },
@@ -300,11 +309,36 @@ export class TasksService {
     roles: AccountRole[],
     accountId: string,
     sectionId: string | null,
-    filters: { page?: number; limit?: number; q?: string; status?: TaskStatus; brandId?: string; sectionId?: string } = {},
+    filters: {
+      page?: number;
+      limit?: number;
+      q?: string;
+      status?: TaskStatus;
+      brandId?: string;
+      sectionId?: string;
+      country?: Country;
+      taskTypeId?: string;
+    } = {},
   ) {
-    const { page = 1, limit = 25, q, status, brandId, sectionId: filterSectionId } = filters;
+    const {
+      page = 1,
+      limit = 25,
+      q,
+      status,
+      brandId,
+      sectionId: filterSectionId,
+      country,
+      taskTypeId,
+    } = filters;
     const skip = (page - 1) * limit;
-    const where = await this.taskWhere(roles, accountId, sectionId, { q, status, brandId, sectionId: filterSectionId });
+    const where = await this.taskWhere(roles, accountId, sectionId, {
+      q,
+      status,
+      brandId,
+      sectionId: filterSectionId,
+      country,
+      taskTypeId,
+    });
 
     const [data, total] = await Promise.all([
       this.prisma.task.findMany({ where, include: TASK_LIST_INCLUDE, orderBy: { createdAt: 'desc' }, skip, take: limit }),
@@ -361,27 +395,49 @@ export class TasksService {
 
   async filterOptions(roles: AccountRole[], accountId: string, sectionId: string | null) {
     const allowedSectionIds = await this.sectionAccess.accessibleSectionIds({ id: accountId, roles, sectionId });
-    const taskScope = await this.taskWhere(roles, accountId, sectionId);
-    const [sections, brandGroups] = await Promise.all([
+    const visibleTaskWhere = await this.taskWhere(roles, accountId, sectionId);
+    const [sections, taskTypes, brands, formCountries] = await Promise.all([
       this.prisma.section.findMany({
         where: allowedSectionIds === null ? undefined : { id: { in: allowedSectionIds } },
         select: { id: true, name: true, order: true },
         orderBy: [{ order: 'asc' }, { name: 'asc' }],
       }),
-      this.prisma.task.groupBy({
-        by: ['brandId'],
-        where: { AND: [taskScope, { brandId: { not: null } }] },
+      this.prisma.taskType.findMany({
+        where: { tasks: { some: visibleTaskWhere } },
+        select: {
+          id: true,
+          name: true,
+          sectionId: true,
+          order: true,
+          section: { select: { name: true } },
+        },
+        orderBy: [{ name: 'asc' }, { order: 'asc' }],
       }),
-    ]);
-    const brandIds = brandGroups.flatMap(row => row.brandId ? [row.brandId] : []);
-    const brands = brandIds.length
-      ? await this.prisma.brand.findMany({
-        where: { id: { in: brandIds } },
+      this.prisma.brand.findMany({
+        where: { tasks: { some: visibleTaskWhere } },
         select: { id: true, brandId: true, brandName: true, country: true },
         orderBy: [{ brandName: 'asc' }, { id: 'asc' }],
-      })
-      : [];
-    return { sections, brands };
+      }),
+      this.prisma.formValue.findMany({
+        where: {
+          task: { AND: [visibleTaskWhere, { brandId: null }] },
+          formField: { tipo: FormFieldTipo.select_country },
+          valor: { not: null },
+        },
+        select: { valor: true },
+        distinct: ['valor'],
+      }),
+    ]);
+    const countryValues = [
+      ...brands.map(row => row.country),
+      ...formCountries.map(row => row.valor),
+    ];
+    const countries = [...new Set(countryValues)]
+      .filter((value): value is Country => (
+        typeof value === 'string' && Object.values(Country).includes(value as Country)
+      ))
+      .sort();
+    return { sections, brands, taskTypes, countries };
   }
 
   async shopOptions(brandId: string, query?: string, requestedLimit = 75) {
@@ -415,27 +471,61 @@ export class TasksService {
     roles: AccountRole[],
     accountId: string,
     sectionId: string | null,
-    filters: { q?: string; status?: TaskStatus; brandId?: string; sectionId?: string } = {},
+    filters: {
+      q?: string;
+      status?: TaskStatus;
+      brandId?: string;
+      sectionId?: string;
+      country?: Country;
+      taskTypeId?: string;
+    } = {},
   ): Promise<Prisma.TaskWhereInput> {
-    const AND: Prisma.TaskWhereInput[] = [{ deletedAt: null }];
-    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds({ id: accountId, roles, sectionId });
-    if (allowedSectionIds !== null) AND.push({ taskType: { sectionId: { in: allowedSectionIds } } });
-
     const isSuperAdmin = roles.includes(AccountRole.super_admin);
     const isAdmin = roles.includes(AccountRole.admin);
+    const isDirector = roles.includes(AccountRole.director);
     const isBpo = roles.includes(AccountRole.bpo);
     const isUser = roles.includes(AccountRole.user);
-    if (!isSuperAdmin && !isAdmin) {
-      if (isUser && !isBpo) {
+    const isPrivileged = isSuperAdmin || isAdmin || isDirector;
+    const AND: Prisma.TaskWhereInput[] = [{ deletedAt: null }];
+    const allowedSectionIds = await this.sectionAccess.accessibleSectionIds({ id: accountId, roles, sectionId });
+    // A concrete creator/assignee relationship is a narrow grant to that task.
+    // This lets OP Support work tasks outside their home section without
+    // widening the scope of privileged accounts that also carry the BPO role.
+    if (!(isBpo && !isPrivileged) && allowedSectionIds !== null) {
+      AND.push({ taskType: { sectionId: { in: allowedSectionIds } } });
+    }
+
+    if (!isPrivileged) {
+      if (isBpo) {
+        AND.push({
+          OR: [
+            { stepInstances: { some: { assignedToId: accountId } } },
+            { createdById: accountId },
+          ],
+        });
+      } else if (isUser) {
         AND.push({ createdById: accountId });
-      } else if (isBpo && !isUser) {
-        AND.push({ stepInstances: { some: { assignedToId: accountId } } });
       }
     }
 
     if (filters.status) AND.push({ status: filters.status });
     if (filters.brandId) AND.push({ brandId: filters.brandId });
     if (filters.sectionId) AND.push({ taskType: { sectionId: filters.sectionId } });
+    if (filters.taskTypeId) AND.push({ taskTypeId: filters.taskTypeId });
+    if (filters.country) AND.push({
+      OR: [
+        { brand: { country: filters.country } },
+        {
+          brandId: null,
+          formValues: {
+            some: {
+              valor: filters.country,
+              formField: { tipo: FormFieldTipo.select_country },
+            },
+          },
+        },
+      ],
+    });
     if (filters.q) AND.push({
       OR: [
         { brand: { brandName: { contains: filters.q, mode: 'insensitive' } } },
@@ -462,17 +552,21 @@ export class TasksService {
       const isBpo        = roles.includes(AccountRole.bpo);
       const isUser       = roles.includes(AccountRole.user);
       const isDirector   = roles.includes(AccountRole.director);
+      let relationshipGrantsAccess = false;
 
       if (!isSuperAdmin && !isAdmin && !isDirector) {
-        if (isUser && !isBpo) {
-          if (task.createdById !== accountId) throw new ForbiddenException('Task not found');
-        } else if (isBpo && !isUser) {
+        if (isBpo) {
           const assigned = task.stepInstances.some((s: { assignedToId: string | null }) => s.assignedToId === accountId);
-          if (!assigned) throw new ForbiddenException('Task not found');
+          const created = task.createdById === accountId;
+          if (!assigned && !created) throw new ForbiddenException('Task not found');
+          relationshipGrantsAccess = assigned || created;
+        } else if (isUser) {
+          if (task.createdById !== accountId) throw new ForbiddenException('Task not found');
         }
       }
       const taskSectionId = (task as { taskType?: { sectionId?: string } }).taskType?.sectionId;
-      if (taskSectionId && !(await this.sectionAccess.canAccess({ id: accountId, roles, sectionId }, taskSectionId))) {
+      if (taskSectionId && !relationshipGrantsAccess
+          && !(await this.sectionAccess.canAccess({ id: accountId, roles, sectionId }, taskSectionId))) {
         throw new ForbiddenException('Task not found');
       }
     }
@@ -489,6 +583,25 @@ export class TasksService {
     const task = await this.findOne(taskId, viewer);
     const step = task.stepInstances.find((item) => item.id === stepId);
     if (!step) throw new NotFoundException('Step not found in this task');
+
+    if (
+      format === 'xlsx'
+      && step.status === StepStatus.done
+      && requiresCreateBrandCompletion(
+        step.stepDefinition?.action,
+        task.taskType?.id,
+        task.taskType?.name,
+        step.stepDefinition?.name,
+      )
+      && isCreateBrandCompletionResult(step.result)
+    ) {
+      const completion = parseCreateBrandCompletion(step.result);
+      return {
+        fileKey: `created-brand-${task.id}.xlsx`,
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        content: await buildCreateBrandWorkbook(completion),
+      };
+    }
 
     if (
       format === 'xlsx'
@@ -727,6 +840,42 @@ export class TasksService {
     }
 
     return parseCreateStoresWorkbook(file.buffer);
+  }
+
+  async importCreatedBrand(
+    taskId: string,
+    stepId: string,
+    file: Express.Multer.File,
+    requester: JwtUser,
+  ) {
+    const viewer = await this.assertCanActOnStep(taskId, stepId, requester);
+    const task = await this.findOne(taskId, viewer);
+    const step = task.stepInstances.find(item => item.id === stepId);
+    if (!step) throw new NotFoundException('Step not found in this task');
+    if (!requiresCreateBrandCompletion(
+      step.stepDefinition?.action,
+      task.taskType?.id,
+      task.taskType?.name,
+      step.stepDefinition?.name,
+    )) {
+      throw new BadRequestException('XLSX brand import is only available for the Create Brand step');
+    }
+    if (step.status !== StepStatus.in_progress) {
+      throw new BadRequestException('Step must be in_progress to import the created brand');
+    }
+
+    const validExtension = file?.originalname
+      ? file.originalname.toLocaleLowerCase('en-US').endsWith('.xlsx')
+      : false;
+    const validMime = isAllowedCreateBrandXlsxMime(file?.mimetype);
+    if (!validExtension || !validMime || !Buffer.isBuffer(file?.buffer)) {
+      throw new BadRequestException('Only .xlsx files are allowed');
+    }
+    if (file.size > MAX_CREATE_BRAND_IMPORT_BYTES || file.buffer.length > MAX_CREATE_BRAND_IMPORT_BYTES) {
+      throw new BadRequestException('The XLSX file exceeds the 2 MB limit');
+    }
+
+    return parseCreateBrandWorkbook(file.buffer);
   }
 
   async completeStep(taskId: string, stepId: string, result: unknown, note: string | undefined, requester: JwtUser) {

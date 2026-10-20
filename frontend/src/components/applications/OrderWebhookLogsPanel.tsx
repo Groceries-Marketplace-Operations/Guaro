@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { orderWebhookEventsApi } from '../../api';
-import { useLang, useT } from '../../i18n';
+import { intlLocaleForLang, useLang, useT } from '../../i18n';
 import type {
   Application,
   Country,
@@ -148,7 +148,7 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
   });
 
   const formatDate = (value: string | null | undefined) => value
-    ? new Date(value).toLocaleString(lang === 'es' ? 'es-MX' : 'en-US')
+    ? new Date(value).toLocaleString(intlLocaleForLang(lang))
     : t('pages.applications.orderWebhookNever');
 
   const statusLabel = (status: DidiOrderWebhookEventStatus) => {
@@ -261,7 +261,7 @@ export default function OrderWebhookLogsPanel({ applications, applicationsLoadin
         </div>
         <div className="order-webhook-refresh">
           {eventsQuery.dataUpdatedAt > 0 && (
-            <span>{t('pages.applications.orderWebhookLogsUpdated', { time: new Date(eventsQuery.dataUpdatedAt).toLocaleTimeString(lang === 'es' ? 'es-MX' : 'en-US') })}</span>
+            <span>{t('pages.applications.orderWebhookLogsUpdated', { time: new Date(eventsQuery.dataUpdatedAt).toLocaleTimeString(intlLocaleForLang(lang)) })}</span>
           )}
           <button
             type="button"

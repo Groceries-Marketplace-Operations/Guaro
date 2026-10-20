@@ -8,29 +8,47 @@ export class BpoManagementService {
 
   // ── Active tasks for authenticated BPO ───────────────────────────────────
 
-  myActiveTasks(accountId: string) {
-    // Show steps assigned to this BPO regardless of whether they clicked Start
+  async myActiveTasks(accountId: string) {
+    // Keep this as an active-work view, while including both work the BPO
+    // created and work whose current step is assigned to the BPO.
     const activeStepWhere = {
-      assignedToId: accountId,
       status: { in: [StepStatus.pending, StepStatus.in_progress, StepStatus.blocked] as StepStatus[] },
     };
+    const assignedActiveStepWhere = { ...activeStepWhere, assignedToId: accountId };
 
-    return this.prisma.task.findMany({
+    const tasks = await this.prisma.task.findMany({
       where: {
         deletedAt: null,
         status: { notIn: [TaskStatus.done, TaskStatus.failed, TaskStatus.scheduled] },
-        stepInstances: { some: activeStepWhere },
+        OR: [
+          { createdById: accountId },
+          { stepInstances: { some: assignedActiveStepWhere } },
+        ],
       },
       include: {
         taskType: { select: { id: true, name: true } },
         brand: { select: { id: true, brandName: true, country: true } },
+        createdBy: { select: { id: true, name: true, email: true } },
         stepInstances: {
           where: activeStepWhere,
-          include: { stepDefinition: { select: { name: true, order: true, executionType: true } } },
+          select: {
+            id: true,
+            status: true,
+            assignedToId: true,
+            stepDefinition: { select: { name: true, order: true, executionType: true } },
+          },
+          orderBy: { stepDefinition: { order: 'asc' } },
         },
       },
       orderBy: { updatedAt: 'desc' },
     });
+    return tasks.map(task => ({
+      ...task,
+      relationship: {
+        createdByMe: task.createdById === accountId,
+        assignedToMe: task.stepInstances.some(step => step.assignedToId === accountId),
+      },
+    }));
   }
 
   // ── Performance of authenticated BPO ─────────────────────────────────────

@@ -10,6 +10,7 @@ import { ApplicationsService } from './applications.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import { UpdateOrderWebhookFinanceDto } from './dto/update-order-webhook-finance.dto';
+import { UpdateOrderWebhookForwardingDto } from './dto/update-order-webhook-forwarding.dto';
 
 @Controller('applications')
 @Permissions('applications.manage')
@@ -82,6 +83,17 @@ export class ApplicationsController {
     @Body() dto: UpdateOrderWebhookFinanceDto,
   ) {
     return this.applicationsService.updateOrderWebhookFinance(id, dto);
+  }
+
+  @Patch(':id/order-webhook/forwarding')
+  @Header('Cache-Control', 'no-store')
+  @Permissions('applications.update')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  updateOrderWebhookForwarding(
+    @Param('id') id: string,
+    @Body() dto: UpdateOrderWebhookForwardingDto,
+  ) {
+    return this.applicationsService.updateOrderWebhookForwarding(id, dto);
   }
 
   @Patch(':id')

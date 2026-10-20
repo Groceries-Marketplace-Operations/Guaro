@@ -282,6 +282,16 @@ function receiver(options: {
     mxnPerUsdRate: string;
   };
   automaticSecond?: boolean;
+  orderForwarding?: {
+    persist(input: {
+      applicationId: string;
+      requestId: string;
+      orderId: string;
+      eventType: 'orderNew';
+      rawBody: Buffer;
+    }): Promise<string | null>;
+    publish(deliveryId: string): void;
+  };
 } = {}) {
   let existing = options.existing
     ? {
@@ -540,7 +550,12 @@ function receiver(options: {
     },
   };
   const config = { getOrThrow: () => KEY };
-  const value = new DidiOrderWebhooksService(prisma as never, config as never);
+  const value = new DidiOrderWebhooksService(
+    prisma as never,
+    config as never,
+    undefined,
+    options.orderForwarding as never,
+  );
   (value as unknown as {
     waitForAutomaticSecondAcceptance: (deadlineAt: number) => Promise<boolean>;
   }).waitForAutomaticSecondAcceptance = async () => {
@@ -755,6 +770,195 @@ test('malformed price metadata never blocks confirmation and is persisted as nul
   assert.equal(subject.eventCreates[0]?.orderPriceMinor, null);
   assert.equal(subject.eventCreates[0]?.realPriceMinor, null);
   assert.equal(subject.eventCreates[0]?.realPayPriceMinor, null);
+});
+
+test('a canonical event is durably persisted and published with the exact body', async () => {
+  const forwarded: Array<{
+    applicationId: string;
+    requestId: string;
+    orderId: string;
+    eventType: 'orderNew';
+    rawBody: Buffer;
+  }> = [];
+  const published: string[] = [];
+  const subject = receiver({
+    orderForwarding: {
+      persist: async input => {
+        forwarded.push(input);
+        return 'delivery-1';
+      },
+      publish: deliveryId => { published.push(deliveryId); },
+    },
+  });
+  const exactBody = payload();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, exactBody);
+    assert.equal(result.accepted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(forwarded.length, 1);
+  assert.equal(forwarded[0].applicationId, APPLICATION_ID);
+  assert.equal(forwarded[0].requestId, 'request-1');
+  assert.equal(forwarded[0].orderId, ORDER_ID);
+  assert.equal(forwarded[0].eventType, 'orderNew');
+  assert.equal(forwarded[0].rawBody, exactBody);
+  assert.deepEqual(published, ['delivery-1']);
+});
+
+test('receiver waits for durable forwarding persistence before shop resolution', async () => {
+  let releasePersistence!: (deliveryId: string | null) => void;
+  let markPersistenceStarted!: () => void;
+  const persistenceStarted = new Promise<void>(resolve => { markPersistenceStarted = resolve; });
+  const pendingPersistence = new Promise<string | null>(resolve => { releasePersistence = resolve; });
+  const published: string[] = [];
+  const subject = receiver({
+    orderForwarding: {
+      persist: () => {
+        markPersistenceStarted();
+        return pendingPersistence;
+      },
+      publish: deliveryId => { published.push(deliveryId); },
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const receivePromise = subject.value.receive(TOKEN, payload());
+    await persistenceStarted;
+    assert.equal(subject.shopFindCalls.length, 0);
+    releasePersistence('delivery-waited');
+    const result = await receivePromise;
+    assert.equal(result.accepted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.deepEqual(published, ['delivery-waited']);
+});
+
+test('a valid canonical event is relayed even when local shop resolution fails', async () => {
+  const forwarded: Buffer[] = [];
+  const subject = receiver({
+    shops: [],
+    orderForwarding: {
+      persist: async input => {
+        forwarded.push(input.rawBody);
+        return 'delivery-1';
+      },
+      publish: () => undefined,
+    },
+  });
+  const exactBody = payload();
+
+  await assert.rejects(subject.value.receive(TOKEN, exactBody), BadRequestException);
+  assert.equal(forwarded.length, 1);
+  assert.equal(forwarded[0], exactBody);
+  assert.equal(subject.eventCreates.length, 0);
+});
+
+test('invalid event types and mismatched App IDs are never persisted for relay', async () => {
+  let persistCalls = 0;
+  const subject = receiver({
+    orderForwarding: {
+      persist: async () => {
+        persistCalls += 1;
+        return 'delivery-1';
+      },
+      publish: () => undefined,
+    },
+  });
+
+  await assert.rejects(
+    subject.value.receive(TOKEN, payload({ type: 'orderUpdate' })),
+    BadRequestException,
+  );
+  await assert.rejects(
+    subject.value.receive(TOKEN, payload({ appId: '5764607584567296013' })),
+    BadRequestException,
+  );
+  assert.equal(persistCalls, 0);
+});
+
+test('a relay persistence failure never changes successful DiDi confirmation', async () => {
+  let persistCalls = 0;
+  const subject = receiver({
+    orderForwarding: {
+      persist: async () => {
+        persistCalls += 1;
+        throw new Error('relay unavailable');
+      },
+      publish: () => undefined,
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, payload());
+    assert.equal(result.accepted, true);
+    assert.equal(result.status, 'accepted');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(persistCalls, 1);
+  assert.equal(subject.updates.at(-1)?.status, 'accepted');
+});
+
+test('a relay publication failure never changes successful DiDi confirmation', async () => {
+  const subject = receiver({
+    orderForwarding: {
+      persist: async () => 'delivery-1',
+      publish: () => { throw new Error('queue unavailable'); },
+    },
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/refresh')) {
+      return new Response(JSON.stringify({ errno: 0, data: { refresh_token: 'refresh' } }));
+    }
+    if (url.includes('/get')) {
+      return new Response(JSON.stringify({ errno: 0, data: { auth_token: 'auth' } }));
+    }
+    return new Response(JSON.stringify({ errno: 0, errmsg: 'ok' }));
+  }) as typeof fetch;
+  try {
+    const result = await subject.value.receive(TOKEN, payload());
+    assert.equal(result.accepted, true);
+    assert.equal(result.status, 'accepted');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(subject.updates.at(-1)?.status, 'accepted');
 });
 
 test('receiver resolves a missing app_shop_id from the application shop list', async () => {
@@ -1978,6 +2182,10 @@ function adminService() {
     },
     brand: { findFirst: async () => null },
     didiOrderWebhookEvent: { findFirst: async () => null },
+    didiOrderWebhookForwardTarget: {
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+    },
   };
   const config = {
     getOrThrow: () => KEY,
