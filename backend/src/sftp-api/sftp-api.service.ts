@@ -160,7 +160,7 @@ export class SftpApiService {
   async processedFiles(id: string, page: number, runId?: string) {
     await this.detail(id);
     if (runId && !await this.prisma.sftpApiRun.findFirst({ where: { id: runId, ruleId: id }, select: { id: true } })) throw new NotFoundException('Ejecución no encontrada');
-    const where = { ruleId: id, ...(runId ? { runId } : {}) };
+    const where = { ruleId: id, runId: runId ?? { not: null } };
     const [data, total] = await Promise.all([
       this.prisma.sftpApiProcessedFile.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * 20, take: 20 }),
       this.prisma.sftpApiProcessedFile.count({ where }),
