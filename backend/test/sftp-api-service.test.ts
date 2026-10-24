@@ -138,6 +138,16 @@ test('file reset is scoped to a rule and preserves upload audits', async () => {
   await assert.rejects(h.service.forgetProcessedFiles('rule', 'other-brand-file'), /no encontrado/);
 });
 
+test('file history excludes compact markers retained after automatic cleanup', async () => {
+  const h = harness();
+  const expected = { ruleId: 'rule', runId: { not: null } };
+  h.prisma.sftpApiProcessedFile = {
+    findMany: async ({ where }: any) => { assert.deepEqual(where, expected); return []; },
+    count: async ({ where }: any) => { assert.deepEqual(where, expected); return 0; },
+  };
+  assert.deepEqual(await h.service.processedFiles('rule', 1), { data: [], total: 0, page: 1 });
+});
+
 test('file listing and reset stay scoped to the selected execution', async () => {
   const h = harness();
   let exists = true;

@@ -1,4 +1,4 @@
-﻿# SFTP to API
+# SFTP to API
 
 Ruta: `/guaro/integrations/sftp-api`. Disponible en **Integrations → SFTP to API**.
 
@@ -28,6 +28,8 @@ La autenticación y las cargas utilizan `https://openapi.didi-food.com`, compart
 En el modal de una ejecución se puede eliminar un registro o todos los de esa ejecución, con permiso de configuración. El borrado se bloquea si hay ejecuciones pendientes o en curso. Solo elimina la marca de procesamiento: conserva el archivo remoto y los reportes históricos de envíos. La siguiente lectura puede procesarlo de nuevo, siempre que cumpla regex y antigüedad. Si el archivo incluye varias tiendas, se vuelven a enviar todas; revisa los reportes antes de repetir envíos inciertos.
 
 ## Historial y credenciales
+
+La limpieza automática se ejecuta diariamente a las 03:00, hora de Ciudad de México (`America/Mexico_City`) y elimina las ejecuciones finalizadas hace más de 72 horas junto con sus envíos, JSON, respuestas y reportes de archivos. No elimina ejecuciones pendientes o en curso ni modifica las configuraciones, horarios o archivos remotos. Se conservan marcadores internos de nombre de archivo por regla, desvinculados del historial y sin hash ni reporte, para no repetir envíos después de la limpieza. Estos marcadores no aparecen en el historial; la acción explícita de eliminar registros de la regla también puede borrarlos. Requiere aplicar la migración `20261022010000_integration_logs_retention` antes de desplegar el backend. Consulta [INTEGRATION_LOG_RETENTION.md](INTEGRATION_LOG_RETENTION.md) para detalles operativos.
 
 La base guarda por ejecución el modo, origen manual/programado, responsable, configuración utilizada, archivos leídos, archivos omitidos, estado y tiempos. Cada intento de envío tiene tienda, nombre y SHA-256 del archivo, endpoint, cantidad de productos, JSON, HTTP, respuesta API, taskID y duración.
 
