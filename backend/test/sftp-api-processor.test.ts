@@ -153,6 +153,18 @@ test('staging files are removed after a failure saving an API result', async () 
   } finally { mock.restoreAll(); }
 });
 
+test('a compact file marker retained by cleanup prevents resubmission without its old run', async () => {
+  const h = harness('full', { previous: true });
+  Object.assign(h.records[0], { runId: null, fileHash: null, error: null });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, 'no_files');
+    assert.equal(h.paths.get.length, 0);
+    assert.equal(h.posts.length, 0);
+    assert.equal(h.records.length, 1);
+  } finally { mock.restoreAll(); }
+});
+
 for (const failure of ['rejectShop', 'authFailShop', 'uncertainShop'] as const) {
   test(`${failure}: later shops continue and the failed store has a durable report`, async () => {
     const h = harness('delta', { [failure]: '0043', files: [{ name: '0043.csv' }, { name: '0044.csv' }] });
