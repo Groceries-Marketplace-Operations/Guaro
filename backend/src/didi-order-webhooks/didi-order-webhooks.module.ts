@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CompletionRateOrderService } from './completion-rate-order.service';
 import { BullModule } from '@nestjs/bullmq';
 import { DidiOrderWebhooksController } from './didi-order-webhooks.controller';
 import { DidiOrderWebhooksService } from './didi-order-webhooks.service';
@@ -23,6 +24,7 @@ import {
     CentralDidiOrderWebhookEventsController,
   ],
   providers: [
+    CompletionRateOrderService,
     DidiOrderWebhooksService,
     DidiOrderWebhookEventsService,
     DidiOrderForwardingService,

@@ -31,6 +31,7 @@ import {
   parseJsonKeepingIds,
 } from '../queue/handlers/didi-food.util';
 import { DidiOrderForwardingService } from './didi-order-forwarding.service';
+import { CompletionRateOrderService } from './completion-rate-order.service';
 
 export const DIDI_ORDER_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 export const DIDI_ORDER_WEBHOOK_SECOND_ACCEPTANCE_DELAY_MS = 10_000;
@@ -171,11 +172,12 @@ function parseDidiOrderWebhookEnvelope(rawBody: Buffer) {
   const root = asRecord(parsed, 'Webhook body');
   // Only an exact top-level discriminator is accepted. Nested text must never
   // make an unrelated delivery look like an orderNew event.
-  if (root.type !== 'orderNew') throw new BadRequestException('type must be orderNew');
+  if (!['orderNew', 'deliveryStatus', 'orderCancel'].includes(String(root.type))) throw new BadRequestException('Unsupported order event type');
   return root;
 }
 
 function parseDidiOrderWebhookRoot(root: Record<string, unknown>): DidiOrderWebhookPayload {
+  if (root.type !== 'orderNew') throw new BadRequestException('type must be orderNew');
   const appId = requiredIntegerId(root.app_id, 'app_id');
   const rootAppShopId = optionalAppShopId(root.app_shop_id, 'app_shop_id');
   const sourceTimestamp = requiredTimestamp(root.timestamp);
@@ -259,6 +261,7 @@ export class DidiOrderWebhooksService {
     config: ConfigService,
     @Optional() shopListCoordinator?: DidiStoreBindingCoordinator,
     @Optional() private readonly orderForwarding?: DidiOrderForwardingService,
+    @Optional() private readonly completionOrders?: CompletionRateOrderService,
   ) {
     this.encryptionKey = config.getOrThrow('APP_SECRET_ENCRYPTION_KEY');
     this.shopListCoordinator = shopListCoordinator ?? new DidiStoreBindingCoordinator();
@@ -293,6 +296,21 @@ export class DidiOrderWebhooksService {
     if (!application) throw new NotFoundException('Order webhook not found');
     if (!rawBody) throw new BadRequestException('Raw webhook body is unavailable');
     const webhookRoot = parseDidiOrderWebhookEnvelope(rawBody);
+    if (webhookRoot.type !== 'orderNew') {
+      if (!this.completionOrders) throw new BadRequestException('Order lifecycle receiver unavailable');
+      const log = await this.prisma.didiOrderWebhookRequest.create({ data: { applicationId: application.id, type: String(webhookRoot.type) }, select: { id: true } });
+      try {
+        await this.completionOrders.record(application.id, application.appId, webhookRoot);
+        const data = webhookRoot.data as Record<string, unknown>;
+        await this.completeRequest(log.id, requestStartedAt, { stage: 'completed', outcome: 'accepted', localHttpStatus: 200,
+          orderId: String(data.order_id), appShopId: webhookRoot.app_shop_id == null ? null : String(webhookRoot.app_shop_id) });
+      } catch (error) {
+        const status = error instanceof HttpException ? error.getStatus() : 500;
+        await this.completeRequest(log.id, requestStartedAt, { stage: 'validation', outcome: status >= 500 ? 'failed' : 'rejected', localHttpStatus: status, errorMessage: 'Order lifecycle event could not be recorded' });
+        throw error;
+      }
+      return { errno: 0, errmsg: 'ok' };
+    }
     const requestLog = await this.prisma.didiOrderWebhookRequest.create({
       data: { applicationId: application.id, type: 'orderNew' },
       select: { id: true },
@@ -309,6 +327,7 @@ export class DidiOrderWebhooksService {
       if (payload.appId !== application.appId) {
         throw new BadRequestException('Payload app_id does not match webhook application');
       }
+      await this.completionOrders?.record(application.id, application.appId, webhookRoot);
 
       // Durably persist the canonical body before shop resolution. Publishing
       // that row to Redis remains detached, so queue latency/outage cannot
