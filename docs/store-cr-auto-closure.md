@@ -8,7 +8,7 @@ Se conserva la lógica de `static-rule-closure-every-15-minutes` de grocery_tool
 
 Las evaluaciones terminan cada cuarto de hora, de 06:00 a 03:00 del día siguiente, en hora de Ciudad de México. El acumulado comienza a las 04:00 del día operativo de cada marca: Ciudad de México para MX, Bogotá para CO y Costa Rica para CR. Antes de las 04:00, el día operativo comenzó el día anterior. Los intervalos incluyen el inicio y excluyen el final.
 
-Se usan las órdenes persistidas por Order Webhooks y las tiendas de la marca, aislando por aplicación. Las cancelaciones genéricas o sin fecha de creación suficiente se resuelven por el detalle de DiDi, incluso cuando solo están habilitados los cierres. Si quedan cancelaciones sin resolver para una tienda, se registra `incomplete` y no se cierra con un CR potencialmente incorrecto. El siguiente cuarto de hora vuelve a evaluar el acumulado. No se reconstruyen órdenes de antes del despliegue de la recepción de estados.
+Se usan las órdenes persistidas por Order Webhooks y las tiendas de la marca, aislando por aplicación. Las cancelaciones genéricas o sin fecha de creación suficiente se consultan en el detalle de DiDi al recibir el webhook, incluso cuando solo están habilitados los cierres. La tarea periódica reintenta los casos que DiDi no clasificó. El historial los muestra como «En proceso de clasificación»; no entran en el CR. Si siguen pendientes para una tienda, se registra `incomplete` y no se cierra con un CR potencialmente incorrecto. El siguiente cuarto de hora vuelve a evaluar el acumulado. No se reconstruyen órdenes de antes del despliegue de la recepción de estados.
 
 ## Ejecución y protección de Auto Open
 

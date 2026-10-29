@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { ConfigService } from '@nestjs/config';
+import { encrypt } from '../src/common/crypto.util';
 import { CompletionRateOrderService, parseLifecycle } from '../src/didi-order-webhooks/completion-rate-order.service';
 import { CompletionRateService } from '../src/integrations/completion-rate.service';
 import { classifyOrder, evaluateRate, monitoringWindow } from '../src/integrations/completion-rate.util';
@@ -9,6 +10,7 @@ import { DidiOrderWebhooksService } from '../src/didi-order-webhooks/didi-order-
 const appId = '5764607654490537991';
 const orderId = '9223372036854775807';
 const second = 1793102400;
+const config = new ConfigService({ DCHAT_URL: 'https://dchat.example.test/group/', DCHAT_GROUP_ID: 'common', APP_SECRET_ENCRYPTION_KEY: '42'.repeat(32) });
 const event = (type: string, status?: number, timestamp = second) => ({ type, app_id: appId, app_shop_id: 'store-1', timestamp: String(timestamp), data: { order_id: orderId, delivery_status: status,
   ...(type === 'orderNew' ? { order_info: { order_id: orderId, create_time: String(second - 600), shop: { app_shop_id: 'store-1', shop_id: '123' } } } : {}) } });
 
@@ -53,7 +55,7 @@ test('duplicate and out-of-order deliveries keep one order and preserve terminal
     create: async ({ data }: any) => { stored = { ...data }; },
     update: async ({ data }: any) => { stored = { ...stored, ...data }; },
   } };
-  const service = new CompletionRateOrderService({ $transaction: (fn: any) => fn(tx) } as any);
+  const service = new CompletionRateOrderService({ $transaction: (fn: any) => fn(tx) } as any, config);
   await service.record('app', appId, event('deliveryStatus', 600));
   await service.record('app', appId, event('orderNew', undefined, second - 300));
   await service.record('app', appId, event('deliveryStatus', 130, second - 100));
@@ -64,7 +66,60 @@ test('duplicate and out-of-order deliveries keep one order and preserve terminal
   await assert.rejects(() => service.record('app', appId, { ...event('orderCancel'), app_shop_id: 'other-store' }));
 });
 
-const config = new ConfigService({ DCHAT_URL: 'https://dchat.example.test/group/', DCHAT_GROUP_ID: 'common', APP_SECRET_ENCRYPTION_KEY: '42'.repeat(32) });
+test('a generic cancellation is classified from DiDi detail immediately after the webhook is saved', async () => {
+  const originalFetch = global.fetch;
+  const order: any = { id: 'row', applicationId: 'app', orderId, appShopId: 'store-1', status: 170, createdTime: null };
+  const app = { id: 'app', appId, appSecret: encrypt('secret', '42'.repeat(32)) };
+  let detailCalls = 0;
+  const prisma: any = {
+    completionRateOrder: {
+      findUnique: async () => order,
+      updateMany: async ({ where, data }: any) => {
+        assert.equal(where.status, 170);
+        Object.assign(order, data);
+        return { count: 1 };
+      },
+    },
+    brand: { findFirst: async () => ({ id: 'brand' }) },
+  };
+  try {
+    global.fetch = async input => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/refresh')) return Response.json({ errno: 0, data: { refresh_token: 'refresh' } });
+      if (url.pathname.endsWith('/get')) return Response.json({ errno: 0, data: { auth_token: 'access' } });
+      assert.equal(url.pathname, '/v1/order/order/detail');
+      assert.equal(url.searchParams.get('order_id'), orderId);
+      detailCalls++;
+      return Response.json({ errno: 0, data: { status: 921, create_time: second - 600, cancel_time: second } });
+    };
+    const service = new CompletionRateOrderService(prisma, config);
+    assert.equal(await service.resolveAfterWebhook(app, event('orderCancel')), true);
+    assert.equal(order.status, 921);
+    assert.equal(order.createdTime.toISOString(), new Date((second - 600) * 1000).toISOString());
+    assert.equal(detailCalls, 1);
+  } finally { global.fetch = originalFetch; }
+});
+
+test('an unclassified provider response stays available for the periodic retry', async () => {
+  const originalFetch = global.fetch;
+  const order: any = { id: 'row', applicationId: 'app', orderId, appShopId: 'store-1', status: 170, createdTime: null };
+  const app = { id: 'app', appId, appSecret: encrypt('secret', '42'.repeat(32)) };
+  let writes = 0;
+  const prisma: any = { completionRateOrder: { findUnique: async () => order, updateMany: async () => { writes++; return { count: 1 }; } },
+    brand: { findFirst: async () => ({ id: 'brand' }) } };
+  try {
+    global.fetch = async input => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/refresh')) return Response.json({ errno: 0, data: { refresh_token: 'refresh' } });
+      if (path.endsWith('/get')) return Response.json({ errno: 0, data: { auth_token: 'access' } });
+      return Response.json({ errno: 0, data: { status: 170 } });
+    };
+    assert.equal(await new CompletionRateOrderService(prisma, config).resolveAfterWebhook(app, event('orderCancel')), false);
+    assert.equal(order.status, 170);
+    assert.equal(writes, 0);
+  } finally { global.fetch = originalFetch; }
+});
+
 const dto = { crAlertsEnabled: true, crBaselineCancelRate: 10, crDeviationPoints: 15, crMinOrders: 10 };
 test('configuration requires an existing active application webhook and shared D-Chat destination', async () => {
   const brand: any = { application: null };
@@ -102,6 +157,26 @@ test('monitoring isolates application and brand shops, uses half-open windows an
   assert.deepEqual(queried.where.OR[0], { appShopId: { in: ['store-1'] } });
   assert.equal(queried.where.terminalTime.gte.toISOString(), '2026-10-28T12:00:00.000Z');
   assert.equal(queried.where.terminalTime.lt, end);
+});
+
+test('a cancellation awaiting detail is excluded from the CR denominator', async () => {
+  const end = new Date('2026-10-28T12:15:00Z');
+  const brand = { id: 'brand', brandName: 'Brand', applicationId: 'app', ...dto,
+    shops: [{ appShopId: 'store-1', shopId: '123', name: 'Store' }] };
+  const created: any[] = [];
+  const orders = [
+    ...Array.from({ length: 12 }, (_, i) => ({ orderId: `complete-${i}`, appShopId: 'store-1', status: 600 })),
+    ...Array.from({ length: 6 }, (_, i) => ({ orderId: `cancel-${i}`, appShopId: 'store-1', status: 921 })),
+    { orderId: 'pending-detail', appShopId: 'store-1', status: 170 },
+  ];
+  const prisma: any = { brand: { findMany: async () => [brand] }, completionRateOrder: { findMany: async () => orders },
+    completionRateRun: { findUnique: async () => null, create: async ({ data }: any) => { created.push(data); } } };
+  await new CompletionRateService(prisma, config).evaluate(end);
+  assert.equal(created[0].completed, 12);
+  assert.equal(created[0].cancelled, 6);
+  assert.equal(created[0].unknown, 1);
+  assert.equal(created[0].completionRate, 66.67);
+  assert.equal(created[0].status, 'incomplete');
 });
 
 test('D-Chat deliveries are claimed before sending and failures remain retryable', async () => {
@@ -143,4 +218,19 @@ test('existing authenticated endpoint routes lifecycle events without order conf
   assert.deepEqual(await service.receive('A'.repeat(43), Buffer.from(JSON.stringify(event('deliveryStatus', 600)))), { errno: 0, errmsg: 'ok' });
   assert.equal(captured[0], 'app');
   assert.equal(captured[2].type, 'deliveryStatus');
+});
+
+test('a cancellation webhook acknowledges the saved event even if immediate detail lookup fails', async () => {
+  let recorded = false, detailRequested = false;
+  const prisma: any = { application: { findFirst: async () => ({ id: 'app', appId, appSecret: 'encrypted' }) }, didiOrderWebhookRequest: {
+    create: async () => ({ id: 'request' }), update: async () => ({}),
+  } };
+  const service = new DidiOrderWebhooksService(prisma, config, undefined, undefined,
+    { record: async () => { recorded = true; }, resolveAfterWebhook: async () => {
+      assert.equal(recorded, true);
+      detailRequested = true;
+      throw new Error('DiDi temporarily unavailable');
+    } } as any);
+  assert.deepEqual(await service.receive('A'.repeat(43), Buffer.from(JSON.stringify(event('orderCancel')))), { errno: 0, errmsg: 'ok' });
+  assert.equal(detailRequested, true);
 });

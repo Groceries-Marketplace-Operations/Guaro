@@ -1,8 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { BAD_CANCELLATIONS, resolveCancellationDetail } from './resolve-cancellation-detail';
+
+export { BAD_CANCELLATIONS } from './resolve-cancellation-detail';
 
 const FINISHED = new Set([160, 600]);
-export const BAD_CANCELLATIONS = new Set([902, 921, 922, 923, 961, 971, 981]);
 const STATUSES = new Set([100, 120, 130, 140, 150, 160, 170, 180, 190, 200, 400, 500, 600, 901, ...BAD_CANCELLATIONS]);
 export function isTerminal(status: number) {
   return FINISHED.has(status) || status === 170 || status === 901 || BAD_CANCELLATIONS.has(status);
@@ -43,7 +46,19 @@ export function parseLifecycle(root: Record<string, any>, appId: string) {
 
 @Injectable()
 export class CompletionRateOrderService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService) {}
+
+  async resolveAfterWebhook(application: { id: string; appId: string; appSecret: string }, root: Record<string, unknown>) {
+    const data = root.data as Record<string, unknown>;
+    const order = await this.prisma.completionRateOrder.findUnique({
+      where: { applicationId_orderId: { applicationId: application.id, orderId: String(data.order_id) } },
+    });
+    if (!order || (order.status !== 170 && !(order.status === 901 && !order.createdTime))) return false;
+    const monitored = await this.prisma.brand.findFirst({ where: { applicationId: application.id, deletedAt: null,
+      OR: [{ crAlertsEnabled: true }, { crAutoClosureEnabled: true }] }, select: { id: true } });
+    if (!monitored) return false;
+    return resolveCancellationDetail(this.prisma, this.config.getOrThrow('APP_SECRET_ENCRYPTION_KEY'), application, order);
+  }
 
   async record(applicationId: string, appId: string, root: Record<string, unknown>) {
     const incoming = parseLifecycle(root, appId);

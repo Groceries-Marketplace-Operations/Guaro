@@ -20,7 +20,7 @@ Los valores iniciales son 10% de cancelación base, 15 puntos de desviación y 1
 
 Los eventos se guardan por aplicación + order ID, conservando identificadores int64 como texto. Los duplicados no suman órdenes y un evento en curso tardío no revierte un estado final. Un `orderNew` tardío puede completar la fecha de creación de una orden que ya terminó. No se guarda el cuerpo completo ni información de repartidores en las tablas nuevas.
 
-Las cancelaciones genéricas (170) se resuelven con `/v1/order/order/detail`, igual que en grocery_tools. Se consultan hasta 20 por ciclo en grupos de cinco, con tiempo límite por consulta. Las que aún no se pueden atribuir aparecen como datos incompletos y no generan una alerta de CR potencialmente engañosa.
+Las cancelaciones genéricas (170) se consultan en `/v1/order/order/detail` en cuanto se guarda su webhook, siguiendo el flujo de `CancelOrderStatusSerializer` de grocery_tools. La respuesta al webhook no espera a DiDi: una consulta fallida deja la cancelación guardada para el reintento periódico. También se consultan los estados 901 que llegaron sin fecha de creación. En cada ciclo se reintentan hasta 20 órdenes en grupos de cinco, con tiempo límite por consulta. El historial muestra las cancelaciones pendientes como «En proceso de clasificación»; quedan fuera del denominador y no generan alertas basadas en un CR potencialmente incompleto.
 
 ## Ejecución y entregas
 

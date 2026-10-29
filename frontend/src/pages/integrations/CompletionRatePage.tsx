@@ -26,7 +26,7 @@ interface Run {
   completionRate: number | null; status: string; attempts: number; error: string | null; sentAt: string | null;
 }
 const statuses: Record<string, string> = {
-  healthy: 'Dentro del umbral', insufficient_orders: 'Órdenes insuficientes', incomplete: 'Datos incompletos',
+  healthy: 'Dentro del umbral', insufficient_orders: 'Órdenes insuficientes', incomplete: 'En proceso de clasificación',
   suppressed: 'Alerta desactivada', pending: 'Alerta pendiente', sending: 'Enviando', sent: 'Alerta enviada', failed: 'Error de envío',
 };
 const date = (value: string) => new Date(value).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
@@ -71,11 +71,11 @@ function BrandConfiguration({ brand, dchatConfigured, closureDchatConfigured }: 
       {save.isError && <p role="alert">{error?.response?.data?.message ?? 'No fue posible guardar la configuración.'}</p>}
     </form>
     <h3>Últimas 100 revisiones</h3>
-    <p>Horario de Ciudad de México. Las órdenes en curso y las cancelaciones de cliente antes de 5 minutos no se incluyen en el CR.</p>
+    <p>Horario de Ciudad de México. El CR usa solo completadas y canceladas computables. «En proceso» indica cancelaciones cuyo motivo seguía en consulta a DiDi al cerrar esa revisión; no se incluyen en el CR hasta clasificarse.</p>
     {history.isPending && <p>Cargando historial…</p>}
     {history.isError && <p role="alert">No fue posible cargar el historial. <button className="btn" onClick={() => history.refetch()}>Reintentar</button></p>}
     {history.data?.length === 0 && <p>Aún no hay revisiones para esta marca.</p>}
-    {!!history.data?.length && <div className="cr-table"><table><thead><tr><th>Fin de ventana</th><th>Completadas</th><th>Canceladas</th><th>Sin resolver</th><th>CR</th><th>Resultado</th><th>Envío D-Chat</th></tr></thead>
+    {!!history.data?.length && <div className="cr-table"><table><thead><tr><th>Fin de ventana</th><th>Completadas</th><th>Canceladas</th><th>En proceso</th><th>CR</th><th>Resultado</th><th>Envío D-Chat</th></tr></thead>
       <tbody>{history.data.map(run => <tr key={run.id}><td>{date(run.windowEnd)}</td><td>{run.completed}</td><td>{run.cancelled}</td><td>{run.unknown}</td><td>{run.completionRate == null ? '—' : `${run.completionRate.toFixed(2)}%`}</td><td>{statuses[run.status] ?? run.status}</td><td>{run.sentAt ? date(run.sentAt) : run.error ? `${run.error} (${run.attempts}/3)` : '—'}</td></tr>)}</tbody>
     </table></div>}
     <StoreCrHistory brandId={brand.id} />

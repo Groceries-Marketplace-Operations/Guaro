@@ -13,7 +13,7 @@ interface Closure {
   notificationStatus: string; notificationAttempts: number;
 }
 const labels: Record<string, string> = {
-  healthy: 'CR sobre el umbral', insufficient_orders: 'Órdenes insuficientes', incomplete: 'Cancelaciones sin resolver',
+  healthy: 'CR sobre el umbral', insufficient_orders: 'Órdenes insuficientes', incomplete: 'En proceso de clasificación',
   closure_requested: 'Cierre solicitado', already_requested_today: 'Cierre ya registrado en este día', destination_unconfigured: 'D-Chat sin configurar',
   pending: 'Pendiente', closing: 'Solicitando cierre', closed: 'Cierre confirmado', unknown: 'Resultado sin confirmar',
   failed: 'Fallido', expired: 'Día operativo terminado', suppressed: 'Cierre cancelado por revalidación',
@@ -33,7 +33,7 @@ export default function StoreCrHistory({ brandId }: { brandId: string }) {
     <h3>Evaluaciones por tienda</h3><p>Últimas 100 decisiones, con las órdenes y reglas utilizadas para cada evaluación.</p>
     {history.data?.decisions.length === 0 && <p>Aún no hay evaluaciones por tienda.</p>}
     {!!history.data?.decisions.length && <div className="cr-table"><table><thead><tr><th>Tienda</th><th>Período acumulado</th><th>Órdenes</th><th>CR / umbral</th><th>Decisión</th></tr></thead><tbody>
-      {history.data.decisions.map(row => <tr key={row.id}><td>{row.shop.name ?? row.shop.appShopId}<br />{row.shop.appShopId}</td><td>{date(row.windowStart)}<br />{date(row.windowEnd)}</td><td>{row.completed} completadas · {row.cancelled} canceladas · {row.unknown} sin resolver<br />Mínimo: {row.minOrders}<details><summary>Ver IDs</summary><p>Completadas: {row.orderIds.completed.join(', ') || '—'}</p><p>Canceladas: {row.orderIds.cancelled.join(', ') || '—'}</p><p>Sin resolver: {row.orderIds.unknown.join(', ') || '—'}</p></details></td><td>{row.completionRate == null ? '—' : `${row.completionRate.toFixed(2)}%`} / {row.threshold}%</td><td>{labels[row.reason] ?? row.reason}</td></tr>)}
+      {history.data.decisions.map(row => <tr key={row.id}><td>{row.shop.name ?? row.shop.appShopId}<br />{row.shop.appShopId}</td><td>{date(row.windowStart)}<br />{date(row.windowEnd)}</td><td>{row.completed} completadas · {row.cancelled} canceladas · {row.unknown} en proceso<br />Mínimo: {row.minOrders}<details><summary>Ver IDs</summary><p>Completadas: {row.orderIds.completed.join(', ') || '—'}</p><p>Canceladas: {row.orderIds.cancelled.join(', ') || '—'}</p><p>En proceso de clasificación: {row.orderIds.unknown.join(', ') || '—'}</p></details></td><td>{row.completionRate == null ? '—' : `${row.completionRate.toFixed(2)}%`} / {row.threshold}%</td><td>{labels[row.reason] ?? row.reason}</td></tr>)}
     </tbody></table></div>}
   </section>;
 }

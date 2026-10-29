@@ -3,9 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { decrypt } from '../common/crypto.util';
-import { DIDI_BASE, getAuthToken, parseJsonKeepingIds } from '../queue/handlers/didi-food.util';
-import { BAD_CANCELLATIONS } from '../didi-order-webhooks/completion-rate-order.service';
+import { resolveCancellationDetail } from '../didi-order-webhooks/resolve-cancellation-detail';
 import { UpdateCompletionRateDto } from './dto/update-completion-rate.dto';
 import { classifyOrder, evaluateRate, monitoringWindow } from './completion-rate.util';
 import { StoreCrService } from './store-cr.service';
@@ -88,26 +86,8 @@ export class CompletionRateService {
       const app = await this.prisma.application.findFirst({ where: { id: order.applicationId, deletedAt: null, orderWebhookDisabledAt: null,
         brands: { some: { OR: [{ crAlertsEnabled: true }, { crAutoClosureEnabled: true }], deletedAt: null } } } });
       if (!app) return;
-      const local = order.appShopId ? null : await this.prisma.didiOrderWebhookEvent.findFirst({ where: { applicationId: app.id, orderId: order.orderId, type: 'orderNew' }, select: { appShopId: true } });
-      const appShopId = order.appShopId ?? local?.appShopId;
-      if (!appShopId) return;
       try {
-        const signal = AbortSignal.timeout(15_000);
-        const token = await getAuthToken(app.appId, decrypt(app.appSecret, this.config.getOrThrow('APP_SECRET_ENCRYPTION_KEY')), appShopId, signal);
-        const url = new URL(`${DIDI_BASE}/v1/order/order/detail`);
-        url.searchParams.set('auth_token', token);
-        url.searchParams.set('order_id', order.orderId);
-        const response = await fetch(url, { signal });
-        const body = parseJsonKeepingIds(await response.text());
-        const status = Number(body.data?.status);
-        if (!response.ok || Number(body.errno) !== 0 || !(status === 901 || BAD_CANCELLATIONS.has(status))) return;
-        const created = Number(body.data.create_time);
-        const cancelled = Number(body.data.cancel_time);
-        await this.prisma.completionRateOrder.updateMany({ where: { id: order.id, status: order.status }, data: {
-          status, appShopId,
-          ...(Number.isSafeInteger(created) && created > 0 ? { createdTime: new Date(created * 1000) } : {}),
-          ...(Number.isSafeInteger(cancelled) && cancelled > 0 ? { terminalTime: new Date(cancelled * 1000) } : {}),
-        } });
+        await resolveCancellationDetail(this.prisma, this.config.getOrThrow('APP_SECRET_ENCRYPTION_KEY'), app, order);
       } catch { this.logger.warn('Could not resolve cancellation source; it remains marked as unknown'); }
     }));
     }
