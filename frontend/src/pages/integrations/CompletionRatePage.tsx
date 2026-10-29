@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import client from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
 import { hasPermission } from '../../auth/permissions';
+import Topbar from '../../components/layout/Topbar';
 import './completion-rate.css';
 import StoreCrHistory from './StoreCrHistory';
 
@@ -88,7 +89,10 @@ export default function CompletionRatePage() {
   const query = useQuery({ queryKey: ['completion-rate'], queryFn: async () => (await client.get<{ brands: Brand[]; dchatConfigured: boolean; closureDchatConfigured: boolean }>('/integrations/completion-rate')).data });
   const brands = query.data?.brands ?? [];
   const brand = brands.find(item => item.id === selected);
-  return <div className="cr-page">
+  return <>
+    <Topbar breadcrumb={[{ label: 'Integraciones' }, { label: 'Alertas de CR' }]} />
+    <main className="main-content">
+      <div className="cr-page">
     <div className="page-header"><div><h1>Alertas y cierres por Completion Rate</h1><p>Monitoreo cada 15 minutos, de 06:00 a 03:00 del día siguiente (Ciudad de México).</p></div></div>
     <p>CR = completadas ÷ (completadas + cancelaciones computables). Las alertas por marca y los cierres por tienda usan grupos D-Chat separados.</p>
     {query.isPending && <p>Cargando marcas…</p>}
@@ -99,5 +103,7 @@ export default function CompletionRatePage() {
       {brands.filter(b => `${b.brandName} ${b.application?.appName ?? ''}`.toLowerCase().includes(search.toLowerCase())).map(b => <button type="button" key={b.id} className={`cr-brand ${b.id === selected ? 'selected' : ''}`} aria-pressed={b.id === selected} onClick={() => setSelected(b.id)}><strong>{b.brandName}</strong><span>{b.application?.appName ?? 'Sin aplicación'}</span><span>Alertas: {b.crAlertsEnabled ? 'activas' : 'inactivas'} · Cierre: {b.crAutoClosureEnabled ? 'activo' : 'inactivo'}</span></button>)}
       {query.data && brands.length === 0 && <p>No hay marcas disponibles.</p>}
     </section>{brand ? <BrandConfiguration key={brand.id} brand={brand} dchatConfigured={!!query.data?.dchatConfigured} closureDchatConfigured={!!query.data?.closureDchatConfigured} /> : <section className="card cr-detail"><p>Selecciona una marca para configurar sus alertas, cierres y consultar el historial.</p></section>}</div>
-  </div>;
+      </div>
+    </main>
+  </>;
 }
