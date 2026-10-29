@@ -88,6 +88,7 @@ export default function Sidebar() {
   const onboardingFeature = useStoreOnboardingFeature(isStoreOnboardingOperator || canManageStoreOnboarding);
   const showStoreOnboarding = canManageStoreOnboarding || (isStoreOnboardingOperator && onboardingFeature.globalEnabled);
   const integrationPermissions = [
+    'integrations.completion_rate',
     'integrations.forced_open', 'integrations.auto_stores_fetch', 'integrations.auto_menu_fetch',
     'integrations.auto_turn_off', 'integrations.emergencies', 'integrations.promotions_sftp',
     'integrations.custom', 'integrations.promotion_api', 'integrations.sftp_api',
@@ -201,6 +202,9 @@ export default function Sidebar() {
           </NavLink>}
           {can('integrations.emergencies') && <NavLink to="/integrations/emergencies" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconBriefcase /> {t('nav.emergencies')}
+          </NavLink>}
+          {can('integrations.completion_rate') && <NavLink to="/integrations/completion-rate" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconClipboard /> Alertas de CR
           </NavLink>}
           {can('integrations.promotions_sftp') && <NavLink to="/integrations/complex-promotions-sftp" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconLayers /> {t('nav.promotionsSftp')}

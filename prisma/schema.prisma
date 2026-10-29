@@ -857,6 +857,11 @@ model SftpApplication {
 }
 
 model Brand {
+  crAlertsEnabled Boolean @default(false) @map("cr_alerts_enabled")
+  crBaselineCancelRate Float @default(10) @map("cr_baseline_cancel_rate")
+  crDeviationPoints Float @default(15) @map("cr_deviation_points")
+  crMinOrders Int @default(10) @map("cr_min_orders")
+  crRuns CompletionRateRun[]
   sftpApiRules    SftpApiRule[]
   id              String           @id @default(uuid()) @db.Uuid
   brandId         String           @unique @map("brand_id")
@@ -899,6 +904,45 @@ model Brand {
   @@index([ownerId])
   @@index([applicationId])
   @@map("brand")
+}
+
+model CompletionRateOrder {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  orderId String @map("order_id")
+  appShopId String? @map("app_shop_id")
+  didiShopId String? @map("didi_shop_id")
+  status Int
+  createdTime DateTime? @map("created_time") @db.Timestamptz
+  eventTime DateTime @map("event_time") @db.Timestamptz
+  terminalTime DateTime? @map("terminal_time") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  @@unique([applicationId, orderId])
+  @@index([applicationId, terminalTime])
+  @@map("completion_rate_order")
+}
+
+model CompletionRateRun {
+  id String @id @default(uuid()) @db.Uuid
+  brandId String @map("brand_id") @db.Uuid
+  windowEnd DateTime @map("window_end") @db.Timestamptz
+  completed Int
+  cancelled Int
+  unknown Int @default(0)
+  completionRate Float? @map("completion_rate")
+  baseline Float
+  deviation Float
+  minOrders Int @map("min_orders")
+  status String
+  message String? @db.Text
+  attempts Int @default(0)
+  error String? @db.Text
+  sentAt DateTime? @map("sent_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  @@unique([brandId, windowEnd])
+  @@index([status, updatedAt])
+  @@map("completion_rate_run")
 }
 
 model SftpApiRule {

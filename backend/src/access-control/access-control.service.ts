@@ -36,11 +36,13 @@ const ACCESS_AREAS = {
   integrations: {
     name: 'Integrations',
     visibilityPermissions: [
+      'integrations.completion_rate',
       'integrations.forced_open', 'integrations.auto_stores_fetch', 'integrations.auto_menu_fetch',
       'integrations.auto_turn_off', 'integrations.emergencies', 'integrations.promotions_sftp',
       'integrations.custom', 'integrations.promotion_api', 'integrations.sftp_api',
     ],
     permissions: [
+      'integrations.completion_rate', 'integrations.completion_rate.configure',
       'integrations.forced_open', 'integrations.forced_open.configure', 'integrations.forced_open.execute',
       'integrations.auto_stores_fetch', 'integrations.auto_stores_fetch.configure', 'integrations.auto_stores_fetch.execute',
       'integrations.auto_menu_fetch', 'integrations.auto_menu_fetch.configure', 'integrations.auto_menu_fetch.execute',
