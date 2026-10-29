@@ -70,6 +70,7 @@ services:
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL}
       DCHAT_URL: ${DCHAT_URL:-}
       DCHAT_GROUP_ID: ${DCHAT_GROUP_ID:-}
+      DCHAT_STORE_CLOSURE_GROUP_ID: ${DCHAT_STORE_CLOSURE_GROUP_ID:-}
       NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=512}
       NODE_ENV: production
     networks:

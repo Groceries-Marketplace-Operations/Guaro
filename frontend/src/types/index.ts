@@ -708,6 +708,7 @@ export interface AutoOpenPool {
 }
 
 export interface AutoOpenExecution {
+  shopsSkippedCrClosure?: number;
   id: string;
   poolId: string;
   status: AutoOpenStatus;
@@ -732,6 +733,7 @@ export interface AutoOpenExecution {
   logs?: {
     mode?: 'dry_run' | 'live';
     brands: Array<{
+      shopsSkippedCrClosure?: number;
       brandName: string;
       shopsProcessed: number;
       shopsOpened: number;
@@ -747,6 +749,7 @@ export interface AutoOpenExecution {
 }
 
 export interface AutoOpenBrandExecution {
+  shopsSkippedCrClosure?: number;
   id: string;
   executionId: string;
   brandId: string;

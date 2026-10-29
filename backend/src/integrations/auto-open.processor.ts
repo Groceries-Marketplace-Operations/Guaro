@@ -18,6 +18,7 @@ import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { AutoOpenSelectionService } from './auto-open-selection.service';
 import { StoreOpeningGuardService } from './store-opening-guard.service';
 import { isEmergencyConflict } from './store-emergency-status';
+import { isCrClosureConflict } from './store-cr.util';
 
 export { LIVE_AUTO_OPEN_EMERGENCY_STATUSES } from './auto-open-selection.service';
 
@@ -33,6 +34,7 @@ interface ShopError {
 }
 
 interface CountryNotificationBrand {
+  shopsSkippedCrClosure?: number;
   brandName: string;
   status: AutoOpenStatus;
   totalShops: number;
@@ -46,6 +48,7 @@ interface CountryNotificationBrand {
 }
 
 interface CountryNotificationInput {
+  shopsSkippedCrClosure?: number;
   executionId: string;
   poolName: string;
   country: string;
@@ -118,6 +121,7 @@ export function buildAutoOpenCountryNotification(input: CountryNotificationInput
     `**Candidatas para apertura:** ${input.shopsWouldOpen}`,
     `**Abiertas:** ${input.shopsOpened}`,
     `**Protegidas por emergencias:** ${input.shopsSkippedEmergency}`,
+    `**Protegidas por cierre CR:** ${input.shopsSkippedCrClosure ?? 0}`,
     `**Fallidas:** ${input.shopsFailed}`,
     `**Inicio:** ${input.startedAt?.toISOString() ?? 'No disponible'}`,
     `**Fin:** ${input.finishedAt?.toISOString() ?? 'No disponible'}`,
@@ -132,7 +136,7 @@ export function buildAutoOpenCountryNotification(input: CountryNotificationInput
     return `${index + 1}. ${presentation.emoji} **${run.brandName}** — ${presentation.label} · `
       + `procesadas ${run.shopsProcessed}/${run.totalShops} · `
       + `${input.dryRun ? 'abriría' : 'abiertas'} ${input.dryRun ? run.shopsWouldOpen : run.shopsOpened} · `
-      + `emergencias ${run.shopsSkippedEmergency} · fallidas ${run.shopsFailed}`
+      + `emergencias ${run.shopsSkippedEmergency} · cierre CR ${run.shopsSkippedCrClosure ?? 0} · fallidas ${run.shopsFailed}`
       + (run.errorMessage ? ` · error: ${oneLine(run.errorMessage, 220)}` : '');
   });
   const recordedErrors = input.brandRuns.flatMap(run => run.shopErrors.map(error => ({
@@ -172,6 +176,7 @@ export function buildAutoOpenCountryNotification(input: CountryNotificationInput
 }
 
 export interface BrandLog {
+  shopsSkippedCrClosure?: number;
   brandName: string;
   shopsProcessed: number;
   shopsOpened: number;
@@ -277,6 +282,7 @@ export class AutoOpenProcessor extends WorkerHost {
     const shopsOpened = execution.brandRuns.reduce((total, run) => total + run.shopsOpened, 0);
     const shopsWouldOpen = execution.brandRuns.reduce((total, run) => total + run.shopsWouldOpen, 0);
     const shopsSkippedEmergency = execution.brandRuns.reduce((total, run) => total + run.shopsSkippedEmergency, 0);
+    const shopsSkippedCrClosure = execution.brandRuns.reduce((total, run) => total + (run.shopsSkippedCrClosure ?? 0), 0);
     const shopsFailed = execution.brandRuns.reduce((total, run) => total + run.shopsFailed, 0);
     const allComplete = execution.totalBrands === completed;
     const progressPercent = execution.totalBrands > 0
@@ -290,6 +296,7 @@ export class AutoOpenProcessor extends WorkerHost {
         shopsOpened: run.shopsOpened,
         shopsWouldOpen: run.shopsWouldOpen,
         shopsSkippedEmergency: run.shopsSkippedEmergency,
+        shopsSkippedCrClosure: run.shopsSkippedCrClosure ?? 0,
         shopsFailed: run.shopsFailed,
         ...(run.errorMessage ? { error: run.errorMessage } : {}),
         ...(serializedShopErrors(run.shopErrors) ? { shopErrors: serializedShopErrors(run.shopErrors) } : {}),
@@ -312,6 +319,7 @@ export class AutoOpenProcessor extends WorkerHost {
         shopsOpened,
         shopsWouldOpen,
         shopsSkippedEmergency,
+        shopsSkippedCrClosure,
         shopsFailed,
         progressPercent,
         heartbeatAt: new Date(),
@@ -343,6 +351,7 @@ export class AutoOpenProcessor extends WorkerHost {
           shopsOpened,
           shopsWouldOpen,
           shopsSkippedEmergency,
+          shopsSkippedCrClosure,
           shopsFailed,
           errorMessage,
           startedAt: execution.startedAt,
@@ -356,6 +365,7 @@ export class AutoOpenProcessor extends WorkerHost {
             shopsOpened: run.shopsOpened,
             shopsWouldOpen: run.shopsWouldOpen,
             shopsSkippedEmergency: run.shopsSkippedEmergency,
+            shopsSkippedCrClosure: run.shopsSkippedCrClosure ?? 0,
             shopsFailed: run.shopsFailed,
             errorMessage: run.errorMessage,
             shopErrors: serializedShopErrors(run.shopErrors) ?? [],
@@ -368,7 +378,7 @@ export class AutoOpenProcessor extends WorkerHost {
     this.logger.log(
       `Auto Open ${executionId} ${execution.dryRun ? 'dry-run' : 'live'} finished: `
       + `${completed}/${execution.totalBrands} brands, ${shopsOpened} opened, ${shopsFailed} failed, `
-      + `${shopsSkippedEmergency} protected`,
+      + `${shopsSkippedEmergency} protected by emergency, ${shopsSkippedCrClosure} protected by CR`,
     );
   }
 
@@ -536,6 +546,7 @@ export class AutoOpenProcessor extends WorkerHost {
       let shopsOpened = 0;
       let shopsWouldOpen = 0;
       let shopsSkippedEmergency = 0;
+      let shopsSkippedCrClosure = 0;
       let shopsFailed = 0;
       const shopErrors: ShopError[] = [];
 
@@ -549,12 +560,14 @@ export class AutoOpenProcessor extends WorkerHost {
           brand.id,
           batch.map(shop => shop.id),
         );
+        const crProtected = await this.openingGuard.crProtectedShops(batch.map(shop => shop.id));
 
         for (const shop of batch) {
           if (protection.blockAll || protection.blockedShopIds.has(shop.id)) {
             shopsSkippedEmergency++;
             continue;
           }
+          if (crProtected.has(shop.id)) { shopsSkippedCrClosure++; continue; }
           shopsProcessed++;
           shopsWouldOpen++;
           if (execution.dryRun) continue;
@@ -579,6 +592,12 @@ export class AutoOpenProcessor extends WorkerHost {
             });
             shopsOpened++;
           } catch (error) {
+            if (isCrClosureConflict(error)) {
+              shopsProcessed--;
+              shopsWouldOpen--;
+              shopsSkippedCrClosure++;
+              continue;
+            }
             if (isEmergencyConflict(error)) {
               shopsProcessed--;
               shopsWouldOpen--;
@@ -593,13 +612,14 @@ export class AutoOpenProcessor extends WorkerHost {
         }
 
         await this.checkpointBrand(executionId, brandRunId, brand.brandName, {
-          shopsProcessed, shopsOpened, shopsWouldOpen, shopsSkippedEmergency, shopsFailed, shopErrors,
+          shopsProcessed, shopsOpened, shopsWouldOpen, shopsSkippedEmergency, shopsSkippedCrClosure, shopsFailed, shopErrors,
         });
         if (!execution.dryRun && index + BATCH_SIZE < brand.shops.length) await sleep(COOLDOWN_BATCH_MS);
       }
 
       await this.finishBrand(executionId, brandRunId, shopsFailed ? AutoOpenStatus.partial_success : AutoOpenStatus.done, {
         totalShops: brand.shops.length,
+        shopsSkippedCrClosure,
         shopsProcessed,
         shopsOpened,
         shopsWouldOpen,
@@ -620,6 +640,7 @@ export class AutoOpenProcessor extends WorkerHost {
     brandRunId: string,
     brandName: string,
     metrics: {
+      shopsSkippedCrClosure: number;
       shopsProcessed: number;
       shopsOpened: number;
       shopsWouldOpen: number;
@@ -645,6 +666,7 @@ export class AutoOpenProcessor extends WorkerHost {
     brandRunId: string,
     status: AutoOpenStatus,
     data: Partial<{
+      shopsSkippedCrClosure: number;
       totalShops: number;
       shopsProcessed: number;
       shopsOpened: number;

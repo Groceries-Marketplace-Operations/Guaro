@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
@@ -8,10 +8,13 @@ import { DIDI_BASE, getAuthToken, parseJsonKeepingIds } from '../queue/handlers/
 import { BAD_CANCELLATIONS } from '../didi-order-webhooks/completion-rate-order.service';
 import { UpdateCompletionRateDto } from './dto/update-completion-rate.dto';
 import { classifyOrder, evaluateRate, monitoringWindow } from './completion-rate.util';
+import { StoreCrService } from './store-cr.service';
+import { closureDestination } from './store-cr.util';
 
 const brandSelect = {
   id: true, brandName: true, country: true, applicationId: true,
   crAlertsEnabled: true, crBaselineCancelRate: true, crDeviationPoints: true, crMinOrders: true,
+  crAutoClosureEnabled: true, crAutoClosureThreshold: true, crAutoClosureMinOrders: true,
   application: { select: { appName: true, deletedAt: true, orderWebhookCreatedAt: true, orderWebhookDisabledAt: true, orderWebhookTokenHash: true } },
   _count: { select: { shops: { where: { deletedAt: null } } } },
 } satisfies Prisma.BrandSelect;
@@ -20,7 +23,8 @@ const brandSelect = {
 export class CompletionRateService {
   private readonly logger = new Logger(CompletionRateService.name);
   private ticking = false;
-  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService) {}
+  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService,
+    @Optional() private readonly storeCr?: StoreCrService) {}
 
   private destination() {
     const base = this.config.get<string>('DCHAT_URL');
@@ -34,7 +38,7 @@ export class CompletionRateService {
 
   async list() {
     const brands = await this.prisma.brand.findMany({ where: { deletedAt: null }, select: brandSelect, orderBy: { brandName: 'asc' } });
-    return { dchatConfigured: !!this.destination(), brands: brands.map(({ application, ...brand }) => ({
+    return { dchatConfigured: !!this.destination(), closureDchatConfigured: !!closureDestination(this.config.get<string>('DCHAT_URL'), this.config.get<string>('DCHAT_STORE_CLOSURE_GROUP_ID')), brands: brands.map(({ application, ...brand }) => ({
       ...brand, application: application ? { appName: application.appName } : null,
       webhookReady: !!application && !application.deletedAt && !!application.orderWebhookCreatedAt && !!application.orderWebhookTokenHash && !application.orderWebhookDisabledAt,
     })) };
@@ -44,12 +48,20 @@ export class CompletionRateService {
     const brand = await this.prisma.brand.findFirst({ where: { id, deletedAt: null }, select: brandSelect });
     if (!brand) throw new NotFoundException('Brand not found');
     const app = brand.application;
-    if (dto.crAlertsEnabled && (!app || app.deletedAt || !app.orderWebhookCreatedAt || !app.orderWebhookTokenHash || app.orderWebhookDisabledAt)) {
+    const closureEnabled = dto.crAutoClosureEnabled ?? brand.crAutoClosureEnabled;
+    if ((dto.crAlertsEnabled || closureEnabled) && (!app || app.deletedAt || !app.orderWebhookCreatedAt || !app.orderWebhookTokenHash || app.orderWebhookDisabledAt)) {
       throw new BadRequestException('Associate the brand with an application with an active DiDi Order Webhook first');
     }
     if (dto.crBaselineCancelRate + dto.crDeviationPoints > 100) throw new BadRequestException('Baseline plus deviation must not exceed 100%');
     if (dto.crAlertsEnabled && !this.destination()) throw new BadRequestException('Configure the shared D-Chat destination first');
-    await this.prisma.brand.update({ where: { id }, data: dto });
+    if (closureEnabled && !closureDestination(this.config.get<string>('DCHAT_URL'), this.config.get<string>('DCHAT_STORE_CLOSURE_GROUP_ID'))) {
+      throw new BadRequestException('Configure the dedicated D-Chat group for store closures first');
+    }
+    await this.prisma.$transaction(async tx => {
+      await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(CAST(${id} AS text), 0))`;
+      await tx.brand.update({ where: { id }, data: dto });
+    }, { timeout: 15_000 });
     return { ok: true };
   }
 
@@ -57,20 +69,24 @@ export class CompletionRateService {
     return this.prisma.completionRateRun.findMany({ where: { brandId }, orderBy: { windowEnd: 'desc' }, take: 100 });
   }
 
+  storeHistory(brandId: string) {
+    return this.storeCr!.history(brandId);
+  }
+
   // Generic cancellation events do not identify the responsible party. Resolve
   // them using the same DiDi order-detail endpoint as grocery_tools.
   private async resolveCancellations() {
-    const brands = await this.prisma.brand.findMany({ where: { crAlertsEnabled: true, deletedAt: null, applicationId: { not: null } }, select: { applicationId: true }, distinct: ['applicationId'] });
+    const brands = await this.prisma.brand.findMany({ where: { OR: [{ crAlertsEnabled: true }, { crAutoClosureEnabled: true }], deletedAt: null, applicationId: { not: null } }, select: { applicationId: true }, distinct: ['applicationId'] });
     const orders = await this.prisma.completionRateOrder.findMany({
-      where: { status: 170, applicationId: { in: brands.map(b => b.applicationId!) }, terminalTime: { gte: new Date(Date.now() - 60 * 60_000) } },
+      where: { OR: [{ status: 170 }, { status: 901, createdTime: null }], applicationId: { in: brands.map(b => b.applicationId!) }, terminalTime: { gte: new Date(Date.now() - 26 * 60 * 60_000) } },
       orderBy: { updatedAt: 'asc' }, take: 20,
     });
     for (let offset = 0; offset < orders.length; offset += 5) {
     await Promise.all(orders.slice(offset, offset + 5).map(async order => {
       // Rotate unresolved orders so one provider failure cannot starve later ones.
-      await this.prisma.completionRateOrder.updateMany({ where: { id: order.id, status: 170 }, data: { updatedAt: new Date() } });
+      await this.prisma.completionRateOrder.updateMany({ where: { id: order.id, status: order.status }, data: { updatedAt: new Date() } });
       const app = await this.prisma.application.findFirst({ where: { id: order.applicationId, deletedAt: null, orderWebhookDisabledAt: null,
-        brands: { some: { crAlertsEnabled: true, deletedAt: null } } } });
+        brands: { some: { OR: [{ crAlertsEnabled: true }, { crAutoClosureEnabled: true }], deletedAt: null } } } });
       if (!app) return;
       const local = order.appShopId ? null : await this.prisma.didiOrderWebhookEvent.findFirst({ where: { applicationId: app.id, orderId: order.orderId, type: 'orderNew' }, select: { appShopId: true } });
       const appShopId = order.appShopId ?? local?.appShopId;
@@ -87,7 +103,7 @@ export class CompletionRateService {
         if (!response.ok || Number(body.errno) !== 0 || !(status === 901 || BAD_CANCELLATIONS.has(status))) return;
         const created = Number(body.data.create_time);
         const cancelled = Number(body.data.cancel_time);
-        await this.prisma.completionRateOrder.updateMany({ where: { id: order.id, status: 170 }, data: {
+        await this.prisma.completionRateOrder.updateMany({ where: { id: order.id, status: order.status }, data: {
           status, appShopId,
           ...(Number.isSafeInteger(created) && created > 0 ? { createdTime: new Date(created * 1000) } : {}),
           ...(Number.isSafeInteger(cancelled) && cancelled > 0 ? { terminalTime: new Date(cancelled * 1000) } : {}),
@@ -105,10 +121,19 @@ export class CompletionRateService {
       const end = monitoringWindow(new Date());
       if (end) {
         await this.resolveCancellations();
-        await this.evaluate(end);
+        const evaluations = await Promise.allSettled([this.evaluate(end), this.storeCr?.evaluate(end)]);
+        for (const evaluation of evaluations) {
+          if (evaluation.status === 'rejected') this.logger.error('A CR evaluation failed; next tick will retry');
+        }
       }
-      await this.deliver();
     } catch { this.logger.error('Completion rate monitoring failed; will retry on the next tick'); }
+    try {
+      await this.storeCr?.processPending();
+    } catch { this.logger.error('Store CR closure processing failed; will retry on the next tick'); }
+    try {
+      await this.deliver();
+      await this.storeCr?.notify();
+    } catch { this.logger.error('CR notification delivery failed; will retry on the next tick'); }
     finally { this.ticking = false; }
   }
 

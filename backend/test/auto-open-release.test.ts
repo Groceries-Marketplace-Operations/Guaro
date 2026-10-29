@@ -10,6 +10,7 @@ import {
 import { AutoOpenPoolsService } from '../src/integrations/auto-open-pools.service';
 import { AutoOpenSelectionService } from '../src/integrations/auto-open-selection.service';
 import { hourInTimezone } from '../src/integrations/auto-open.scheduler';
+import { crClosureConflict } from '../src/integrations/store-cr.util';
 
 interface FakeBrandRun {
   id: string;
@@ -34,6 +35,8 @@ function fixture(
   dynamicEmergency = false,
   webhookId: string | null = null,
   guardEmergency = false,
+  crProtected = false,
+  guardCr = false,
 ) {
   const queued: Array<{ name: string; data: { executionId: string; brandRunId: string } }> = [];
   const notifications: Array<{ webhookId: string; payload: any }> = [];
@@ -131,7 +134,9 @@ function fixture(
       queue as never,
       new AutoOpenSelectionService(prisma as never),
       {
+        crProtectedShops: async () => new Set<string>(crProtected ? ['shop-uuid-1'] : []),
         withOpeningPermit: async ({ execute }: { execute: () => Promise<unknown> }) => {
+          if (guardCr) throw crClosureConflict(new Date(Date.now() + 3600_000));
           if (guardEmergency) {
             throw { getResponse: () => ({ code: 'EMERGENCY_CONFLICT' }) };
           }
@@ -354,4 +359,33 @@ test('Auto Open capabilities expose the server LIVE gate without mutating config
   );
   assert.equal(enabled.capabilities().liveModeAvailable, true);
   assert.equal(enabled.capabilities().remoteWritesEnabled, true);
+});
+
+test('Auto Open excludes stores protected by CR in both dry-run and live, with a separate skip count', async t => {
+  const originalFetch = global.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = successfulDidiFetch(calls) as typeof fetch;
+  for (const dryRun of [true, false]) {
+    const value = fixture(dryRun, true, false, null, false, true);
+    await prepareAndRunBrand(value);
+    assert.equal(value.execution.shopsSkippedCrClosure, 1);
+    assert.equal(value.execution.shopsSkippedEmergency, 0);
+    assert.equal(value.execution.shopsFailed, 0);
+    assert.equal(value.execution.shopsWouldOpen, 0);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('final permit skips a CR closure committed after the initial Auto Open check', async t => {
+  const originalFetch = global.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = successfulDidiFetch(calls) as typeof fetch;
+  const value = fixture(false, true, false, null, false, false, true);
+  await prepareAndRunBrand(value);
+  assert.equal(value.execution.shopsSkippedCrClosure, 1);
+  assert.equal(value.execution.shopsFailed, 0);
+  assert.equal(value.execution.shopsWouldOpen, 0);
+  assert.equal(calls.filter(call => call.url.includes('/shop/setStatus')).length, 0);
 });

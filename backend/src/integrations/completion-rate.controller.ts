@@ -29,4 +29,9 @@ export class CompletionRateController {
     await this.access(user);
     return this.service.history(id);
   }
+  @Get(':brandId/store-history')
+  async storeHistory(@Param('brandId', ParseUUIDPipe) id: string, @CurrentUser() user: JwtUser) {
+    await this.access(user);
+    return this.service.storeHistory(id);
+  }
 }
