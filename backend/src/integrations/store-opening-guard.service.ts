@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { crClosureConflict, STORE_CR_BLOCKING_STATUSES } from './store-cr.util';
 import {
   storeEmergencyConflict,
   storeEmergencyLiveWhere,
@@ -33,6 +34,13 @@ const OPENING_PERMIT_PRE_WRITE_BUDGET_MS = 10_000;
 @Injectable()
 export class StoreOpeningGuardService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async crProtectedShops(shopIds: string[]) {
+    const rows = await this.prisma.storeCrClosure.findMany({ where: {
+      shopId: { in: shopIds }, status: { in: STORE_CR_BLOCKING_STATUSES }, blockedUntil: { gt: new Date() },
+    }, select: { shopId: true } });
+    return new Set(rows.map(row => row.shopId));
+  }
 
   /**
    * Fast UX preflight only. The per-target permit below is the authoritative
@@ -119,6 +127,11 @@ export class StoreOpeningGuardService {
           emergency,
           shop: { id: shop.id, shopId: shop.shopId },
         });
+      }
+      if (options.operation === 'auto_open') {
+        const closure = await tx.storeCrClosure.findFirst({ where: { shopId: shop.id,
+          status: { in: STORE_CR_BLOCKING_STATUSES }, blockedUntil: { gt: new Date() } }, select: { blockedUntil: true } });
+        if (closure) throw crClosureConflict(closure.blockedUntil);
       }
       if (options.validate) await options.validate(tx);
       if (Date.now() - permitStartedAt > OPENING_PERMIT_PRE_WRITE_BUDGET_MS) {

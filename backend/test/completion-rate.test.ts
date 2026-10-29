@@ -70,6 +70,7 @@ test('configuration requires an existing active application webhook and shared D
   const brand: any = { application: null };
   let writes = 0;
   const prisma: any = { brand: { findFirst: async () => brand, update: async () => { writes++; } } };
+  prisma.$transaction = (fn: any) => fn({ brand: prisma.brand, $executeRaw: async () => 1 });
   const service = new CompletionRateService(prisma, config);
   await assert.rejects(() => service.update('brand', dto));
   brand.application = { orderWebhookCreatedAt: new Date(), orderWebhookTokenHash: 'hash', deletedAt: null, orderWebhookDisabledAt: new Date() };

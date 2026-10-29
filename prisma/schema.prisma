@@ -857,6 +857,11 @@ model SftpApplication {
 }
 
 model Brand {
+  crAutoClosureEnabled Boolean @default(false) @map("cr_auto_closure_enabled")
+  crAutoClosureThreshold Float @default(50) @map("cr_auto_closure_threshold")
+  crAutoClosureMinOrders Int @default(3) @map("cr_auto_closure_min_orders")
+  crStoreDecisions StoreCrDecision[]
+  crStoreClosures StoreCrClosure[]
   crAlertsEnabled Boolean @default(false) @map("cr_alerts_enabled")
   crBaselineCancelRate Float @default(10) @map("cr_baseline_cancel_rate")
   crDeviationPoints Float @default(15) @map("cr_deviation_points")
@@ -1061,6 +1066,8 @@ model BrandWebhook {
 }
 
 model Shop {
+  crDecisions StoreCrDecision[]
+  crClosures StoreCrClosure[]
   id                String            @id @default(uuid()) @db.Uuid
   shopId            String            @unique @map("shop_id")
   appShopId         String            @map("app_shop_id")
@@ -1096,6 +1103,63 @@ model Shop {
   @@unique([brandId, appShopId])
   @@index([brandId])
   @@map("shop")
+}
+
+model StoreCrDecision {
+  id String @id @default(uuid()) @db.Uuid
+  brandId String @map("brand_id") @db.Uuid
+  shopId String @map("shop_id") @db.Uuid
+  windowStart DateTime @map("window_start") @db.Timestamptz
+  windowEnd DateTime @map("window_end") @db.Timestamptz
+  completed Int
+  cancelled Int
+  unknown Int
+  completionRate Float? @map("completion_rate")
+  threshold Float
+  minOrders Int @map("min_orders")
+  reason String
+  orderIds Json @map("order_ids")
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  @@unique([shopId, windowEnd])
+  @@index([brandId, windowEnd])
+  @@map("store_cr_decision")
+}
+
+model StoreCrClosure {
+  id String @id @default(uuid()) @db.Uuid
+  brandId String @map("brand_id") @db.Uuid
+  shopId String @map("shop_id") @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  appShopId String @map("app_shop_id")
+  brandName String @map("brand_name")
+  shopName String @map("shop_name")
+  operationalStart DateTime @map("operational_start") @db.Timestamptz
+  blockedUntil DateTime @map("blocked_until") @db.Timestamptz
+  evaluatedAt DateTime @map("evaluated_at") @db.Timestamptz
+  completionRate Float @map("completion_rate")
+  completed Int
+  cancelled Int
+  threshold Float
+  minOrders Int @map("min_orders")
+  status String @default("pending")
+  attempts Int @default(0)
+  error String? @db.Text
+  closedAt DateTime? @map("closed_at") @db.Timestamptz
+  notificationStatus String @default("waiting") @map("notification_status")
+  notificationAttempts Int @default(0) @map("notification_attempts")
+  notificationUpdatedAt DateTime? @map("notification_updated_at") @db.Timestamptz
+  notifiedAt DateTime? @map("notified_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  @@unique([shopId, operationalStart])
+  @@index([brandId, createdAt])
+  @@index([shopId, blockedUntil])
+  @@index([status, updatedAt])
+  @@index([notificationStatus, notificationUpdatedAt])
+  @@map("store_cr_closure")
 }
 
 model DidiOrderWebhookEvent {
@@ -1505,6 +1569,7 @@ model AutoOpenPoolBrandExclusion {
 }
 
 model AutoOpenExecution {
+  shopsSkippedCrClosure Int @default(0) @map("shops_skipped_cr_closure")
   id                    String         @id @default(uuid()) @db.Uuid
   poolId                String         @map("pool_id") @db.Uuid
   status                AutoOpenStatus @default(pending)
@@ -1538,6 +1603,7 @@ model AutoOpenExecution {
 }
 
 model AutoOpenBrandExecution {
+  shopsSkippedCrClosure Int @default(0) @map("shops_skipped_cr_closure")
   id                    String         @id @default(uuid()) @db.Uuid
   executionId           String         @map("execution_id") @db.Uuid
   brandId               String         @map("brand_id") @db.Uuid

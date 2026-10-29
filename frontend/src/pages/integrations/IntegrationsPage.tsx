@@ -871,6 +871,7 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
       shopsOpened: run.shopsOpened,
       shopsWouldOpen: run.shopsWouldOpen,
       shopsSkippedEmergency: run.shopsSkippedEmergency,
+      shopsSkippedCrClosure: run.shopsSkippedCrClosure ?? 0,
       shopsFailed: run.shopsFailed,
       error: run.errorMessage,
       shopErrors: run.shopErrors,
@@ -917,6 +918,7 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
               ? `${execution.shopsWouldOpen}/${execution.totalShops} abriría`
               : `${execution.shopsOpened}/${execution.totalShops} ${t('pages.integrations.shopsOpened')}`}
             {execution.shopsSkippedEmergency > 0 ? ` · ${execution.shopsSkippedEmergency} protegidas` : ''}
+            {(execution.shopsSkippedCrClosure ?? 0) > 0 ? ` · ${execution.shopsSkippedCrClosure} protegidas por CR` : ''}
             {execution.shopsFailed > 0 ? ` · ${execution.shopsFailed} fallidas` : ''}
           </span>
         )}
@@ -944,6 +946,7 @@ function ExecutionRow({ execution, t }: { execution: AutoOpenExecution; t: (k: s
                   : <span style={{ color: 'var(--text-muted)' }}>
                     {execution.dryRun ? `${b.shopsWouldOpen}/${b.shopsProcessed} abriría` : `${b.shopsOpened}/${b.shopsProcessed} abiertas`}
                     {b.shopsSkippedEmergency > 0 ? ` · ${b.shopsSkippedEmergency} protegidas` : ''}
+                    {(b.shopsSkippedCrClosure ?? 0) > 0 ? ` · ${b.shopsSkippedCrClosure} protegidas por CR` : ''}
                     {(b.shopsFailed ?? 0) > 0 ? ` · ${b.shopsFailed} fallidas` : ''}
                   </span>
                 }

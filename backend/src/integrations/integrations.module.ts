@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CompletionRateController } from './completion-rate.controller';
 import { CompletionRateService } from './completion-rate.service';
+import { StoreCrService } from './store-cr.service';
 import { BullModule } from '@nestjs/bullmq';
 import { PrismaModule } from '../prisma/prisma.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
@@ -52,6 +53,7 @@ import { StoreOpeningGuardService } from './store-opening-guard.service';
   ],
   controllers: [CompletionRateController, AutoTurnOffController, AutoFetchController, StoreEmergencyController, ForcedOpenController, AutoOpenPoolsController],
   providers: [
+    StoreCrService,
     CompletionRateService,
     AutoTurnOffService,
     AutoTurnOffCoordinator,
