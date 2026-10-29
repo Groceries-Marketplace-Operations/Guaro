@@ -8,6 +8,8 @@ const ADMIN_DIRECTOR = ALL_EDITABLE;
 const BPO_ADMIN = ALL_EDITABLE;
 
 export const PERMISSION_CATALOG = [
+  { key: 'integrations.completion_rate', group: 'Integraciones', label: 'Alertas de CR', description: 'Consultar monitoreo y alertas de Completion Rate.', allowedRoles: ADMIN },
+  { key: 'integrations.completion_rate.configure', group: 'Integraciones', label: 'Configurar alertas de CR', description: 'Configurar umbrales de alertas por marca.', allowedRoles: ADMIN },
   { key: 'integrations.sftp_api', group: 'Integraciones', label: 'SFTP to API', description: 'Consultar marcas y cargas SFTP a API.', allowedRoles: ADMIN },
   { key: 'integrations.sftp_api.configure', group: 'Integraciones', label: 'Configurar SFTP to API', description: 'Configurar conexiones, horarios y columnas.', allowedRoles: ADMIN },
   { key: 'integrations.sftp_api.execute', group: 'Integraciones', label: 'Ejecutar SFTP to API', description: 'Enviar menu completo o stock desde SFTP.', allowedRoles: ADMIN },

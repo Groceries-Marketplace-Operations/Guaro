@@ -42,6 +42,7 @@ import RoleAccessPage from './pages/admin/RoleAccessPage';
 import StoreOnboardingPage from './pages/integrations/StoreOnboardingPage';
 import { ThemeProvider } from './theme/ThemeContext';
 import SftpApiPage from './pages/integrations/SftpApiPage';
+import CompletionRatePage from './pages/integrations/CompletionRatePage';
 import AppShopInventoryPage from './pages/admin/AppShopInventoryPage';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
@@ -96,6 +97,7 @@ export default function App() {
               <Route path="applications" element={protectedPage('applications.manage', <ApplicationsPage />)} />
               <Route path="applications/webhook-logs" element={protectedPage('applications.update', <OrderWebhookLogsPage />)} />
               <Route path="integrations/auto-open" element={protectedPage('integrations.forced_open', <IntegrationsPage />)} />
+              <Route path="integrations/completion-rate" element={protectedPage('integrations.completion_rate', <CompletionRatePage />)} />
               <Route path="integrations/forced-open" element={protectedPage('integrations.forced_open', <ForcedOpenStoresPage />)} />
               <Route path="integrations/auto-turn-off" element={protectedPage('integrations.auto_turn_off', <AutoTurnOffItemsPage />)} />
               <Route path="integrations/auto-stores-fetch" element={protectedPage('integrations.auto_stores_fetch', <AutoFetchPage kind="stores" />)} />

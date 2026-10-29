@@ -1,0 +1,19 @@
+.cr-page { max-width: 1500px; margin: 0 auto; }
+.cr-page p { color: var(--text-secondary, #666); line-height: 1.5; }
+.cr-layout { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 20px; margin-top: 20px; align-items: start; }
+.cr-brands { max-height: 70vh; overflow: auto; padding: 8px; }
+.cr-brand { width: 100%; display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 14px; border: 1px solid transparent; background: transparent; color: inherit; border-radius: 8px; cursor: pointer; }
+.cr-brand span { font-size: 12px; opacity: .75; }
+.cr-brand.selected { border-color: #df6500; background: #df650015; }
+.cr-detail { padding: 24px; min-width: 0; }
+.cr-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 20px 0; }
+.cr-fields label, .cr-search { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.cr-fields input, .cr-search input { width: 100%; padding: 10px; border: 1px solid var(--border, #ccc); border-radius: 6px; background: var(--bg-card, transparent); color: inherit; }
+.cr-search { max-width: 400px; }
+.cr-toggle { display: flex; align-items: center; gap: 10px; }
+.cr-page fieldset { border: 0; padding: 0; margin: 0; }
+.cr-notice { padding: 14px; border: 1px solid #e6aa47; border-radius: 8px; background: #e6aa4715; }
+.cr-table { overflow-x: auto; }
+.cr-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.cr-table th, .cr-table td { text-align: left; padding: 12px 8px; border-bottom: 1px solid var(--border, #ddd); }
+@media (max-width: 1000px) { .cr-layout, .cr-fields { grid-template-columns: 1fr; } .cr-brands { max-height: 260px; } }
