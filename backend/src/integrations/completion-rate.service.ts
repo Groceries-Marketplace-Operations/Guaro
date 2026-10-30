@@ -76,7 +76,7 @@ export class CompletionRateService {
   private async resolveCancellations() {
     const brands = await this.prisma.brand.findMany({ where: { OR: [{ crAlertsEnabled: true }, { crAutoClosureEnabled: true }], deletedAt: null, applicationId: { not: null } }, select: { applicationId: true }, distinct: ['applicationId'] });
     const orders = await this.prisma.completionRateOrder.findMany({
-      where: { OR: [{ status: 170 }, { status: 901, createdTime: null }], applicationId: { in: brands.map(b => b.applicationId!) }, terminalTime: { gte: new Date(Date.now() - 26 * 60 * 60_000) } },
+      where: { status: 170, applicationId: { in: brands.map(b => b.applicationId!) }, terminalTime: { gte: new Date(Date.now() - 26 * 60 * 60_000) } },
       orderBy: { updatedAt: 'asc' }, take: 20,
     });
     for (let offset = 0; offset < orders.length; offset += 5) {
@@ -131,18 +131,19 @@ export class CompletionRateService {
         OR: [{ appShopId: { in: brand.shops.map(s => s.appShopId) } }, { appShopId: null, didiShopId: { in: brand.shops.map(s => s.shopId) } }],
       } });
       let completed = 0, cancelled = 0, unknown = 0;
-      const cancelledIds: string[] = [];
+      const orderIds = { completed: [] as string[], cancelled: [] as string[], unknown: [] as string[] };
+      const cancelledIds = orderIds.cancelled;
       const shops = new Map<string, { completed: number; cancelled: number }>();
       for (const order of orders) {
         const category = classifyOrder(order);
-        if (category === 'unknown') { unknown++; continue; }
+        if (category === 'unknown') { unknown++; orderIds.unknown.push(order.orderId); continue; }
         if (category === 'excluded') continue;
         const shop = brand.shops.find(s => order.appShopId ? s.appShopId === order.appShopId : s.shopId === order.didiShopId)!;
         const key = `${shop.name ?? shop.appShopId} (${shop.appShopId})`;
         const counts = shops.get(key) ?? { completed: 0, cancelled: 0 };
         counts[category]++;
         shops.set(key, counts);
-        if (category === 'completed') completed++;
+        if (category === 'completed') { completed++; orderIds.completed.push(order.orderId); }
         else { cancelled++; cancelledIds.push(order.orderId); }
       }
       const rate = evaluateRate(completed, cancelled, brand.crBaselineCancelRate, brand.crDeviationPoints, brand.crMinOrders);
@@ -154,7 +155,7 @@ export class CompletionRateService {
         .map(([name, c]) => `${name}: ${c.completed + c.cancelled} órdenes, CR ${(100 * c.completed / (c.completed + c.cancelled)).toFixed(2)}%`).join('\n');
       const message = alert ? `⚠️ Incremento anormal en el Cancel Rate de ${brand.brandName} ⚠️\n\nCompletion Rate Actual: ${rate.completionRate}%\nCancel Rate Actual: ${(100 - rate.completionRate!).toFixed(2)}%\nÓrdenes calculadas: ${rate.total}\nVentana: ${start.toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })} – ${end.toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })} (CDMX)\n\nTiendas afectadas:\n${shopText}\n\nOrder IDs con cancelación:\n${cancelledIds.join('\n')}` : null;
       try {
-        await this.prisma.completionRateRun.create({ data: { brandId: brand.id, windowEnd: end, completed, cancelled, unknown,
+        await this.prisma.completionRateRun.create({ data: { brandId: brand.id, windowEnd: end, completed, cancelled, unknown, orderIds,
           completionRate: rate.completionRate, baseline: brand.crBaselineCancelRate, deviation: brand.crDeviationPoints, minOrders: brand.crMinOrders,
           status: unknown ? 'incomplete' : alert ? 'pending' : rate.total < brand.crMinOrders ? 'insufficient_orders' : 'healthy', message } });
       } catch (error) {

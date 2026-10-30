@@ -6,6 +6,7 @@ import { CompletionRateOrderService, parseLifecycle } from '../src/didi-order-we
 import { CompletionRateService } from '../src/integrations/completion-rate.service';
 import { classifyOrder, evaluateRate, monitoringWindow } from '../src/integrations/completion-rate.util';
 import { DidiOrderWebhooksService } from '../src/didi-order-webhooks/didi-order-webhooks.service';
+import { CANCELLATION_STATUSES } from '../src/didi-order-webhooks/order-status';
 
 const appId = '5764607654490537991';
 const orderId = '9223372036854775807';
@@ -30,11 +31,13 @@ test('CR uses completed plus eligible cancellations, exact threshold and minimum
   assert.equal(evaluateRate(15, 5, 20, 15, 10).alert, false);
 });
 
-test('cancellation rules match grocery_tools including the five minute boundary', () => {
+test('only the seven eligible cancellation statuses count, regardless of elapsed time', () => {
   const order = { createdTime: new Date(0), terminalTime: new Date(300_000), status: 901 };
-  assert.equal(classifyOrder(order), 'cancelled');
+  assert.equal(classifyOrder(order), 'excluded');
   assert.equal(classifyOrder({ ...order, terminalTime: new Date(299_999) }), 'excluded');
-  assert.equal(classifyOrder({ ...order, createdTime: null }), 'unknown');
+  assert.equal(classifyOrder({ ...order, createdTime: null }), 'excluded');
+  assert.equal(classifyOrder({ ...order, terminalTime: new Date(3600_000) }), 'excluded');
+  assert.equal(classifyOrder({ ...order, status: 999 }), 'excluded');
   for (const status of [902, 921, 922, 923, 961, 971, 981]) assert.equal(classifyOrder({ ...order, status }), 'cancelled');
   for (const status of [160, 600]) assert.equal(classifyOrder({ ...order, status }), 'completed');
   assert.equal(classifyOrder({ ...order, status: 170 }), 'unknown');
@@ -120,6 +123,34 @@ test('an unclassified provider response stays available for the periodic retry',
   } finally { global.fetch = originalFetch; }
 });
 
+test('order detail persists every mapped cancellation and never retries excluded customer cancellations', async () => {
+  const originalFetch = global.fetch;
+  const app = { id: 'app', appId, appSecret: encrypt('secret', '42'.repeat(32)) };
+  try {
+    for (const status of CANCELLATION_STATUSES) {
+      const order: any = { id: 'row', applicationId: 'app', orderId, appShopId: 'store-1', status: 170, createdTime: null };
+      let calls = 0;
+      global.fetch = async input => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith('/refresh')) return Response.json({ errno: 0, data: { refresh_token: 'refresh' } });
+        if (path.endsWith('/get')) return Response.json({ errno: 0, data: { auth_token: 'access' } });
+        calls++;
+        return Response.json({ errno: 0, data: { status, cancel_time: second } });
+      };
+      const prisma: any = { completionRateOrder: { findUnique: async () => order,
+        updateMany: async ({ data }: any) => { Object.assign(order, data); return { count: 1 }; } },
+        brand: { findFirst: async () => ({ id: 'brand' }) } };
+      const service = new CompletionRateOrderService(prisma, config);
+      assert.equal(await service.resolveAfterWebhook(app, event('orderCancel')), true);
+      assert.equal(order.status, status);
+      assert.equal(classifyOrder(order), status === 901 ? 'excluded' : 'cancelled');
+      assert.equal(await service.resolveAfterWebhook(app, event('orderCancel')), false);
+      assert.equal(calls, 1);
+      assert.equal(parseLifecycle(event('deliveryStatus', status), appId).terminalTime?.getTime(), second * 1000);
+    }
+  } finally { global.fetch = originalFetch; }
+});
+
 const dto = { crAlertsEnabled: true, crBaselineCancelRate: 10, crDeviationPoints: 15, crMinOrders: 10 };
 test('configuration requires an existing active application webhook and shared D-Chat destination', async () => {
   const brand: any = { application: null };
@@ -152,6 +183,7 @@ test('monitoring isolates application and brand shops, uses half-open windows an
   assert.equal(created.length, 1);
   assert.equal(created[0].completionRate, 70);
   assert.equal(created[0].status, 'pending');
+  assert.deepEqual(created[0].orderIds, { completed: ['0', '1', '2', '3', '4', '5', '6'], cancelled: ['7', '8', '9'], unknown: [] });
   assert.match(created[0].message, /Store \(store-1\)/);
   assert.equal(queried.where.applicationId, 'app');
   assert.deepEqual(queried.where.OR[0], { appShopId: { in: ['store-1'] } });
@@ -168,6 +200,7 @@ test('a cancellation awaiting detail is excluded from the CR denominator', async
     ...Array.from({ length: 12 }, (_, i) => ({ orderId: `complete-${i}`, appShopId: 'store-1', status: 600 })),
     ...Array.from({ length: 6 }, (_, i) => ({ orderId: `cancel-${i}`, appShopId: 'store-1', status: 921 })),
     { orderId: 'pending-detail', appShopId: 'store-1', status: 170 },
+    { orderId: 'excluded-customer', appShopId: 'store-1', status: 901, createdTime: new Date(0), terminalTime: new Date(3600_000) },
   ];
   const prisma: any = { brand: { findMany: async () => [brand] }, completionRateOrder: { findMany: async () => orders },
     completionRateRun: { findUnique: async () => null, create: async ({ data }: any) => { created.push(data); } } };
@@ -177,6 +210,10 @@ test('a cancellation awaiting detail is excluded from the CR denominator', async
   assert.equal(created[0].unknown, 1);
   assert.equal(created[0].completionRate, 66.67);
   assert.equal(created[0].status, 'incomplete');
+  assert.deepEqual(created[0].orderIds.unknown, ['pending-detail']);
+  assert.equal(created[0].orderIds.completed.length, 12);
+  assert.equal(created[0].orderIds.cancelled.length, 6);
+  assert.ok(!JSON.stringify(created[0].orderIds).includes('excluded-customer'));
 });
 
 test('D-Chat deliveries are claimed before sending and failures remain retryable', async () => {

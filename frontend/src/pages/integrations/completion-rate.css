@@ -10,6 +10,10 @@
 .cr-fields label, .cr-search { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
 .cr-fields input, .cr-search input { width: 100%; padding: 10px; border: 1px solid var(--border, #ccc); border-radius: 6px; background: var(--bg-card, transparent); color: inherit; }
 .cr-search { max-width: 400px; }
+.cr-search select { padding: 10px; border: 1px solid var(--border, #ccc); border-radius: 6px; background: var(--bg-card); color: inherit; margin-bottom: 12px; }
+.cr-order-ids summary { cursor: pointer; text-decoration: underline; }
+.cr-order-ids ul { max-height: 240px; overflow: auto; padding: 0; list-style: none; }
+.cr-order-ids li { padding: 4px 0; white-space: nowrap; user-select: text; }
 .cr-toggle { display: flex; align-items: center; gap: 10px; }
 .cr-page fieldset { border: 0; padding: 0; margin: 0; }
 .cr-notice { padding: 14px; border: 1px solid #e6aa47; border-radius: 8px; background: #e6aa4715; }

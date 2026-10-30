@@ -2,13 +2,14 @@ import { decrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { DIDI_BASE, getAuthToken, parseJsonKeepingIds } from '../queue/handlers/didi-food.util';
 
-export const BAD_CANCELLATIONS = new Set([902, 921, 922, 923, 961, 971, 981]);
+import { CANCELLATION_STATUSES, OrderStatus } from './order-status';
+export { BAD_CANCELLATIONS } from './order-status';
 
 type Application = { id: string; appId: string; appSecret: string };
 type Order = { id: string; applicationId: string; orderId: string; appShopId: string | null; status: number };
 
 export async function resolveCancellationDetail(prisma: PrismaService, encryptionKey: string, app: Application, order: Order): Promise<boolean> {
-  if (order.applicationId !== app.id || (order.status !== 170 && order.status !== 901)) return false;
+  if (order.applicationId !== app.id || order.status !== OrderStatus.CANCEL) return false;
   const local = order.appShopId ? null : await prisma.didiOrderWebhookEvent.findFirst({
     where: { applicationId: app.id, orderId: order.orderId, type: 'orderNew' }, select: { appShopId: true },
   });
@@ -23,7 +24,7 @@ export async function resolveCancellationDetail(prisma: PrismaService, encryptio
   const response = await fetch(url, { signal });
   const body = parseJsonKeepingIds(await response.text());
   const status = Number(body.data?.status);
-  if (!response.ok || Number(body.errno) !== 0 || !(status === 901 || BAD_CANCELLATIONS.has(status))) return false;
+  if (!response.ok || Number(body.errno) !== 0 || !CANCELLATION_STATUSES.has(status)) return false;
 
   const created = Number(body.data.create_time);
   const cancelled = Number(body.data.cancel_time);
