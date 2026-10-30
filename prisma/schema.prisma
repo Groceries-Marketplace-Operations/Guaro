@@ -934,6 +934,7 @@ model CompletionRateRun {
   completed Int
   cancelled Int
   unknown Int @default(0)
+  orderIds Json? @map("order_ids")
   completionRate Float? @map("completion_rate")
   baseline Float
   deviation Float

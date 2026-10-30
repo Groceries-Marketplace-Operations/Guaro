@@ -105,8 +105,22 @@ test('store statistics reuse cancellation exclusions and preserve order IDs', ()
     { ...base, orderId: '3', status: 901, terminalTime: new Date(299_999) },
     { ...base, orderId: '4', status: 170 },
   ]);
-  assert.deepEqual([stats.completed, stats.cancelled, stats.unknown], [1, 1, 1]);
+  assert.deepEqual([stats.completed, stats.cancelled, stats.unknown], [1, 0, 1]);
+  assert.deepEqual(stats.orderIds.cancelled, []);
+  assert.deepEqual(stats.orderIds.unknown, ['4']);
   assert.deepEqual(stats.orderIds.completed, ['9223372036854775807']);
+});
+
+test('excluded cancellations cannot trigger a closure or satisfy its minimum volume', () => {
+  const base = { createdTime: new Date(0), terminalTime: new Date(3600_000) };
+  const excluded = Array.from({ length: 10 }, (_, i) => ({ ...base, orderId: `excluded-${i}`, status: 901 }));
+  const completed = [{ ...base, orderId: 'finished', status: 600 }];
+  const stats = summarizeStoreOrders([...completed, ...excluded]);
+  assert.equal(storeCrDecision(stats.completed, stats.cancelled, stats.unknown, 50, 1).reason, 'healthy');
+  assert.equal(storeCrDecision(stats.completed, stats.cancelled, stats.unknown, 50, 3).reason, 'insufficient_orders');
+  const eligible = summarizeStoreOrders([902, 921, 922, 923, 961, 971, 981].map(status => ({ ...base, orderId: String(status), status })));
+  assert.equal(eligible.cancelled, 7);
+  assert.equal(storeCrDecision(eligible.completed, eligible.cancelled, eligible.unknown, 50, 3).reason, 'closure_requested');
 });
 
 test('closure notification uses its own group and does not fall back to the alert group', () => {

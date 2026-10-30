@@ -14,13 +14,13 @@ La integración está en **Integrations → Alertas de CR**. Usa `Brand.applicat
 
 Cada ventana dura 15 minutos, incluyendo el inicio y excluyendo el final, según el momento de terminación de la orden. Las ventanas terminan a las 06:00, 06:15, …, 23:45, 00:00, …, 03:00 en `America/Mexico_City`. La ventana de las 06:00 cubre 05:45–06:00. No hay ventanas entre 03:15 y 05:45.
 
-Se calcula CR = completadas / (completadas + cancelaciones computables), ponderado por órdenes entre todas las tiendas de la marca, sin promediar porcentajes de tiendas. Se aíslan las órdenes por aplicación y tienda. Los estados 160 y 600 son completados. Se conservan las reglas originales para cancelaciones: 902, 921, 922, 923, 961, 971 y 981, más 901 cuando han transcurrido al menos 300 segundos desde la creación. Las órdenes en curso no entran en el denominador.
+Se calcula CR = completadas / (completadas + cancelaciones computables), ponderado por órdenes entre todas las tiendas de la marca, sin promediar porcentajes de tiendas. Se aíslan las órdenes por aplicación y tienda. Los estados 160 y 600 son completados. Solo cuentan las cancelaciones 902, 921, 922, 923, 961, 971 y 981. El catálogo OrderStatus reproduce los nombres y valores de grocery_tools; el estado 901 se excluye siempre, independientemente del tiempo transcurrido o de la disponibilidad de fechas. Las órdenes en curso no entran en el denominador.
 
 Los valores iniciales son 10% de cancelación base, 15 puntos de desviación y 10 órdenes mínimas para alertar. Son valores explícitos editables, no una tasa histórica calculada automáticamente. Como en grocery_tools, con menos de cuatro órdenes no se publica un porcentaje de CR. La condición de alerta es inclusiva: cancelación actual − base ≥ desviación y volumen ≥ mínimo.
 
 Los eventos se guardan por aplicación + order ID, conservando identificadores int64 como texto. Los duplicados no suman órdenes y un evento en curso tardío no revierte un estado final. Un `orderNew` tardío puede completar la fecha de creación de una orden que ya terminó. No se guarda el cuerpo completo ni información de repartidores en las tablas nuevas.
 
-Las cancelaciones genéricas (170) se resuelven con `/v1/order/order/detail`, igual que en grocery_tools. Se consultan hasta 20 por ciclo en grupos de cinco, con tiempo límite por consulta. Las que aún no se pueden atribuir aparecen como datos incompletos y no generan una alerta de CR potencialmente engañosa.
+Las cancelaciones genéricas (170) se consultan en `/v1/order/order/detail` en cuanto se guarda su webhook, siguiendo el flujo de `CancelOrderStatusSerializer` de grocery_tools. La respuesta al webhook no espera a DiDi: una consulta fallida deja la cancelación guardada para el reintento periódico. En cada ciclo se reintentan hasta 20 órdenes en grupos de cinco, con tiempo límite por consulta. El historial muestra las cancelaciones pendientes como «En proceso de clasificación»; quedan fuera del denominador y no generan alertas basadas en un CR potencialmente incompleto.
 
 ## Ejecución y entregas
 
@@ -33,3 +33,9 @@ No se reconstruyen estados finales de órdenes históricas a partir de registros
 ## Validación local
 
 `backend/test/completion-rate.test.ts` cubre horarios de México, umbrales, cancelaciones, int64, eventos duplicados/desordenados, requisitos de configuración, aislamiento de marcas/aplicaciones y entrega/reintento de D-Chat. También se ejecutan las pruebas existentes de Order Webhooks y se compilan backend y frontend. Estas pruebas no envían mensajes reales ni modifican una base de producción.
+
+## IDs por revisión y filtros
+
+La migración `20261030010000_completion_rate_run_order_ids` agrega una instantánea de IDs por revisión: completadas, canceladas computables y pendientes de clasificación (170). Cada conteo se puede desplegar en el historial. Los IDs se conservan como texto y no cambian si después se clasifica una cancelación. Las revisiones anteriores mantienen `order_ids = NULL` y muestran «IDs no disponibles»; no se reconstruyen con estados actuales ni se recalculan alertas históricas. Las órdenes en curso no forman parte de las revisiones.
+
+El filtro «Funciones activas» permite ver todas las marcas, las que tienen alertas, las que tienen cierre automático o las que tienen ambas funciones; se combina con la búsqueda por nombre o aplicación.

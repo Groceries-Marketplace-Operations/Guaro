@@ -1,11 +1,13 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveCancellationDetail } from './resolve-cancellation-detail';
+import { CANCELLATION_STATUSES, FINISHED_STATUSES, ORDER_STATUSES, OrderStatus } from './order-status';
 
-const FINISHED = new Set([160, 600]);
-export const BAD_CANCELLATIONS = new Set([902, 921, 922, 923, 961, 971, 981]);
-const STATUSES = new Set([100, 120, 130, 140, 150, 160, 170, 180, 190, 200, 400, 500, 600, 901, ...BAD_CANCELLATIONS]);
+export { BAD_CANCELLATIONS } from './resolve-cancellation-detail';
+
 export function isTerminal(status: number) {
-  return FINISHED.has(status) || status === 170 || status === 901 || BAD_CANCELLATIONS.has(status);
+  return FINISHED_STATUSES.has(status) || status === OrderStatus.CANCEL || CANCELLATION_STATUSES.has(status);
 }
 function timestamp(value: unknown): Date {
   if (!/^\d{1,10}$/.test(String(value))) throw new BadRequestException('Invalid order timestamp');
@@ -27,7 +29,7 @@ export function parseLifecycle(root: Record<string, any>, appId: string) {
   const eventTime = timestamp(root.timestamp);
   const info = root.type === 'orderNew' ? data.order_info : undefined;
   const status = root.type === 'orderNew' ? 100 : root.type === 'orderCancel' ? 170 : Number(data.delivery_status);
-  if (!STATUSES.has(status)) throw new BadRequestException('Invalid delivery_status');
+  if (!ORDER_STATUSES.has(status)) throw new BadRequestException('Invalid delivery_status');
   const appShopId = root.app_shop_id ?? info?.shop?.app_shop_id;
   if (appShopId != null && (typeof appShopId !== 'string' && typeof appShopId !== 'number' || !String(appShopId).trim() || String(appShopId).length > 200)) {
     throw new BadRequestException('Invalid app_shop_id');
@@ -43,7 +45,19 @@ export function parseLifecycle(root: Record<string, any>, appId: string) {
 
 @Injectable()
 export class CompletionRateOrderService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService) {}
+
+  async resolveAfterWebhook(application: { id: string; appId: string; appSecret: string }, root: Record<string, unknown>) {
+    const data = root.data as Record<string, unknown>;
+    const order = await this.prisma.completionRateOrder.findUnique({
+      where: { applicationId_orderId: { applicationId: application.id, orderId: String(data.order_id) } },
+    });
+    if (!order || order.status !== OrderStatus.CANCEL) return false;
+    const monitored = await this.prisma.brand.findFirst({ where: { applicationId: application.id, deletedAt: null,
+      OR: [{ crAlertsEnabled: true }, { crAutoClosureEnabled: true }] }, select: { id: true } });
+    if (!monitored) return false;
+    return resolveCancellationDetail(this.prisma, this.config.getOrThrow('APP_SECRET_ENCRYPTION_KEY'), application, order);
+  }
 
   async record(applicationId: string, appId: string, root: Record<string, unknown>) {
     const incoming = parseLifecycle(root, appId);

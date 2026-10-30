@@ -301,6 +301,14 @@ export class DidiOrderWebhooksService {
       const log = await this.prisma.didiOrderWebhookRequest.create({ data: { applicationId: application.id, type: String(webhookRoot.type) }, select: { id: true } });
       try {
         await this.completionOrders.record(application.id, application.appId, webhookRoot);
+        // Resolve a generic cancellation as soon as it is durably recorded.
+        // The webhook response must not depend on DiDi's detail endpoint; the
+        // periodic CR job retries any lookup that fails or remains ambiguous.
+        const lifecycleData = webhookRoot.data as Record<string, unknown>;
+        if (webhookRoot.type === 'orderCancel' || [170, 901].includes(Number(lifecycleData.delivery_status))) {
+          void this.completionOrders.resolveAfterWebhook(application, webhookRoot)
+            .catch(() => this.logger.warn('Cancellation detail lookup failed; the CR job will retry'));
+        }
         const data = webhookRoot.data as Record<string, unknown>;
         await this.completeRequest(log.id, requestStartedAt, { stage: 'completed', outcome: 'accepted', localHttpStatus: 200,
           orderId: String(data.order_id), appShopId: webhookRoot.app_shop_id == null ? null : String(webhookRoot.app_shop_id) });

@@ -4,11 +4,11 @@ La sección **Cierre automático por tienda** está en el mismo formulario de **
 
 ## Regla estática
 
-Se conserva la lógica de `static-rule-closure-every-15-minutes` de grocery_tools: CR = completadas / (completadas + cancelaciones computables), comparado individualmente por tienda con `CR <= umbral` y `total >= mínimo`. Son umbrales inclusivos. Se utilizan las reglas de cancelación del sistema de alertas y se excluyen las órdenes en curso. No se utilizan los parámetros de probabilidad o ventana de 30 minutos del antiguo modelo beta-binomial.
+Se conserva la lógica de `static-rule-closure-every-15-minutes` de grocery_tools: CR = completadas / (completadas + cancelaciones computables), comparado individualmente por tienda con `CR <= umbral` y `total >= mínimo`. Son umbrales inclusivos. Solo cuentan las cancelaciones 902, 921, 922, 923, 961, 971 y 981, igual que en las alertas; el estado 901 siempre se excluye, al igual que las órdenes en curso. No se utilizan los parámetros de probabilidad o ventana de 30 minutos del antiguo modelo beta-binomial.
 
 Las evaluaciones terminan cada cuarto de hora, de 06:00 a 03:00 del día siguiente, en hora de Ciudad de México. El acumulado comienza a las 04:00 del día operativo de cada marca: Ciudad de México para MX, Bogotá para CO y Costa Rica para CR. Antes de las 04:00, el día operativo comenzó el día anterior. Los intervalos incluyen el inicio y excluyen el final.
 
-Se usan las órdenes persistidas por Order Webhooks y las tiendas de la marca, aislando por aplicación. Las cancelaciones genéricas o sin fecha de creación suficiente se resuelven por el detalle de DiDi, incluso cuando solo están habilitados los cierres. Si quedan cancelaciones sin resolver para una tienda, se registra `incomplete` y no se cierra con un CR potencialmente incorrecto. El siguiente cuarto de hora vuelve a evaluar el acumulado. No se reconstruyen órdenes de antes del despliegue de la recepción de estados.
+Se usan las órdenes persistidas por Order Webhooks y las tiendas de la marca, aislando por aplicación. Las cancelaciones genéricas (170) se consultan en el detalle de DiDi al recibir el webhook, incluso cuando solo están habilitados los cierres. La tarea periódica reintenta los casos que DiDi no clasificó. El historial los muestra como «En proceso de clasificación»; no entran en el CR. Si siguen pendientes para una tienda, se registra `incomplete` y no se cierra con un CR potencialmente incorrecto. El siguiente cuarto de hora vuelve a evaluar el acumulado. No se reconstruyen órdenes de antes del despliegue de la recepción de estados.
 
 ## Ejecución y protección de Auto Open
 

@@ -1,4 +1,4 @@
-import { BAD_CANCELLATIONS } from '../didi-order-webhooks/completion-rate-order.service';
+import { BAD_CANCELLATIONS, FINISHED_STATUSES, OrderStatus } from '../didi-order-webhooks/order-status';
 
 export function monitoringWindow(now: Date): Date | null {
   const end = new Date(Math.floor(now.getTime() / 900_000) * 900_000);
@@ -9,13 +9,9 @@ export function monitoringWindow(now: Date): Date | null {
 }
 
 export function classifyOrder(order: { status: number; createdTime: Date | null; terminalTime: Date | null }): 'completed' | 'cancelled' | 'excluded' | 'unknown' {
-  if ([160, 600].includes(order.status)) return 'completed';
+  if (FINISHED_STATUSES.has(order.status)) return 'completed';
   if (BAD_CANCELLATIONS.has(order.status)) return 'cancelled';
-  if (order.status === 901) {
-    if (!order.createdTime || !order.terminalTime) return 'unknown';
-    return order.terminalTime.getTime() - order.createdTime.getTime() >= 300_000 ? 'cancelled' : 'excluded';
-  }
-  return 'unknown';
+  return order.status === OrderStatus.CANCEL ? 'unknown' : 'excluded';
 }
 
 export function evaluateRate(completed: number, cancelled: number, baseline: number, deviation: number, minimum: number) {

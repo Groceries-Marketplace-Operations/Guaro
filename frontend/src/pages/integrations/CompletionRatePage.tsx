@@ -23,13 +23,21 @@ interface Brand extends Config {
 }
 interface Run {
   id: string; windowEnd: string; completed: number; cancelled: number; unknown: number;
+  orderIds: { completed: string[]; cancelled: string[]; unknown: string[] } | null;
   completionRate: number | null; status: string; attempts: number; error: string | null; sentAt: string | null;
 }
 const statuses: Record<string, string> = {
-  healthy: 'Dentro del umbral', insufficient_orders: 'Órdenes insuficientes', incomplete: 'Datos incompletos',
+  healthy: 'Dentro del umbral', insufficient_orders: 'Órdenes insuficientes', incomplete: 'En proceso de clasificación',
   suppressed: 'Alerta desactivada', pending: 'Alerta pendiente', sending: 'Enviando', sent: 'Alerta enviada', failed: 'Error de envío',
 };
 const date = (value: string) => new Date(value).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
+
+function OrderIds({ count, ids, label }: { count: number; ids: string[] | undefined; label: string }) {
+  if (!ids) return <span title="Esta revisión histórica no guardó los IDs de las órdenes">{count} · IDs no disponibles</span>;
+  return <details className="cr-order-ids"><summary aria-label={`${label}: ${count}. Ver order_ids`}>{count}</summary>
+    {ids.length ? <ul aria-label={`Order IDs: ${label}`}>{ids.map(id => <li key={id}><code>{id}</code></li>)}</ul> : <p>Sin órdenes.</p>}
+  </details>;
+}
 
 function BrandConfiguration({ brand, dchatConfigured, closureDchatConfigured }: { brand: Brand; dchatConfigured: boolean; closureDchatConfigured: boolean }) {
   const { account } = useAuth();
@@ -71,12 +79,12 @@ function BrandConfiguration({ brand, dchatConfigured, closureDchatConfigured }: 
       {save.isError && <p role="alert">{error?.response?.data?.message ?? 'No fue posible guardar la configuración.'}</p>}
     </form>
     <h3>Últimas 100 revisiones</h3>
-    <p>Horario de Ciudad de México. Las órdenes en curso y las cancelaciones de cliente antes de 5 minutos no se incluyen en el CR.</p>
+    <p>Horario de Ciudad de México. El CR usa solo completadas y canceladas computables. «En proceso» indica cancelaciones cuyo motivo seguía en consulta a DiDi al cerrar esa revisión; no se incluyen en el CR hasta clasificarse.</p>
     {history.isPending && <p>Cargando historial…</p>}
     {history.isError && <p role="alert">No fue posible cargar el historial. <button className="btn" onClick={() => history.refetch()}>Reintentar</button></p>}
     {history.data?.length === 0 && <p>Aún no hay revisiones para esta marca.</p>}
-    {!!history.data?.length && <div className="cr-table"><table><thead><tr><th>Fin de ventana</th><th>Completadas</th><th>Canceladas</th><th>Sin resolver</th><th>CR</th><th>Resultado</th><th>Envío D-Chat</th></tr></thead>
-      <tbody>{history.data.map(run => <tr key={run.id}><td>{date(run.windowEnd)}</td><td>{run.completed}</td><td>{run.cancelled}</td><td>{run.unknown}</td><td>{run.completionRate == null ? '—' : `${run.completionRate.toFixed(2)}%`}</td><td>{statuses[run.status] ?? run.status}</td><td>{run.sentAt ? date(run.sentAt) : run.error ? `${run.error} (${run.attempts}/3)` : '—'}</td></tr>)}</tbody>
+    {!!history.data?.length && <div className="cr-table"><table><thead><tr><th>Fin de ventana</th><th>Completadas</th><th>Canceladas</th><th>En proceso</th><th>CR</th><th>Resultado</th><th>Envío D-Chat</th></tr></thead>
+      <tbody>{history.data.map(run => <tr key={run.id}><td>{date(run.windowEnd)}</td><td><OrderIds count={run.completed} ids={run.orderIds?.completed} label="Completadas" /></td><td><OrderIds count={run.cancelled} ids={run.orderIds?.cancelled} label="Canceladas computables" /></td><td><OrderIds count={run.unknown} ids={run.orderIds?.unknown} label="Pendientes de clasificación" /></td><td>{run.completionRate == null ? '—' : `${run.completionRate.toFixed(2)}%`}</td><td>{statuses[run.status] ?? run.status}</td><td>{run.sentAt ? date(run.sentAt) : run.error ? `${run.error} (${run.attempts}/3)` : '—'}</td></tr>)}</tbody>
     </table></div>}
     <StoreCrHistory brandId={brand.id} />
   </section>;
@@ -85,10 +93,15 @@ function BrandConfiguration({ brand, dchatConfigured, closureDchatConfigured }: 
 export default function CompletionRatePage() {
   const [params] = useSearchParams();
   const [search, setSearch] = useState('');
+  const [enabledFilter, setEnabledFilter] = useState('all');
   const [selected, setSelected] = useState(params.get('brandId') ?? '');
   const query = useQuery({ queryKey: ['completion-rate'], queryFn: async () => (await client.get<{ brands: Brand[]; dchatConfigured: boolean; closureDchatConfigured: boolean }>('/integrations/completion-rate')).data });
   const brands = query.data?.brands ?? [];
   const brand = brands.find(item => item.id === selected);
+  const filteredBrands = brands.filter(b => `${b.brandName} ${b.application?.appName ?? ''}`.toLowerCase().includes(search.toLowerCase())
+    && (enabledFilter === 'all' || enabledFilter === 'alerts' && b.crAlertsEnabled
+      || enabledFilter === 'closure' && b.crAutoClosureEnabled
+      || enabledFilter === 'both' && b.crAlertsEnabled && b.crAutoClosureEnabled));
   return <>
     <Topbar breadcrumb={[{ label: 'Integraciones' }, { label: 'Alertas de CR' }]} />
     <main className="main-content">
@@ -99,9 +112,13 @@ export default function CompletionRatePage() {
     {query.isError && <p role="alert">No fue posible cargar las marcas. <button className="btn" onClick={() => query.refetch()}>Reintentar</button></p>}
     {query.data && !query.data.dchatConfigured && <p className="cr-notice" role="alert">El destino D-Chat compartido aún no está configurado. Solicita su configuración al administrador para activar alertas.</p>}
     <label className="cr-search">Buscar marca<input type="search" placeholder="Nombre o aplicación" value={search} onChange={e => setSearch(e.target.value)} /></label>
+    <label className="cr-search">Funciones activas<select value={enabledFilter} onChange={e => setEnabledFilter(e.target.value)}>
+      <option value="all">Todas las marcas</option><option value="alerts">Alertas activas</option>
+      <option value="closure">Cierre automático activo</option><option value="both">Alertas y cierre automático activos</option>
+    </select></label>
     <div className="cr-layout"><section className="card cr-brands" aria-label="Marcas">
-      {brands.filter(b => `${b.brandName} ${b.application?.appName ?? ''}`.toLowerCase().includes(search.toLowerCase())).map(b => <button type="button" key={b.id} className={`cr-brand ${b.id === selected ? 'selected' : ''}`} aria-pressed={b.id === selected} onClick={() => setSelected(b.id)}><strong>{b.brandName}</strong><span>{b.application?.appName ?? 'Sin aplicación'}</span><span>Alertas: {b.crAlertsEnabled ? 'activas' : 'inactivas'} · Cierre: {b.crAutoClosureEnabled ? 'activo' : 'inactivo'}</span></button>)}
-      {query.data && brands.length === 0 && <p>No hay marcas disponibles.</p>}
+      {filteredBrands.map(b => <button type="button" key={b.id} className={`cr-brand ${b.id === selected ? 'selected' : ''}`} aria-pressed={b.id === selected} onClick={() => setSelected(b.id)}><strong>{b.brandName}</strong><span>{b.application?.appName ?? 'Sin aplicación'}</span><span>Alertas: {b.crAlertsEnabled ? 'activas' : 'inactivas'} · Cierre: {b.crAutoClosureEnabled ? 'activo' : 'inactivo'}</span></button>)}
+      {query.data && filteredBrands.length === 0 && <p>No hay marcas que coincidan con los filtros.</p>}
     </section>{brand ? <BrandConfiguration key={brand.id} brand={brand} dchatConfigured={!!query.data?.dchatConfigured} closureDchatConfigured={!!query.data?.closureDchatConfigured} /> : <section className="card cr-detail"><p>Selecciona una marca para configurar sus alertas, cierres y consultar el historial.</p></section>}</div>
       </div>
     </main>
