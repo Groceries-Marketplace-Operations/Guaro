@@ -461,3 +461,40 @@ test('invalid encrypted credentials finish the run instead of leaving it running
     assert.equal(h.requests.length, 0);
   } finally { mock.restoreAll(); }
 });
+
+
+for (const reject of [false, true]) test('renames only after all stores accept: reject=' + reject, async () => {
+  const h = harness('full', { reject, files: [{ name: 'DJ_PVP_DIDI_0043.csv' }] });
+  Object.assign(h.rule, { renameFile: true, renameRegex: '^DJ_PVP_DIDI', renameReplacement: 'Procesed' });
+  const renames: string[][] = [];
+  let ended = false;
+  mock.method(SftpClient.prototype, 'end', async () => { ended = true; });
+  mock.method(SftpClient.prototype, 'exists', async () => false);
+  mock.method(SftpClient.prototype, 'rename', async (from: string, to: string) => {
+    assert.equal(ended, false);
+    assert.equal(h.uploads[0].status, 'accepted');
+    renames.push([from, to]);
+  });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, reject ? 'partial_failure' : 'accepted');
+    assert.equal(renames.length, reject ? 0 : 1);
+    if (!reject) {
+      assert.deepEqual(renames[0], ['/upload/DJ_PVP_DIDI_0043.csv', '/upload/Procesed_0043.csv']);
+      assert.equal(h.records.length, 2);
+    }
+    assert.equal(ended, true);
+  } finally { mock.restoreAll(); }
+});
+
+test('rename collision leaves the existing destination untouched and sends nothing', async () => {
+  const h = harness('full');
+  Object.assign(h.rule, { renameFile: true, renameRegex: '0043', renameReplacement: 'done' });
+  mock.method(SftpClient.prototype, 'exists', async () => '-');
+  mock.method(SftpClient.prototype, 'rename', async () => { assert.fail('must not overwrite'); });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.posts.length, 0);
+    assert.equal(h.records[0].status, 'failed');
+  } finally { mock.restoreAll(); }
+});

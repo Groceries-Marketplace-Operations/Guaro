@@ -13,7 +13,7 @@ import { decrypt, encrypt } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { DIDI_BASE, parseJsonKeepingIds } from '../queue/handlers/didi-food.util';
 import { resolveSftpApiApplications } from './sftp-api.credentials';
-import { groceryPayload, Item, Mode, mxDate, parseFile, ParseConfig, redact, regexMatches } from './sftp-api.util';
+import { decodeFile, renamedFile, groceryPayload, Item, Mode, mxDate, parseFile, ParseConfig, redact, regexMatches } from './sftp-api.util';
 import { SftpApiStockLimiter, STOCK_BATCH_SIZE } from './sftp-api-stock-limiter';
 
 const FULL_ENDPOINT = '/v3/item/item/uploadGrocery';
@@ -21,7 +21,7 @@ const STOCK_ENDPOINT = '/v1/item/item/setstockSync';
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_RUN_BYTES = 500 * 1024 * 1024;
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-type Parsed = { name: string; hash: string; shops: string[]; path: string };
+type Parsed = { name: string; hash: string; shops: string[]; path: string; modified: number; size: number; renamed: string };
 type StagedFile = { stores: [string, Item[]][]; reports: string[] };
 
 @Injectable()
@@ -103,9 +103,11 @@ export class SftpApiProcessor extends WorkerHost {
           const after = await client.stat(path);
           if (after.size !== entry.size || after.modifyTime !== entry.modifyTime || bytes !== entry.size) throw new Error(`${entry.name} cambió durante la lectura`);
           const buffer = Buffer.concat(chunks);
-          const content = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+          const content = decodeFile(buffer, rule);
           const reports: string[] = [];
           const stores = parseFile(content, entry.name, rule as unknown as ParseConfig, run.mode as Mode, reports);
+          const newName = rule.renameFile ? renamedFile(entry.name, rule.renameRegex, rule.renameReplacement) : entry.name;
+          if (newName !== entry.name && await client.exists(posix.join(rootPath, newName))) throw new Error('El nombre de destino ya existe: ' + newName);
           const fileHash = hash(buffer);
           // Keep only the index in memory. Encrypt temporary product data using the
           // existing application key; never use remote filenames as local paths.
@@ -115,13 +117,13 @@ export class SftpApiProcessor extends WorkerHost {
           await this.prisma.sftpApiProcessedFile.update({ where: { ruleId_fileName: { ruleId: rule.id, fileName: entry.name } }, data: { fileHash, error: reports.join('\n') || null } });
           await this.prisma.sftpApiRun.update({ where: { id }, data: { filesRead: { increment: 1 } } });
           await this.prisma.sftpApiRule.update({ where: { id: rule.id }, data: { lastReadAt: new Date() } });
-          parsed.push({ name: entry.name, hash: fileHash, shops: [...stores.keys()], path: stagedPath });
+          parsed.push({ name: entry.name, hash: fileHash, shops: [...stores.keys()], path: stagedPath, modified: entry.modifyTime, size: entry.size, renamed: newName });
         } catch (error) {
           failed++;
           await this.completeFile(rule.id, entry.name, 'failed', safeError(error));
         }
       }
-      await client.end().catch(() => undefined);
+      if (!rule.renameFile) await client.end().catch(() => undefined);
       // Validate the entire selection before replacing any remote menu.
       const latestByShop = new Map<string, Parsed>();
       for (const file of parsed) for (const shop of file.shops) latestByShop.set(shop, file);
@@ -202,6 +204,26 @@ export class SftpApiProcessor extends WorkerHost {
               fileErrors.push(`Tienda ${shop}: API errno=${result.errno}; HTTP ${response.status}`);
               break; // Stop only this shop's remaining batches; continue with other stores.
             }
+          }
+        }
+        if (attempted && !fileErrors.length && file.renamed !== file.name) {
+          try {
+            await this.ensureRunning(id);
+            const originalPath = posix.join(rootPath, file.name);
+            const targetPath = posix.join(rootPath, file.renamed);
+            const current = await client.stat(originalPath);
+            if (current.size !== file.size || current.modifyTime !== file.modified) throw new Error('El archivo cambió antes de renombrarlo');
+            if (await client.exists(targetPath)) throw new Error('El nombre de destino ya existe: ' + file.renamed);
+            // Reserve the alias before changing the remote file so a crash cannot
+            // cause another upload under the new name. Keep both dedup markers.
+            const alias = await this.prisma.sftpApiProcessedFile.createMany({ data: [{ ruleId: rule.id,
+              fileName: file.renamed, fileHash: file.hash, status: 'processed', processedAt: new Date() }], skipDuplicates: true });
+            if (!alias.count) throw new Error('El nombre de destino ya está registrado: ' + file.renamed);
+            await client.rename(originalPath, targetPath);
+            staged.reports.push('Archivo renombrado a ' + file.renamed);
+          } catch (error) {
+            failed++;
+            fileErrors.push('Envíos aceptados; no se pudo renombrar: ' + safeError(error));
           }
         }
         await this.completeFile(rule.id, file.name, fileUncertain ? 'needs_review' : fileErrors.length ? 'partial_failure' : attempted ? 'processed' : 'superseded', [...fileErrors, ...staged.reports].join('\n') || undefined);

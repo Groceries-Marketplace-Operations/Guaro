@@ -11,7 +11,7 @@ const fields = [
 ];
 export default function SftpApiEditor({ rule, close, saved }: { rule?: Rule; close: () => void; saved: (rule: Rule) => void }) {
   const [step, setStep] = useState(0);
-  const [form, setForm] = useState<Config>(() => rule ? Object.fromEntries(Object.keys(defaults).map(key => [key, rule[key as keyof Config]])) as Config : structuredClone(defaults));
+  const [form, setForm] = useState<Config>(() => rule ? Object.fromEntries(Object.keys(defaults).map(key => [key, rule[key as keyof Config] ?? defaults[key as keyof Config]])) as Config : structuredClone(defaults));
   const [brandName, setBrandName] = useState(rule?.brand.brandName ?? '');
   const [validation, setValidation] = useState('');
   const set = <K extends keyof Config>(key: K, value: Config[K]) => setForm(current => ({ ...current, [key]: value }));
@@ -28,7 +28,7 @@ export default function SftpApiEditor({ rule, close, saved }: { rule?: Rule; clo
       if (!form.brandId) { setValidation('Selecciona una marca del catálogo.'); return; }
       if (!apiApplication || !sftpApplication) { setValidation('Selecciona una aplicación API y una aplicación SFTP disponibles.'); setStep(0); return; }
       if (step < 2) {
-        if (step === 1) { try { new RegExp(form.fileRegex); new RegExp(form.shopRegex); } catch { setValidation('Revisa las expresiones regulares.'); return; } }
+        if (step === 1) { try { new RegExp(form.fileRegex); new RegExp(form.shopRegex); if (form.renameFile) new RegExp(form.renameRegex); } catch { setValidation('Revisa las expresiones regulares.'); return; } }
         setStep(step + 1); return;
       }
       if (new Set(form.schedules.map(s => s.time)).size !== form.schedules.length) { setValidation('Cada horario debe ser único.'); return; }
@@ -54,9 +54,18 @@ export default function SftpApiEditor({ rule, close, saved }: { rule?: Rule; clo
         <div className="sftp-form-grid">
           <label className="sftp-field">Antigüedad máxima del archivo (minutos)<input required type="number" min={1} max={525600} step={1} className="form-input" value={form.maxFileAgeMinutes} onChange={e => set('maxFileAgeMinutes', Number(e.target.value))} /><small>Se usa la última modificación reportada por el SFTP. Con 30, se leen archivos de hasta 30 minutos que coincidan con el regex y no estén registrados.</small></label>
           <label className="sftp-field">Regex de archivos<input required className="form-input sftp-mono" value={form.fileRegex} onChange={e => set('fileRegex', e.target.value)} /><small>Ejemplo: \.csv$ busca archivos CSV.</small></label>
+          <label className="sftp-check sftp-wide"><input type="checkbox" checked={form.renameFile} onChange={e => set('renameFile', e.target.checked)} /> Cambiar nombre del archivo</label>
+          {form.renameFile && <>
+            <label className="sftp-field">Reemplazar (regex)<input required maxLength={500} className="form-input sftp-mono" value={form.renameRegex} placeholder="DJ_PVP_DIDI" onChange={e => set('renameRegex', e.target.value)} /><small>Reemplaza la primera coincidencia al terminar los envíos sin errores.</small></label>
+            <label className="sftp-field">Nuevo texto<input maxLength={255} className="form-input" value={form.renameReplacement} placeholder="Procesed" onChange={e => set('renameReplacement', e.target.value)} /><small>Ejemplo: Procesed_02112026_174910_0103.csv. Conserva las partes que no coincidan; no sobrescribe archivos existentes.</small></label>
+          </>}
+          <label className="sftp-check sftp-wide"><input type="checkbox" checked={form.convertEncoding} onChange={e => set('convertEncoding', e.target.checked)} /> Convertir archivos que no están en UTF-8</label>
+          {form.convertEncoding && <label className="sftp-field">Codificación de origen<select className="form-input" value={form.sourceEncoding} onChange={e => set('sourceEncoding', e.target.value)}><option value="windows-1252">Windows-1252 (ANSI / Latin-1)</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option></select><small>Se convierte para procesar y enviar a la API; el contenido remoto se conserva.</small></label>}
+          <div className="sftp-wide"><button type="button" className="btn btn-secondary" onClick={() => setForm(current => ({ ...current, delimiter: '|', hasHeader: true, convertEncoding: true, sourceEncoding: 'windows-1252', shopSource: 'column', mapping: { app_shop_id: 'A', app_item_id: 'B', upc: 'B', item_name: 'B', activity_price: 'C', price: 'D', stock: 'F', status: '' } }))}>Usar formato preciosdidi</button><p>Store ID | Ean | Price With Discount | Price Without Discount | Reference Price | Stock. Usa Ean también como nombre.</p></div>
           <label className="sftp-field">Separador de columnas<select className="form-input" value={form.delimiter} onChange={e => set('delimiter', e.target.value)}><option value="|">Barra vertical ( | )</option><option value=",">Coma ( , )</option><option value=";">Punto y coma ( ; )</option><option value={'\t'}>Tabulador</option></select></label>
           <label className="sftp-check sftp-wide"><input type="checkbox" checked={form.hasHeader} onChange={e => set('hasHeader', e.target.checked)} /> La primera fila contiene encabezados</label>
-          <label className="sftp-field">Origen del ID de tienda<select className="form-input" value={form.shopSource} onChange={e => set('shopSource', e.target.value as Config['shopSource'])}><option value="filename">Nombre del archivo</option><option value="column">Columna del archivo</option></select></label>
+          <label className="sftp-check sftp-wide"><input type="checkbox" checked={form.shopSource === 'column'} onChange={e => set('shopSource', e.target.checked ? 'column' : 'filename')} /> Varias tiendas en un mismo archivo</label>
+          <p className="sftp-wide">Al marcarlo, se agrupan los productos por la columna app_shop_id y se envía un menú independiente a cada tienda. Sin marcar, la tienda se obtiene del nombre del archivo.</p>
           {form.shopSource === 'filename' ? <label className="sftp-field">Regex del ID de tienda<input required className="form-input sftp-mono" value={form.shopRegex} onChange={e => set('shopRegex', e.target.value)} /><small>El primer grupo entre paréntesis captura app_shop_id y conserva ceros iniciales.</small></label> : <label className="sftp-field">Columna app_shop_id<input required pattern="[A-Z]{1,3}" className="form-input" value={form.mapping.app_shop_id} placeholder="A" onChange={e => set('mapping', { ...form.mapping, app_shop_id: e.target.value.toUpperCase() })} /></label>}
         </div>
         <h3 className="sftp-divider">Relaciona los campos API con tus columnas</h3><p>Usa letras A, B, C… como en Excel. Los valores iniciales vienen del script adjunto; ajusta el nombre del producto si está en otra columna.</p>

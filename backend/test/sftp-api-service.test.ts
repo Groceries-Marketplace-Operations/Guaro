@@ -190,3 +190,15 @@ test('picker filters catalogs by country and brand without selecting secrets', a
   };
   assert.deepEqual(await h.service.applicationOptions(dto.brandId), { applications: [], sftpApplications: [] });
 });
+
+
+test('save persists encoding and rename options and rejects unsafe replacements', async () => {
+  const h = harness();
+  const options = { renameFile: true, renameRegex: '^DJ_PVP_DIDI', renameReplacement: 'Procesed', convertEncoding: true, sourceEncoding: 'windows-1252' };
+  await h.service.save({ ...dto, ...options }, 'actor');
+  for (const [key, value] of Object.entries(options)) assert.equal(h.saved[0].data[key], value);
+  for (const renameRegex of ['', '[']) await assert.rejects(h.service.save({ ...dto, ...options, renameRegex }, 'actor'), { status: 400 });
+  await assert.rejects(h.service.save({ ...dto, ...options, renameReplacement: '../done' }, 'actor'), { status: 400 });
+  const errors = await validate(plainToInstance(SftpApiDto, { ...dto, sourceEncoding: 'invalid' }));
+  assert.ok(errors.some(error => error.property === 'sourceEncoding'));
+});

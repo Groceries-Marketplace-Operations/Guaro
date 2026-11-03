@@ -952,6 +952,11 @@ model CompletionRateRun {
 }
 
 model SftpApiRule {
+  renameFile        Boolean                @default(false) @map("rename_file")
+  renameRegex       String                 @default("") @map("rename_regex")
+  renameReplacement String                 @default("") @map("rename_replacement")
+  convertEncoding   Boolean                @default(false) @map("convert_encoding")
+  sourceEncoding    String                 @default("windows-1252") @map("source_encoding")
   id                String                 @id @default(uuid()) @db.Uuid
   brandId           String                 @unique @map("brand_id") @db.Uuid
   applicationId     String                 @map("application_id") @db.Uuid
