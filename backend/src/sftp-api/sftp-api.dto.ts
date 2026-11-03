@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsNotEmpty, IsObject, IsString, IsUUID, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsNotEmpty, IsObject, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateNested } from 'class-validator';
 import { IsInt, Max, Min } from 'class-validator';
 
 export class SftpScheduleDto {
@@ -15,6 +15,11 @@ export class SftpApiDto {
   @IsInt() @Min(1) @Max(525600) maxFileAgeMinutes!: number;
   @IsString() @IsNotEmpty() @MaxLength(1) delimiter!: string;
   @IsBoolean() hasHeader!: boolean;
+  @IsOptional() @IsBoolean() renameFile?: boolean;
+  @IsOptional() @IsString() @MaxLength(500) renameRegex?: string;
+  @IsOptional() @IsString() @MaxLength(255) renameReplacement?: string;
+  @IsOptional() @IsBoolean() convertEncoding?: boolean;
+  @IsOptional() @IsIn(['windows-1252', 'utf-16le', 'utf-16be']) sourceEncoding?: string;
   @IsIn(['filename', 'column']) shopSource!: 'filename' | 'column';
   @IsString() @MaxLength(500) shopRegex!: string;
   @IsObject() mapping!: Record<string, string>;

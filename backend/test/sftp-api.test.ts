@@ -195,3 +195,37 @@ test('DTO requires catalog relations and valid nested schedules', async () => {
   const errors = await validate(dto);
   for (const property of ['brandId', 'applicationId', 'sftpApplicationId', 'schedules']) assert.ok(errors.some(e => e.property === property));
 });
+
+
+test('decodes Windows-1252 and UTF-16 without losing product codes', () => {
+  const { decodeFile } = require('../src/sftp-api/sftp-api.util');
+  const legacy = Buffer.from([0x46, 0x41, 0x4c, 0x50, 0x41, 0xd1, 0x30, 0x30, 0x39]);
+  assert.throws(() => decodeFile(legacy, {}));
+  assert.equal(decodeFile(legacy, { convertEncoding: true, sourceEncoding: 'windows-1252' }), 'FALPA\u00d1009');
+  assert.equal(decodeFile(Buffer.from('\ufeffNi\u00f1o', 'utf16le'), { convertEncoding: true, sourceEncoding: 'utf-16le' }), 'Ni\u00f1o');
+  const cfg = { ...config, hasHeader: true, shopSource: 'column', mapping: { app_shop_id: 'A', app_item_id: 'B', upc: 'B', item_name: 'B', price: 'D', activity_price: 'C', stock: 'F' } };
+  const stores = parseFile('Store ID|Ean|Discount|Price|Reference|Stock\n01|FALPA\u00d1009|12600|12600|12600|1\n02|FALPA\u00d1009|10000|12600|12600|3', 'prices.csv', cfg, 'full');
+  assert.equal(stores.size, 2);
+  assert.equal(stores.get('01')!.get('FALPA\u00d1009')!.upc, 'FALPA\u00d1009');
+  assert.equal(stores.get('02')!.get('FALPA\u00d1009')!.activity_price, 1000000);
+});
+
+test('renaming replaces only the match and rejects paths and invalid regex', () => {
+  const { renamedFile } = require('../src/sftp-api/sftp-api.util');
+  assert.equal(renamedFile('DJ_PVP_DIDI_02112026_174910_0103.csv', '^DJ_PVP_DIDI', 'Procesed'), 'Procesed_02112026_174910_0103.csv');
+  assert.equal(renamedFile('other.csv', 'DJ_PVP_DIDI', 'Procesed'), 'other.csv');
+  assert.throws(() => renamedFile('test.csv', '[', 'new'));
+  assert.throws(() => renamedFile('test.csv', 'test', '../new'));
+  assert.throws(() => renamedFile('test.csv', '.*', ''));
+});
+
+
+test('full omits and reports zero-price rows while delta retains their stock', () => {
+  const content = row + '\n' + row.replace('001234567890', 'ANMGAL006').replace('20.125', '0');
+  const reports: string[] = [];
+  const full = parseFile(content, '0043.csv', config, 'full', reports);
+  assert.equal(full.get('0043')!.size, 1);
+  assert.match(reports[0], /Fila 2.*0043.*ANMGAL006.*precio cero/);
+  assert.equal(parseFile(content, '0043.csv', config, 'delta').get('0043')!.size, 2);
+  assert.throws(() => parseFile(row.replace('20.125', '0'), '0043.csv', config, 'full'), /precio cero/);
+});

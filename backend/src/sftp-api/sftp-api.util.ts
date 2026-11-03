@@ -10,6 +10,22 @@ export interface ParseConfig {
 }
 export type Item = { app_item_id: string; stock: number; upc?: string; item_name?: string; price?: number; activity_price?: number; status?: number };
 
+export function decodeFile(buffer: Buffer, config: { convertEncoding?: boolean; sourceEncoding?: string }) {
+  const encoding = config.convertEncoding ? config.sourceEncoding ?? 'windows-1252' : 'utf-8';
+  if (!['utf-8', 'windows-1252', 'utf-16le', 'utf-16be'].includes(encoding)) throw new Error('Codificación de origen no admitida');
+  return new TextDecoder(encoding, { fatal: true }).decode(buffer);
+}
+
+export function renamedFile(fileName: string, pattern: string, replacement: string): string {
+  if (!pattern || pattern.length > 500) throw new Error('Indica un regex de reemplazo de hasta 500 caracteres');
+  if (typeof replacement !== 'string' || replacement.length > 255 || /[\\/\x00-\x1f]/.test(replacement)) throw new Error('El nuevo nombre no puede contener rutas ni caracteres de control');
+  // Treat replacement as literal text; preserve the unmatched filename suffix.
+  const result = runInNewContext('fileName.replace(new RegExp(pattern), () => replacement)',
+    { fileName, pattern, replacement }, { timeout: 1000 }) as string;
+  if (!result || result === '.' || result === '..' || /[\\/\x00-\x1f]/.test(result) || Buffer.byteLength(result) > 255) throw new Error('Nombre de archivo resultante inválido');
+  return result;
+}
+
 export function mxDate(date: Date) {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: MX_ZONE, dateStyle: 'short', timeStyle: 'medium' }).format(date) + ' America/Mexico_City';
 }
@@ -49,7 +65,7 @@ export function minorUnits(raw: string) {
 
 function normalizeProductCode(value: string) {
   // Remove only the special export suffix; preserve text and leading zeros.
-  return /^[A-Za-z0-9]+\.0$/.test(value) ? value.slice(0, -2) : value;
+  return /^[\p{L}\p{N}]+\.0$/u.test(value) ? value.slice(0, -2) : value;
 }
 
 export function parseFile(content: string, fileName: string, config: ParseConfig, mode: Mode, reports: string[] = []) {
@@ -87,11 +103,14 @@ export function parseFile(content: string, fileName: string, config: ParseConfig
       if (mode === 'full') {
         const upc = normalizeProductCode(field('upc'));
         if (!upc) throw new Error('UPC obligatorio');
-        if (!/^[A-Za-z0-9]+$/.test(upc)) throw new Error('UPC inválido: solo se permiten letras A-Z y números 0-9, sin símbolos (excepto el sufijo final .0)');
+        if (!/^[\p{L}\p{N}]+$/u.test(upc)) throw new Error('UPC inválido: solo se permiten letras y números, sin símbolos (excepto el sufijo final .0)');
         const name = normalizeProductCode(field('item_name'));
         if (!name || name.length > 50) throw new Error('item_name debe tener entre 1 y 50 caracteres');
         const price = minorUnits(field('price'));
-        if (!price) throw new Error('El precio debe ser mayor a cero');
+        if (!price) {
+          reports.push(`Fila ${index + (config.hasHeader ? 2 : 1)}, tienda ${shop}, producto ${id}: omitido del menú por precio cero.`);
+          return;
+        }
         const status = config.mapping.status ? Number(field('status')) : (stock > 0 ? 1 : 2);
         if (![1, 2].includes(status)) throw new Error('status debe ser 1 o 2');
         Object.assign(item, { upc, item_name: name, price, status });
@@ -129,6 +148,8 @@ export function parseFile(content: string, fileName: string, config: ParseConfig
     } catch (error) { throw new Error(`Fila ${index + (config.hasHeader ? 2 : 1)}: ${(error as Error).message}`); }
   });
   for (const [shop, count] of discarded) reports.push(`Tienda ${shop}: ${count} filas descartadas por el límite de 30,000 productos únicos. Se conservan los primeros 30,000 IDs; sus duplicados se comparan por precio.`);
+  for (const [shop, items] of stores) if (!items.size) stores.delete(shop);
+  if (!stores.size) throw new Error(reports.length ? reports.join('\n') + '\nEl archivo no contiene productos válidos para enviar' : 'El archivo no contiene productos válidos para enviar');
   return stores;
 }
 

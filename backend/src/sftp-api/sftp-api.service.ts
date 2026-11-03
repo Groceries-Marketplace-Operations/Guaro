@@ -5,7 +5,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SftpApiDto } from './sftp-api.dto';
 import { resolveSftpApiApplications } from './sftp-api.credentials';
-import { columnIndex, MAPPING_FIELDS, Mode, nextSchedule, regexMatches, Schedule } from './sftp-api.util';
+import { columnIndex, MAPPING_FIELDS, Mode, nextSchedule, regexMatches, renamedFile, Schedule } from './sftp-api.util';
 
 export const RULE_SELECT = {
   id: true, brandId: true, brand: { select: { brandName: true, brandId: true } },
@@ -13,6 +13,7 @@ export const RULE_SELECT = {
   application: { select: { id: true, appName: true, appId: true, country: true, deletedAt: true } },
   sftpApplication: { select: { id: true, name: true, host: true, port: true, username: true, rootPath: true, active: true, deletedAt: true } },
   fileRegex: true, maxFileAgeMinutes: true, delimiter: true,
+  renameFile: true, renameRegex: true, renameReplacement: true, convertEncoding: true, sourceEncoding: true,
   hasHeader: true, shopSource: true, shopRegex: true, mapping: true, schedules: true,
   active: true, nextRunAt: true, lastReadAt: true, lastUploadAt: true,
   createdAt: true, updatedAt: true,
@@ -89,6 +90,7 @@ export class SftpApiService {
       // Compile through the same bounded path used to match SFTP filenames.
       regexMatches(dto.fileRegex, []);
       regexMatches(dto.shopRegex, []);
+      if (dto.renameFile) renamedFile('example.csv', dto.renameRegex ?? '', dto.renameReplacement ?? '');
       if (['"', '\r', '\n', '\0'].includes(dto.delimiter)) throw new Error('Separador inválido');
       if (new Set(dto.schedules.map(s => s.time)).size !== dto.schedules.length) throw new Error('No repitas horarios de lectura');
       for (const [field, column] of Object.entries(dto.mapping)) {
