@@ -498,3 +498,36 @@ test('rename collision leaves the existing destination untouched and sends nothi
     assert.equal(h.records[0].status, 'failed');
   } finally { mock.restoreAll(); }
 });
+
+
+test('full sends valid products per shop and persists every invalid-item report', async () => {
+  const h = harness('full', { content: [
+    'store|id|name|price|stock',
+    '01|001|Leche|20|7', '01|002|Pan|bad|2', '01|003|Arroz|30|3',
+    '02|004|Pan|-1|2', '03|005|Agua|10|4', '03|006|Agua|10|-1',
+  ].join('\n') });
+  Object.assign(h.rule, { hasHeader: true, shopSource: 'column', mapping: { app_shop_id: 'A', app_item_id: 'B', upc: 'B', item_name: 'C', price: 'D', stock: 'E' } });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.run.status, 'accepted');
+    assert.equal(h.records[0].status, 'processed');
+    assert.deepEqual(h.uploads.map(u => u.shopId), ['01', '03']);
+    assert.deepEqual(h.posts.map(p => p.items.map((item: any) => item.app_item_id)), [['001', '003'], ['005']]);
+    assert.deepEqual(h.posts[0].categories[0].app_item_ids, ['001', '003']);
+    assert.match(h.records[0].error, /Fila 3:.*tienda 01, producto 002/);
+    assert.match(h.records[0].error, /Fila 5:.*tienda 02, producto 004/);
+    assert.match(h.records[0].error, /Fila 7:.*tienda 03, producto 006/);
+  } finally { mock.restoreAll(); }
+});
+
+test('all-invalid prices produce reports and no authentication or empty menu', async () => {
+  const h = harness('full', { content: '001|Leche|||18||7||bad\n002|Pan|||18||7||-1' });
+  try {
+    await h.processor.process({ data: { runId: 'run' } } as any);
+    assert.equal(h.records[0].status, 'failed');
+    assert.match(h.records[0].error, /Fila 1:.*producto 001/);
+    assert.match(h.records[0].error, /Fila 2:.*producto 002/);
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.posts.length, 0);
+  } finally { mock.restoreAll(); }
+});

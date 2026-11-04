@@ -69,6 +69,8 @@ function normalizeProductCode(value: string) {
 }
 
 export function parseFile(content: string, fileName: string, config: ParseConfig, mode: Mode, reports: string[] = []) {
+  // Configuration errors must fail the file, not be treated as bad products.
+  const columns = new Map(Object.entries(config.mapping).filter(([, column]) => column).map(([name, column]) => [name, columnIndex(column)]));
   const rows = parseDelimitedRows(content, config.delimiter);
   if (config.hasHeader) rows.shift();
   if (!rows.length) throw new Error('El archivo no contiene productos');
@@ -78,6 +80,8 @@ export function parseFile(content: string, fileName: string, config: ParseConfig
   const selections = new Map<string, { price?: number; row: number }>();
   const discarded = new Map<string, number>();
   rows.forEach((row, index) => {
+    let shop = fileShop ?? '';
+    let id = '';
     try {
       // Some exporters wrap the entire delimited record in one CSV field.
       // Only unwrap single-field records; normal quoted fields remain intact.
@@ -85,9 +89,9 @@ export function parseFile(content: string, fileName: string, config: ParseConfig
         const inner = parseDelimitedRows(row[0], config.delimiter);
         if (inner.length === 1 && inner[0].length > 1) row = inner[0];
       }
-      const field = (name: string) => config.mapping[name] ? (row[columnIndex(config.mapping[name])] ?? '').trim() : '';
-      const shop = config.shopSource === 'filename' ? fileShop! : field('app_shop_id');
-      const id = normalizeProductCode(field('app_item_id'));
+      const field = (name: string) => columns.has(name) ? (row[columns.get(name)!] ?? '').trim() : '';
+      shop = config.shopSource === 'filename' ? fileShop! : field('app_shop_id');
+      id = normalizeProductCode(field('app_item_id'));
       if (!shop || !id || shop.length > 100 || id.length > 100) throw new Error('Falta app_shop_id o app_item_id válido');
       if (!stores.has(shop)) stores.set(shop, new Map());
       const items = stores.get(shop)!;
@@ -145,7 +149,9 @@ export function parseFile(content: string, fileName: string, config: ParseConfig
       }
       items.set(id, item);
       selections.set(selectionKey, { price: comparisonPrice, row: rowNumber });
-    } catch (error) { throw new Error(`Fila ${index + (config.hasHeader ? 2 : 1)}: ${(error as Error).message}`); }
+    } catch (error) {
+      reports.push(`Fila ${index + (config.hasHeader ? 2 : 1)}: ${(error as Error).message} (tienda ${shop || 'sin ID'}, producto ${id || 'sin ID'}). Producto omitido.`);
+    }
   });
   for (const [shop, count] of discarded) reports.push(`Tienda ${shop}: ${count} filas descartadas por el límite de 30,000 productos únicos. Se conservan los primeros 30,000 IDs; sus duplicados se comparan por precio.`);
   for (const [shop, items] of stores) if (!items.size) stores.delete(shop);

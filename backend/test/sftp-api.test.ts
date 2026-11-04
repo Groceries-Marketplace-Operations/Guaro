@@ -229,3 +229,42 @@ test('full omits and reports zero-price rows while delta retains their stock', (
   assert.equal(parseFile(content, '0043.csv', config, 'delta').get('0043')!.size, 2);
   assert.throws(() => parseFile(row.replace('20.125', '0'), '0043.csv', config, 'full'), /precio cero/);
 });
+
+
+test('full reports invalid rows and keeps valid products before and after them', () => {
+  const invalid = [
+    row.replace('20.125', '-1'), row.replace('20.125', '1,20'), row.replace('20.125', ''),
+    row.replace('18.50', 'bad'), row.replace('7.9', '-1'), row.replace('Leche', ''),
+    row.replace('001234567890', 'BAD-UPC'), row.replace('001234567890', ''),
+  ];
+  const reports: string[] = [];
+  const content = ['header', row, ...invalid, row.replace('001234567890', '002')].join('\n');
+  const stores = parseFile(content, '0043.csv', { ...config, hasHeader: true }, 'full', reports);
+  assert.deepEqual([...stores.get('0043')!.keys()], ['001234567890', '002']);
+  assert.equal(reports.length, invalid.length);
+  assert.match(reports[0], /Fila 3: El precio.*tienda 0043, producto 001234567890.*omitido/);
+  assert.match(reports[7], /Fila 10:.*producto sin ID/);
+});
+
+test('invalid duplicates do not replace valid products or block a later valid duplicate', () => {
+  const reports: string[] = [];
+  const invalid = row.replace('18.50', 'bad');
+  const cheaper = row.replace('18.50', '10').replace('7.9', '2');
+  const result = parseFile([invalid, row, invalid, cheaper].join('\n'), '0043.csv', config, 'full', reports);
+  assert.equal(result.get('0043')!.get('001234567890')!.stock, 2);
+  assert.equal(reports.filter(r => r.includes('Producto omitido')).length, 2);
+});
+
+test('delta skips invalid stock but preserves items with invalid optional prices', () => {
+  const reports: string[] = [];
+  const result = parseFile([row.replace('7.9', '-1'), row.replace('20.125', 'bad')].join('\n'), '0043.csv', config, 'delta', reports);
+  assert.deepEqual([...result.get('0043')!.values()], [{ app_item_id: '001234567890', stock: 7 }]);
+  assert.match(reports[0], /Fila 1: Stock inválido/);
+});
+
+test('configuration and malformed CSV still fail instead of skipping rows', () => {
+  const reports: string[] = [];
+  assert.throws(() => parseFile(row, '0043.csv', { ...config, mapping: { ...config.mapping, price: '1' } }, 'full', reports), /Columna inválida/);
+  assert.throws(() => parseFile(row + '\n"unterminated', '0043.csv', config, 'full', reports));
+  assert.deepEqual(reports, []);
+});
