@@ -9,6 +9,7 @@ Esta carpeta conserva la lógica de la herramienta local de promociones: lectura
 - Las cuentas SFTP, tiendas y secretos de aplicación se consultan en PostgreSQL de Tequila mediante el script `scripts/remote-soriana-sftp.cjs` ejecutado **dentro del contenedor de promociones**. No se copian `.env`, llaves SSH ni el inventario local de tiendas al repositorio o a la imagen.
 - `stores.json` contiene los parámetros generales y `stores: []`. Al cargar `/api/config`, el catálogo real se obtiene de las cuentas SFTP y marcas activas de Tequila. Si esa consulta falla, el catálogo no muestra tiendas para evitar destinos obsoletos.
 - Los archivos de auditoría nuevos se guardan en el volumen Docker `promo_manager_output` (`/app/promo-manager/output`). Los ~624 MB de auditorías históricas de la herramienta local permanecen en la computadora original; no se incluyen en la imagen ni se eliminan.
+- La imagen incluye `/usr/bin/openssl` 3 desde la etapa de compilación. Prisma lo necesita para seleccionar el motor compatible con `linux-musl-openssl-3.0.x` al consultar PostgreSQL.
 
 ## Dependencia XLSX
 

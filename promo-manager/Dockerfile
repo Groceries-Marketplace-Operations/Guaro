@@ -15,6 +15,10 @@ COPY promo-manager/vendor ./vendor
 RUN npm ci --omit=dev --no-audit --no-fund
 
 FROM node:22-alpine
+# Prisma selects its linux-musl OpenSSL 3 engine by probing this executable.
+# The Node 22 base has libssl.so.3 but not /usr/bin/openssl.
+COPY --from=backend-builder /usr/bin/openssl /usr/bin/openssl
+RUN openssl version
 WORKDIR /app
 COPY backend/package*.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
