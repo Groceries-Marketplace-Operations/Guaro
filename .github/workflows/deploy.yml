@@ -216,6 +216,7 @@ jobs:
             frontend_rollback_tag='guaro-frontend:rollback-previous'
             promo_rollback_tag='guaro-promo-manager:rollback-previous'
             aux_services_started=false
+            promo_only=false
             paused_queues=""
 
             cleanup_artifacts() {
@@ -254,7 +255,7 @@ jobs:
               attempts="${1:-24}"
               for attempt in $(seq 1 "$attempts"); do
                 if docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T promo-manager \
-                  node -e "fetch('http://127.0.0.1:5373/api/health', { signal: AbortSignal.timeout(5000) }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
+                  node -e "Promise.all([fetch('http://127.0.0.1:5373/api/health', { signal: AbortSignal.timeout(5000) }), fetch('http://127.0.0.1:5373/api/config', { signal: AbortSignal.timeout(30000) })]).then(async ([health, config]) => { const data = await config.json(); process.exit(health.ok && config.ok && Array.isArray(data.stores) && data.stores.length > 0 ? 0 : 1); }).catch(() => process.exit(1))"; then
                   return 0
                 fi
                 sleep 5
@@ -296,8 +297,13 @@ jobs:
               echo "Deployment failed; restoring the previous checkout and service images" >&2
 
               if [ "$aux_services_started" = "true" ]; then
-                docker compose -f docker-compose.prod.yml --env-file .env.prod stop promo-manager neto-worker || rollback_failed=1
-                docker compose -f docker-compose.prod.yml --env-file .env.prod rm -f promo-manager neto-worker || rollback_failed=1
+                if [ "$promo_only" = "true" ]; then
+                  docker compose -f docker-compose.prod.yml --env-file .env.prod stop promo-manager || rollback_failed=1
+                  docker compose -f docker-compose.prod.yml --env-file .env.prod rm -f promo-manager || rollback_failed=1
+                else
+                  docker compose -f docker-compose.prod.yml --env-file .env.prod stop promo-manager neto-worker || rollback_failed=1
+                  docker compose -f docker-compose.prod.yml --env-file .env.prod rm -f promo-manager neto-worker || rollback_failed=1
+                fi
               fi
 
               if ! docker tag "$previous_backend_image" guaro-backend:latest; then
@@ -349,8 +355,13 @@ jobs:
                 fi
               fi
 
-              if [ -n "$previous_promo_container" ]; then
-                if ! docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-build --no-deps promo-manager neto-worker; then
+              if [ "$aux_services_started" = "true" ] && [ -n "$previous_promo_container" ]; then
+                if [ "$promo_only" = "true" ]; then
+                  aux_restore_services="promo-manager"
+                else
+                  aux_restore_services="promo-manager neto-worker"
+                fi
+                if ! docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-build --no-deps $aux_restore_services; then
                   echo "Rollback error: could not recreate the previous auxiliary services" >&2
                   rollback_failed=1
                 fi
@@ -475,6 +486,13 @@ jobs:
             # than trusting latest, which a prior failed load may have moved.
             previous_checkout="$(git rev-parse HEAD)"
             git cat-file -e "${previous_checkout}^{commit}"
+            # A promotion-only release can swap its isolated container without
+            # touching the request-serving backend, frontend, or Neto worker.
+            release_changes="$(git diff --name-only "$previous_checkout" "$deploy_sha")"
+            non_promo_changes="$(printf '%s\n' "$release_changes" | grep -Ev '^(promo-manager/|\.github/workflows/deploy\.yml$)' || true)"
+            if [ -n "$release_changes" ] && [ -z "$non_promo_changes" ]; then
+              promo_only=true
+            fi
             previous_backend_container="$(docker compose -f docker-compose.prod.yml --env-file .env.prod ps -q backend)"
             previous_frontend_container="$(docker compose -f docker-compose.prod.yml --env-file .env.prod ps -q frontend)"
             test -n "$previous_backend_container"
@@ -510,6 +528,19 @@ jobs:
             test "$(docker image inspect guaro-backend:latest --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$deploy_sha"
             test "$(docker image inspect guaro-frontend:latest --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$deploy_sha"
             test "$(docker image inspect guaro-promo-manager:latest --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$deploy_sha"
+
+            if [ "$promo_only" = "true" ]; then
+              aux_services_started=true
+              docker compose -f docker-compose.prod.yml --env-file .env.prod up -d \
+                --no-build --no-deps promo-manager
+              if ! wait_for_promo 24; then
+                docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 promo-manager
+                exit 1
+              fi
+              rollback_armed=false
+              docker compose -f docker-compose.prod.yml --env-file .env.prod ps
+              exit 0
+            fi
 
             # The previous release attempted CREATE INDEX CONCURRENTLY through
             # Prisma, which PostgreSQL rejected inside the migration
