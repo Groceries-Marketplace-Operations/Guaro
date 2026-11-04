@@ -379,7 +379,6 @@ jobs:
 
             on_exit() {
               original_status=$?
-              # Disable EXIT first so an error inside rollback cannot recurse.
               trap - EXIT
               set +e
               if [ "$original_status" -ne 0 ] && [ "$rollback_armed" = "true" ]; then
@@ -421,17 +420,11 @@ jobs:
             test -d "$app_dir/.git"
             cd "$app_dir"
 
-            # Compose normally derives image names from the checkout folder.
-            # Keep the production project stable even when discovery uses a
-            # fallback path such as /root/Guaro-1.
             export COMPOSE_PROJECT_NAME=guaro
             compose_images="$(docker compose -f docker-compose.prod.yml --env-file .env.prod config --images)"
             printf '%s\n' "$compose_images" | grep -Fxq 'guaro-backend'
             printf '%s\n' "$compose_images" | grep -Fxq 'guaro-frontend'
 
-            # Never let a delayed or historical successful CI run downgrade
-            # production. Fetching is read-only, so this check happens before
-            # the backup, migrations, or image load.
             test -z "$(git status --porcelain --untracked-files=no)"
             git fetch --prune origin main
             git cat-file -e "${deploy_sha}^{commit}"
@@ -447,17 +440,10 @@ jobs:
               docker builder prune -af
               docker image prune -af
             fi
-            # A full pg_dump of the large operational database can take more
-            # than the deployment timeout and compete with live order work.
-            # Keep that safety gate for schema or migration changes. A code
-            # only release preserves the current database and existing backup.
             schema_changes="$(git diff --name-only HEAD "$deploy_sha" -- prisma/schema.prisma prisma/migrations prisma/deploy)"
             if [ -n "$schema_changes" ]; then
               umask 077
               mkdir -p backups
-              # Keep four existing backups before writing the next one. This
-              # avoids briefly needing space for six full database dumps on
-              # hosts that are already close to their disk threshold.
               find backups -maxdepth 1 -type f -name 'pre-deploy-*.dump' -printf '%T@ %p\n' \
                 | sort -nr \
                 | tail -n +5 \
@@ -482,12 +468,8 @@ jobs:
               echo "No Prisma schema or migration changes; retaining the existing backup"
             fi
 
-            # Capture the actual images used by the running containers rather
-            # than trusting latest, which a prior failed load may have moved.
             previous_checkout="$(git rev-parse HEAD)"
             git cat-file -e "${previous_checkout}^{commit}"
-            # A promotion-only release can swap its isolated container without
-            # touching the request-serving backend, frontend, or Neto worker.
             release_changes="$(git diff --name-only "$previous_checkout" "$deploy_sha")"
             non_promo_changes="$(printf '%s\n' "$release_changes" | grep -Ev '^(promo-manager/|\.github/workflows/deploy\.yml$)' || true)"
             if [ -n "$release_changes" ] && [ -z "$non_promo_changes" ]; then
@@ -513,8 +495,6 @@ jobs:
             docker tag "$previous_frontend_image" "$frontend_rollback_tag"
             rollback_armed=true
 
-            # Use exactly the revision that passed CI and produced the image
-            # bundle. The current-main guard above prevents stale downgrades.
             git checkout --detach "$deploy_sha"
             test "$(git rev-parse HEAD)" = "$deploy_sha"
             compose_images="$(docker compose -f docker-compose.prod.yml --env-file .env.prod config --images)"
@@ -522,8 +502,6 @@ jobs:
             printf '%s\n' "$compose_images" | grep -Fxq 'guaro-frontend'
             printf '%s\n' "$compose_images" | grep -Fxq 'guaro-promo-manager:latest'
 
-            # Loading pre-built images is intentionally the only image work on
-            # production. Builds run on the GitHub-hosted runner above.
             gzip -dc "$bundle_file" | docker load
             test "$(docker image inspect guaro-backend:latest --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$deploy_sha"
             test "$(docker image inspect guaro-frontend:latest --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$deploy_sha"
@@ -542,10 +520,6 @@ jobs:
               exit 0
             fi
 
-            # The previous release attempted CREATE INDEX CONCURRENTLY through
-            # Prisma, which PostgreSQL rejected inside the migration
-            # transaction. Resolve only that known failed attempt so the
-            # corrected, replay-safe migration can be recorded below.
             failed_filter_migration="$(
               printf '%s\n' \
                 "SELECT count(*) FROM \"_prisma_migrations\" WHERE migration_name = '20261015005000_didi_order_webhook_filter_indexes' AND finished_at IS NULL AND rolled_back_at IS NULL;" \
@@ -557,25 +531,13 @@ jobs:
                 npx prisma migrate resolve --rolled-back 20261015005000_didi_order_webhook_filter_indexes \
                   --schema=./prisma/schema.prisma
             fi
-            # Pre-apply the idempotent financial expansion while the current
-            # backend is still serving. These nullable/defaulted columns let
-            # psql build every large/sparse index online before Prisma runs.
             docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
               sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
               < prisma/migrations/20261016020000_didi_order_webhook_financials/migration.sql
-            # psql autocommit is required: PostgreSQL forbids concurrent index
-            # operations inside transaction blocks. The script is retry-safe
-            # and repairs invalid indexes left by interrupted builds.
             docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T \
               -e PGOPTIONS='-c max_parallel_maintenance_workers=0' guaro-db \
               sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
               < prisma/deploy/didi_order_webhook_indexes_online.sql
-            # Pre-apply the retry-safe payload-resolution constraint while the
-            # current backend is still serving. On an established database,
-            # this keeps a transient lock timeout out of Prisma's migration
-            # ledger so the whole deployment can be retried automatically.
-            # A fresh database has no prerequisite column yet, so Prisma owns
-            # the normal ordered bootstrap path below.
             payload_resolution_ready="$(
               printf '%s\n' \
                 "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('public.didi_order_webhook_event') AND attname = 'shop_resolution_source' AND NOT attisdropped) THEN 1 ELSE 0 END;" \
@@ -587,14 +549,8 @@ jobs:
                 sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
                 < prisma/migrations/20261016023000_didi_order_webhook_payload_resolution_check/migration.sql
             fi
-            # Record the replay-safe migrations with the loaded image. All
-            # production index statements are now no-ops, while fresh
-            # development databases retain a self-contained fallback.
             docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --no-deps backend \
               npx prisma migrate deploy --schema=./prisma/schema.prisma
-            # Start the isolated promo API and the disabled Neto supervisor
-            # before recreating the request-serving backend. Neither service
-            # handles order webhooks.
             aux_services_started=true
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d \
               --no-build --no-deps promo-manager neto-worker
@@ -606,9 +562,6 @@ jobs:
               docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 neto-worker
               exit 1
             fi
-            # Pause only new non-order jobs during the brief backend switch.
-            # Active jobs finish normally; webhook and forwarding queues run
-            # throughout. Restore only queues that were running beforehand.
             paused_queues="$(docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T backend node -e '
               const { Queue } = require("bullmq");
               const names = ["auto-fetch", "auto-turn-off-MX", "auto-turn-off-CO", "auto-turn-off-CR", "auto-turn-off-shop"];
@@ -633,8 +586,6 @@ jobs:
                     }
                   })().catch(error => { console.error(error); process.exit(1); });'
             fi
-            # Arm service recreation before up so a partial Compose failure is
-            # also rolled back, not only a failed health check.
             services_switched=true
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d \
               --no-build --no-deps backend frontend
@@ -648,9 +599,6 @@ jobs:
             fi
             resume_background_queues
             rollback_armed=false
-            # Keep recent layers for the next deploy; emergency disk cleanup
-            # above still removes unused artifacts when disk usage reaches 80%.
-            # Do not use -a here: the stable rollback tags must survive.
             docker image prune -f --filter 'until=168h'
             docker builder prune -af --filter 'until=168h' --keep-storage 2GB
             journalctl --vacuum-size=300M || true
