@@ -13,6 +13,9 @@ import DailyStatusActivationSection from './DailyStatusActivationSection';
 import MassiveRtboSection from './MassiveRtboSection';
 import DidiStoreBindingsSection from './DidiStoreBindingsSection';
 import UpcActivityPriceSection from './UpcActivityPriceSection';
+import PromoManagerPanel from './PromoManagerPanel';
+import NetoAutomationPanel from './NetoAutomationPanel';
+import { useAuth } from '../../auth/AuthContext';
 import ExecutionTiming from '../../components/integrations/ExecutionTiming';
 
 interface RuleForm {
@@ -32,7 +35,7 @@ interface RuleForm {
   maxFilesPerRun: number;
 }
 
-type CustomIntegrationSection = 'sftp' | 'massive-rtbo' | 'didi-store-bindings' | 'daily-activation' | 'store-splitter' | 'offer-menu' | 'targeted-menu' | 'upc-activity-price' | 'cross-app';
+type CustomIntegrationSection = 'sftp' | 'massive-rtbo' | 'didi-store-bindings' | 'daily-activation' | 'store-splitter' | 'offer-menu' | 'targeted-menu' | 'upc-activity-price' | 'cross-app' | 'promo-manager' | 'neto-automation';
 
 const runningStatuses = new Set(['pending', 'running']);
 
@@ -61,6 +64,8 @@ function saveBase64(fileName: string, contentBase64: string, mimeType: string) {
 }
 
 export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKind }) {
+  const { account } = useAuth();
+  const canManageOperations = account?.roles.some(role => role === 'admin' || role === 'super_admin') ?? false;
   const qc = useQueryClient();
   const isFilter = kind === 'price_filter';
   const title = isFilter ? 'Custom integrations' : 'Lectura de promociones complejas SFTP';
@@ -180,6 +185,14 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
           <span className="custom-integration-icon">CA</span>
           <span><strong>Cross-App Menu Copy</strong><small>Copia menús entre aplicaciones y reutiliza ejecuciones</small></span>
         </button>
+        {canManageOperations && <button type="button" className={customSection === 'promo-manager' ? 'is-active' : ''} onClick={() => setCustomSection('promo-manager')} aria-selected={customSection === 'promo-manager'}>
+          <span className="custom-integration-icon">PR</span>
+          <span><strong>Gestor de promociones</strong><small>Importa CSV o SFTP, envía promociones y consulta resultados</small></span>
+        </button>}
+        {canManageOperations && <button type="button" className={customSection === 'neto-automation' ? 'is-active' : ''} onClick={() => setCustomSection('neto-automation')} aria-selected={customSection === 'neto-automation'}>
+          <span className="custom-integration-icon">NE</span>
+          <span><strong>Tiendas Neto</strong><small>Monitorea y controla la actualización automática de menús</small></span>
+        </button>}
       </nav>}
       {showSftp && <div className="alert alert-info" style={{ marginBottom: 18 }}>
         {isFilter
@@ -194,6 +207,8 @@ export default function FileIntegrationsPage({ kind }: { kind: FileIntegrationKi
       {isFilter && customSection === 'daily-activation' && <DailyStatusActivationSection />}
       {isFilter && customSection === 'offer-menu' && <OfferMenuUploadSection />}
       {isFilter && customSection === 'cross-app' && <CrossAppMenuCopySection />}
+      {isFilter && canManageOperations && customSection === 'promo-manager' && <PromoManagerPanel />}
+      {isFilter && canManageOperations && customSection === 'neto-automation' && <NetoAutomationPanel />}
       {showSftp && <>
       {isLoading && <p className="text-muted">Cargando…</p>}
       {!isLoading && rules.length === 0 && <div className="empty-state"><p>No hay configuraciones.</p></div>}

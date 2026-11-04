@@ -83,6 +83,55 @@ services:
         condition: service_healthy
     logging: *default-logging
 
+  neto-worker:
+    image: guaro-backend:latest
+    command: ['node', 'tiendas-neto/supervisor.cjs']
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'node', '-e', "const fs=require('fs');const s=JSON.parse(fs.readFileSync('/app/uploads/tiendas-neto/supervisor-status.json'));process.exit(Date.now()-Date.parse(s.updatedAt)<30000?0:1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    stop_grace_period: 120s
+    cpus: '0.50'
+    mem_limit: 512m
+    volumes:
+      - uploads_data:/app/uploads
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@guaro-db:5432/${POSTGRES_DB}
+      APP_SECRET_ENCRYPTION_KEY: ${APP_SECRET_ENCRYPTION_KEY}
+      DIDI_NETO_DATA_ROOT: /app/uploads/tiendas-neto
+      NODE_ENV: production
+    networks:
+      - internal
+    depends_on:
+      guaro-db:
+        condition: service_healthy
+    logging: *default-logging
+
+  promo-manager:
+    build:
+      context: .
+      dockerfile: promo-manager/Dockerfile
+    image: guaro-promo-manager:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@guaro-db:5432/${POSTGRES_DB}
+      APP_SECRET_ENCRYPTION_KEY: ${APP_SECRET_ENCRYPTION_KEY}
+      PROMO_API_URL: https://openapi.didi-food.com/v1/promo/promo/uploadGrocery
+      NODE_OPTIONS: --max-old-space-size=384
+    volumes:
+      - promo_manager_output:/app/promo-manager/output
+    networks:
+      - internal
+    depends_on:
+      guaro-db:
+        condition: service_healthy
+    mem_limit: 640m
+    cpus: '0.75'
+    logging: *default-logging
+
   frontend:
     build:
       context: ./frontend
@@ -91,15 +140,18 @@ services:
         VITE_API_URL: ${FRONTEND_URL}/api
     restart: unless-stopped
     networks:
+      - internal
       - grocerytools_webnet
     depends_on:
       - backend
+      - promo-manager
     logging: *default-logging
 
 volumes:
   postgres_data:
   redis_data:
   uploads_data:
+  promo_manager_output:
 
 networks:
   internal:

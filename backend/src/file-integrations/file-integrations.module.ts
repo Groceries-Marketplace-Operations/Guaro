@@ -35,6 +35,8 @@ import { UpcActivityPriceController } from './upc-activity-price.controller';
 import { UpcActivityPriceProcessor } from './upc-activity-price.processor';
 import { UpcActivityPriceScheduler } from './upc-activity-price.scheduler';
 import { UpcActivityPriceService } from './upc-activity-price.service';
+import { PromoManagerAccessController } from './promo-manager-access.controller';
+import { PromoManagerProxyController } from './promo-manager-proxy.controller';
 
 @Module({
   imports: [
@@ -46,7 +48,7 @@ import { UpcActivityPriceService } from './upc-activity-price.service';
     BullModule.registerQueue({ name: 'didi-store-bindings' }),
     BullModule.registerQueue({ name: 'upc-activity-price' }),
   ],
-  controllers: [FileIntegrationsController, PromotionApiController, BrandPromotionsController, TargetedMenuController, MenuCopyController, OfferMenuUploadController, MassiveRtboController, DidiStoreBindingsController, UpcActivityPriceController],
+  controllers: [FileIntegrationsController, PromotionApiController, PromoManagerAccessController, PromoManagerProxyController, BrandPromotionsController, TargetedMenuController, MenuCopyController, OfferMenuUploadController, MassiveRtboController, DidiStoreBindingsController, UpcActivityPriceController],
   providers: [
     FileIntegrationsService,
     FileIntegrationProcessor,

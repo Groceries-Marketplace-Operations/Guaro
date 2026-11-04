@@ -7,8 +7,12 @@
 /backend/dist
 /backend/build
 /backend/tmp
+/promo-manager/node_modules/
+/promo-manager/output/
+/promo-manager/input/
 /backend/data
 /backups/
+/output/
 
 # Logs
 logs

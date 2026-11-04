@@ -1,0 +1,26 @@
+{
+  "api": { "urlEnv": "PROMO_API_URL", "delayMs": 0 },
+  "defaults": { "types": [2, 4, 8], "appItemIdType": 1, "moneyUnit": "pesos" },
+  "stores": [
+    {
+      "id": "soriana_929",
+      "name": "Soriana Tlatelolco",
+      "shopId": "9000000000000000929",
+      "appShopId": "929",
+      "authTokenEnv": "DIDI_TOKEN_SORIANA_929",
+      "sourceShopIds": ["*"]
+    },
+    {
+      "id": "soriana_962",
+      "name": "Soriana Chalco Centro",
+      "shopId": "9000000000000000962",
+      "appShopId": "962",
+      "authTokenEnv": "DIDI_TOKEN_SORIANA_962",
+      "sourceShopIds": ["*"]
+    },
+    { "id": "soriana_test_3", "name": "Tienda de prueba 3", "shopId": "9000000000000000003", "appShopId": "T3", "authTokenEnv": "DIDI_TEST_3", "sourceShopIds": ["*"] },
+    { "id": "soriana_test_4", "name": "Tienda de prueba 4", "shopId": "9000000000000000004", "appShopId": "T4", "authTokenEnv": "DIDI_TEST_4", "sourceShopIds": ["*"] },
+    { "id": "soriana_test_5", "name": "Tienda de prueba 5", "shopId": "9000000000000000005", "appShopId": "T5", "authTokenEnv": "DIDI_TEST_5", "sourceShopIds": ["*"] },
+    { "id": "soriana_test_6", "name": "Tienda de prueba 6", "shopId": "9000000000000000006", "appShopId": "T6", "authTokenEnv": "DIDI_TEST_6", "sourceShopIds": ["*"] }
+  ]
+}

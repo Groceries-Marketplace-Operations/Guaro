@@ -1,0 +1,17 @@
+{
+  "api": {
+    "urlEnv": "PROMO_API_URL",
+    "timeoutMs": 30000,
+    "delayMs": 500,
+    "responseSuccessPath": "errno",
+    "responseSuccessValue": 0
+  },
+  "defaults": {
+    "types": [2, 4, 8],
+    "batchSize": 499,
+    "maxItemsPerBatch": 5999,
+    "appItemIdType": 1,
+    "moneyUnit": "pesos"
+  },
+  "stores": []
+}

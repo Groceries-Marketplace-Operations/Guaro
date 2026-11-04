@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
+import { raw } from 'express';
 import { join } from 'path';
 import { AppModule } from './app.module';
 import { GlobalErrorFilter } from './common/filters/global-error.filter';
@@ -20,6 +21,9 @@ async function bootstrap() {
 
   // A 7,000-store binding job is larger than Express' 100 KB default. Keep
   // this bounded: DTO validation still enforces the exact 7,000-item limit.
+  // Promo files can be 12 MB before base64 encoding. Preserve the exact JSON
+  // bytes for large DiDi identifiers and bound this route independently.
+  app.use('/promo-manager', raw({ type: 'application/json', limit: '20mb' }));
   app.useBodyParser('json', { limit: '8mb' });
   app.useBodyParser('urlencoded', { extended: true, limit: '100kb' });
 

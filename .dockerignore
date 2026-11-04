@@ -12,3 +12,7 @@ examples
 .DS_Store
 **/.env
 **/.env.*
+promo-manager/output
+promo-manager/input
+promo-manager/examples
+output

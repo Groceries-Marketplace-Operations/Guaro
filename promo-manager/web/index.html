@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DiDi Promo Manager</title>
+  <meta name="description" content="Consola local para preparar, enviar y consultar promociones de DiDi Food.">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./extra.css">
+</head>
+<body>
+  <a class="skip-link" href="#mainContent">Saltar al contenido</a>
+  <header class="topbar">
+    <div class="brand-lockup">
+      <div class="brand-mark">DP</div>
+      <div><strong>Promo Manager</strong><span>Promociones · DiDi Grocery</span></div>
+    </div>
+    <div class="topbar-actions">
+      <a class="documentation-link" href="#documentation">Cómo funciona</a>
+      <div class="environment"><i></i> API de producción <span>· app local</span></div>
+    </div>
+  </header>
+
+  <main class="shell" id="mainContent">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">CENTRO DE OPERACIONES</p>
+        <h1 id="viewTitle">Promociones, bajo control.</h1>
+        <p id="viewDescription">Prepara tus promociones, elige el destino y revisa cada envío.</p>
+      </div>
+      <details class="hero-status">
+        <summary>Conexión a DiDi</summary>
+        <span>Endpoint de envío</span>
+        <code id="apiEndpoint">Cargando…</code>
+      </details>
+    </section>
+
+    <nav class="section-nav" aria-label="Secciones de Promo Manager">
+      <a href="#prepare" data-view-link="prepare" aria-current="page"><span class="nav-icon" aria-hidden="true">01</span> Preparar envío</a>
+      <a href="#sftpAutomation" data-view-link="automation"><span class="nav-icon" aria-hidden="true">02</span> Operación SFTP</a>
+      <a href="#tracking" data-view-link="tracking"><span class="nav-icon" aria-hidden="true">03</span> Seguimiento <span id="trackingBadge" class="nav-badge hidden">0</span></a>
+      <a href="#diagnostics" data-view-link="diagnostics"><span class="nav-icon" aria-hidden="true">04</span> Diagnóstico</a>
+      <a href="#documentation" data-view-link="guide"><span class="nav-icon" aria-hidden="true">?</span> Guía</a>
+    </nav>
+
+    <div id="operationStatus" class="operation-status hidden" role="status"><span class="operation-spinner" aria-hidden="true"></span><span id="operationStatusText"></span><small>Puedes cambiar de sección mientras continúa.</small></div>
+    <div id="notice" class="notice hidden" role="status"></div>
+
+    <section class="preparation-overview" data-view-panel="prepare" aria-label="Estado de preparación">
+      <div><span class="overview-number">1</span><div><span>Archivo de origen</span><strong id="overviewSource">Selecciona una marca y carga un archivo</strong></div></div>
+      <div><span class="overview-number">2</span><div><span>Tiendas destino</span><strong id="overviewDestination">Elige las tiendas que recibirán el envío</strong></div></div>
+      <div><span class="overview-number">3</span><div><span>Promociones</span><strong id="overviewSelection">Selecciona y genera la vista previa</strong></div></div>
+    </section>
+
+    <section id="prepare" class="workspace" data-view-panel="prepare">
+      <aside class="controls">
+        <div class="control-card">
+        <div class="section-heading"><span>01</span><div><h2>Archivo de origen</h2><p>Desde tu equipo o desde el SFTP · máximo 12 MB</p></div></div>
+        <div class="segmented source-mode" id="sourceMode">
+          <button type="button" data-source="local" class="active">Mi computadora</button>
+          <button type="button" data-source="sftp">SFTP promociones</button>
+        </div>
+        <label class="field brand-source-field">
+          <span>Marca <small>(obligatoria)</small></span>
+          <select id="sftpAccountSelect"><option value="">Selecciona una marca…</option></select>
+          <small>El archivo no determina la marca. Esta selección limita las tiendas destino y las credenciales utilizadas.</small>
+        </label>
+        <div id="localSource">
+          <label id="dropzone" class="dropzone" for="fileInput">
+            <input id="fileInput" type="file" accept=".csv,.txt,.tsv,.xlsx,.xls">
+            <b>Arrastra el archivo aquí</b>
+            <span>o haz clic para seleccionarlo</span>
+            <small id="fileStatus">Ningún archivo cargado</small>
+          </label>
+        </div>
+        <div id="sftpSource" class="sftp-source hidden">
+          <label class="field"><span>Buscar archivo o tienda</span><input id="sftpSearch" type="search" placeholder="Ej. 692 o promocionesdidi…"></label>
+          <label class="field"><span>Archivo disponible</span><select id="sftpFileSelect"><option value="">Consulta el SFTP…</option></select></label>
+          <div class="sftp-actions">
+            <button id="refreshSftp" class="button subtle" type="button">Actualizar</button>
+            <button id="downloadSftpFile" class="button subtle" type="button" disabled>Descargar archivo</button>
+            <button id="loadSftpFile" class="button secondary" type="button" disabled>Cargar archivo seleccionado</button>
+          </div>
+          <small id="sftpStatus" class="source-status">Sin consultar</small>
+        </div>
+
+        </div>
+        <div class="control-card">
+        <div class="section-heading"><span>02</span><div><h2>Destino</h2><p>La autenticación define la tienda</p></div></div>
+        <div class="segmented destination-mode" id="destinationMode">
+          <button type="button" data-mode="selected" class="active">Elegir tiendas</button>
+          <button type="button" data-mode="all">Toda la marca</button>
+        </div>
+        <div id="selectedDestinationControls">
+          <div class="store-filter-grid">
+            <label class="field"><span id="storeSearchLabel">Buscar tienda de la marca</span><input id="storeSearch" type="search" placeholder="Nombre, ciudad o ID"></label>
+            <label class="field"><span>Ciudad</span><select id="storeCityFilter"><option value="">Todas las ciudades</option></select></label>
+          </div>
+          <div id="storePicker" class="store-picker" role="group" aria-label="Tiendas de la marca seleccionada"></div>
+          <div class="store-picker-footer">
+            <strong id="destinationCount">0 seleccionadas</strong>
+            <span><button id="selectVisibleStores" type="button">Seleccionar visibles</button><button id="clearStores" type="button">Limpiar</button></span>
+          </div>
+        </div>
+        <div id="allDestinationSummary" class="all-destination-summary hidden"><strong id="allStoreCount">Toda la marca</strong><span>Se preparará una solicitud independiente, con su propia autenticación, para cada tienda.</span></div>
+        <label id="authTokenField" class="field"><span>Token de autenticación <small>(opcional para una tienda)</small></span><input id="authToken" type="password" autocomplete="off" placeholder="Tequila puede generar el token sin mostrarlo"></label>
+        </div>
+        <details class="control-card optional-settings">
+        <summary><span><strong>Ajustes de la promoción</strong><small>Acción, identificadores y reglas de marca</small></span><span class="fold-icon" aria-hidden="true">+</span></summary>
+        <div class="settings-body">
+        <div class="section-heading"><span>03</span><div><h2>Reglas predeterminadas</h2><p>Valores iniciales según la marca</p></div></div>
+        <div class="default-rule-card">
+          <label class="field"><span>Perfil de marca</span><select id="defaultRuleProfile"><option value="">Cargando perfiles…</option></select></label>
+          <div id="defaultRuleSummary" class="default-rule-summary">Sin regla aplicada.</div>
+          <div class="default-rule-actions">
+            <button id="saveDefaultRule" class="button secondary" type="button">Guardar actual</button>
+            <button id="resetDefaultRule" class="button subtle" type="button">Restablecer</button>
+          </div>
+          <small>Se guarda localmente en este navegador. “Detener” nunca se almacena como acción predeterminada.</small>
+        </div>
+
+        <div class="divider"></div>
+        <div class="section-heading"><span>04</span><div><h2>Acción predeterminada</h2><p>Se puede cambiar por promoción</p></div></div>
+        <div class="segmented activity-action-mode" id="activityActionMode">
+          <button type="button" data-action="1" class="active">1 · Crear</button>
+          <button type="button" data-action="2">2 · Detener</button>
+        </div>
+        <small id="activityActionHint" class="field-hint">Crea o actualiza la promoción con todos los datos de la plantilla.</small>
+        <label class="field"><span>Identificador de producto</span><select id="appItemIdType"><option value="1">1 · UPC</option><option value="0">0 · app_item_id</option></select><small>Valor de app_item_id_type utilizado por DiDi.</small></label>
+
+        <div class="divider"></div>
+        <div class="section-heading"><span>05</span><div><h2>Activity ID</h2><p>Cómo se identificará el evento</p></div></div>
+        <div class="segmented" id="idMode">
+          <button type="button" data-mode="keep" class="active">Conservar</button>
+          <button type="button" data-mode="manual">Manual</button>
+          <button type="button" data-mode="random">Aleatorio</button>
+        </div>
+        <label id="manualIdField" class="field hidden"><span>Nuevo Activity ID</span><input id="manualId" inputmode="numeric" placeholder="Ej. 901225082"></label>
+        <label id="groupOption" class="group-option">
+          <input id="groupPromotions" type="checkbox">
+          <span><strong>Agrupar coincidencias</strong><small>Mismo tipo, subtipo y vigencia exacta. Los grupos reciben un Activity ID nuevo.</small></span>
+        </label>
+        <small id="manualIdHint" class="field-hint hidden">El ID manual se aplica cuando el resultado contiene una sola promoción. Puedes seleccionar varias si “Agrupar coincidencias” las consolida en una.</small>
+        </div>
+        </details>
+
+        <div id="zeroDiscountSection" class="hidden">
+          <div class="divider"></div>
+          <div class="section-heading"><span>06</span><div><h2>Descuentos de 0%</h2><p>Decide si se conservan o se omiten</p></div></div>
+          <div class="segmented zero-discount-mode" id="zeroDiscountMode">
+            <button type="button" data-zero-policy="omit">Omitir</button>
+            <button type="button" data-zero-policy="keep">Conservar 0%</button>
+          </div>
+          <small id="zeroDiscountHint" class="field-hint"></small>
+        </div>
+
+        <div id="unsupportedPercentageSection" class="hidden">
+          <div class="divider"></div>
+          <div class="section-heading"><span>07</span><div><h2>Porcentajes no admitidos</h2><p>DiDi solo acepta enteros de 5% a 99%</p></div></div>
+          <div class="segmented unsupported-percentage-mode" id="unsupportedPercentageMode">
+            <button type="button" data-unsupported-percentage-policy="omit">Omitir estos productos</button>
+          </div>
+          <small id="unsupportedPercentageHint" class="field-hint"></small>
+        </div>
+
+        <div id="duplicateItemSection" class="hidden">
+          <div class="divider"></div>
+          <div class="section-heading"><span>08</span><div><h2>Resolver UPC repetidos</h2><p>Elige la fila que se conservará</p></div></div>
+          <small id="duplicateItemHint" class="field-hint"></small>
+          <div id="duplicateItemList" class="duplicate-item-list"></div>
+        </div>
+
+        <details id="upcSection" class="control-card optional-settings">
+          <summary><span><strong>Ajustar UPC</strong><small>Reemplaza identificadores antes del envío</small></span><span class="fold-icon" aria-hidden="true">+</span></summary>
+          <div class="upc-editor">
+            <label class="field"><span>UPC actual</span><input id="upcOriginal" type="text" inputmode="numeric" list="upcOptions" placeholder="Selecciona o escribe el UPC"><datalist id="upcOptions"></datalist></label>
+            <label class="field"><span>UPC nuevo</span><input id="upcReplacement" type="text" inputmode="numeric" placeholder="Se conserva como texto exacto"></label>
+            <button id="addUpcReplacement" class="button subtle" type="button" disabled>Agregar cambio</button>
+            <small id="upcAvailability" class="field-hint">Selecciona promociones para ver sus productos.</small>
+            <div id="upcReplacementList" class="upc-replacement-list"></div>
+          </div>
+        </details>
+
+        <div class="preview-action"><button id="previewButton" class="button primary" disabled>Generar vista previa</button><small id="previewReadiness">Carga un archivo para comenzar.</small></div>
+      </aside>
+
+      <section class="content">
+        <div class="catalog-toolbar">
+          <div><p class="eyebrow">CATÁLOGO DEL ARCHIVO</p><h2>Promociones disponibles</h2></div>
+          <div class="stats" id="stats"><span>0 promociones</span><span>0 productos</span></div>
+        </div>
+        <div class="filters">
+          <input id="searchInput" type="search" aria-label="Buscar promociones por ID o nombre" placeholder="Buscar por ID o nombre…">
+          <div class="type-filters">
+            <label title="Tipo 2 · Descuento porcentual"><input type="checkbox" value="2" checked> 2 · Descuento</label>
+            <label title="Tipo 4 · Compra N, recibe M"><input type="checkbox" value="4" checked> 4 · N × M</label>
+            <label title="Tipo 8 · Cantidad a precio fijo"><input type="checkbox" value="8" checked> 8 · Precio fijo</label>
+          </div>
+          <button id="selectVisible" class="button subtle" type="button">Seleccionar visibles</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Activity ID</th><th>Promoción</th><th>Tipo</th><th>Acción</th><th>Vigencia</th><th>Productos</th></tr></thead>
+            <tbody id="promoTable"><tr><td colspan="7" class="empty">Carga un archivo para comenzar.</td></tr></tbody>
+          </table>
+        </div>
+        <div class="selection-footer"><span id="selectionCount">0 seleccionadas</span><button id="clearSelection" type="button">Limpiar selección</button></div>
+      </section>
+    </section>
+
+    <section id="sftpAutomation" class="panel sftp-automation-panel" data-view-panel="automation">
+      <div class="automation-heading">
+        <div>
+          <p class="eyebrow">OPERACIÓN SFTP POR TIENDA</p>
+          <h2>Una operación para todas tus tiendas</h2>
+          <p>Toma el archivo más reciente de cada tienda —o uno específico—, permite ajustar su vigencia, filtra el tipo de promoción y genera un request independiente por tienda.</p>
+        </div>
+        <span class="production-pill">Producción · confirmación obligatoria</span>
+      </div>
+      <div class="automation-form-grid">
+        <label class="field"><span>Marca / cuenta SFTP</span><select id="automationAccountSelect"><option value="">Selecciona una marca…</option></select></label>
+        <label class="field"><span>Archivos a procesar</span><select id="automationFileMode"><option value="latest">El más reciente de cada tienda</option><option value="specific">Un archivo específico</option></select></label>
+        <label id="automationSpecificFileField" class="field hidden"><span>Archivo específico</span><select id="automationFileSelect"><option value="">Selecciona una cuenta…</option></select></label>
+        <label class="field"><span>Nuevo Activity ID</span><input id="automationActivityId" type="text" inputmode="numeric" maxlength="64" placeholder="Ej. 2026110101"><small>Se reutiliza entre tiendas. Si un archivo produce más de una actividad final, se bloqueará para evitar IDs ambiguos.</small></label>
+      </div>
+      <div class="automation-rule-row">
+        <fieldset class="automation-types"><legend>Tipo de promoción que se enviará</legend><label><input type="checkbox" value="2" checked> Tipo 2 · descuento porcentual</label><label><input type="checkbox" value="4"> Tipo 4 · compra N, recibe M</label><label><input type="checkbox" value="8"> Tipo 8 · cantidad a precio fijo</label></fieldset>
+        <fieldset class="automation-operations"><legend>Acciones de la operación</legend><label><input id="automationSendApi" type="checkbox" checked> Subir cada tienda a la API</label><label><input id="automationUpdateDates" type="checkbox"> Modificar vigencia dentro de los archivos</label><label><input id="automationWriteSftp" type="checkbox" disabled> Guardar los archivos editados directamente en el SFTP</label></fieldset>
+      </div>
+      <div id="automationDateFields" class="automation-date-grid hidden">
+        <label class="field"><span>Nueva fecha inicial <small>(opcional)</small></span><input id="automationStartDate" type="datetime-local" step="1"></label>
+        <label class="field"><span>Nueva fecha final <small>(opcional)</small></span><input id="automationEndDate" type="datetime-local" step="1"></label>
+        <p>Solo se sustituyen <code>startdate</code> y/o <code>enddate</code>. Antes de sobrescribir, se valida el archivo completo y se crea un respaldo remoto.</p>
+      </div>
+      <div class="automation-actions">
+        <button id="automationRefreshFiles" class="button subtle" type="button">Actualizar archivos</button>
+        <button id="automationPreviewButton" class="button primary" type="button" disabled>Preparar vista previa masiva</button>
+        <span id="automationStatus" class="source-status">Selecciona una cuenta SFTP.</span>
+      </div>
+      <div id="automationPreviewPanel" class="automation-preview hidden">
+        <div class="automation-summary-heading"><div><p class="eyebrow">RESULTADO DE LA PREPARACIÓN</p><h3 id="automationPreviewSummary">Sin resultados</h3><p id="automationAudit" class="field-hint"></p></div><div id="automationSummaryCards" class="automation-summary-cards"></div></div>
+        <div class="automation-table-wrap"><table><thead><tr><th>Archivo / tienda</th><th>Tipos detectados</th><th>Reglas aplicadas</th><th>Actividad final</th><th>Estado</th></tr></thead><tbody id="automationFileTable"></tbody></table></div>
+        <details class="automation-json"><summary>Ver ejemplos del JSON generado</summary><pre id="automationJsonPreview"></pre></details>
+        <div class="automation-confirmation">
+          <label><input id="automationConfirm" type="checkbox"> Confirmo la cuenta, los archivos, las fechas, los tipos, el Activity ID y las tiendas mostradas.</label>
+          <button id="automationExecuteButton" class="button danger" type="button" disabled>Ejecutar operación</button>
+        </div>
+        <div id="automationResult" class="result hidden"></div>
+      </div>
+    </section>
+
+    <section id="diagnostics" class="panel diagnostics-panel" data-view-panel="diagnostics">
+      <div class="diagnostics-heading">
+        <div>
+          <p class="eyebrow">DIAGNÓSTICO AUTOMÁTICO</p>
+          <h2>Una tienda de muestra por marca</h2>
+          <p>Analiza una tienda por marca. Puedes elegir otra, repetir el diagnóstico y descargar el archivo revisado. Es de solo lectura: no genera ni envía promociones.</p>
+        </div>
+        <button id="refreshDiagnostics" class="button secondary" type="button">Ejecutar nuevamente</button>
+      </div>
+      <div id="diagnosticsSummary" class="diagnostics-summary"><span>Diagnóstico por marca</span></div>
+      <div id="diagnosticsResults" class="diagnostics-results" aria-live="polite">
+        <div class="diagnostics-loading">El diagnóstico se carga al abrir esta sección.</div>
+      </div>
+      <details class="diagnostics-rules">
+        <summary>Ver estándares y umbrales utilizados</summary>
+        <div id="diagnosticsRules" class="diagnostics-rule-grid"></div>
+      </details>
+    </section>
+
+    <section id="previewPanel" class="panel hidden" data-view-panel="prepare">
+      <div class="panel-heading">
+        <div><p class="eyebrow">VISTA PREVIA GENERADA</p><h2>JSON listo para revisión</h2><p id="previewSummary"></p><p id="previewAudit" class="field-hint"></p></div>
+        <div id="idMapping" class="mapping"></div>
+      </div>
+      <pre id="jsonPreview"></pre>
+      <div class="sendbar">
+        <label><input id="confirmSend" type="checkbox"> <span id="confirmSendText">Confirmo tienda, promociones, vigencia e identificadores.</span></label>
+        <button id="sendButton" class="button danger" disabled>Enviar a producción</button>
+      </div>
+      <div id="sendResult" class="result hidden"></div>
+    </section>
+
+    <section id="tracking" class="panel query-panel" data-view-panel="tracking">
+      <div class="query-heading"><p class="eyebrow">SEGUIMIENTO</p><h2>Consultar Task IDs</h2><p>Consulta todos los Task IDs del último envío o revisa uno de forma individual con la credencial de la tienda correspondiente.</p></div>
+      <div id="trackingEmpty" class="tracking-empty"><span aria-hidden="true">↗</span><h3>El resultado de cada envío, en un lugar</h3><p>Después de enviar promociones, aquí aparecerán sus Task IDs. También puedes consultar uno en la sección individual.</p></div>
+      <div id="bulkTaskPanel" class="bulk-task-panel hidden">
+        <div class="bulk-task-heading">
+          <div><strong>Task IDs del último envío</strong><small id="bulkTaskCount">0 consultas</small></div>
+          <div class="bulk-task-actions"><button id="clearTaskQueue" class="button subtle" type="button">Limpiar</button><button id="queryAllTasks" class="button secondary" type="button">Consultar todos</button></div>
+        </div>
+        <div class="bulk-task-filters">
+          <input id="bulkTaskSearch" type="search" aria-label="Buscar tienda, Task ID o lote" placeholder="Buscar tienda, Task ID o lote">
+          <select id="bulkTaskStatus" aria-label="Filtrar consultas por estado"><option value="">Todos los estados</option><option value="pending">Sin consultar</option><option value="queried">Sin incidencias</option><option value="incident">Con incidencias</option><option value="error">Error de consulta</option></select>
+        </div>
+        <div id="bulkTaskProgress" class="bulk-task-progress hidden" aria-live="polite">
+          <div class="bulk-task-progress-heading">
+            <div><span id="bulkTaskProgressStage">Preparando consulta</span><strong id="bulkTaskProgressDetail">0 de 0</strong></div>
+            <strong id="bulkTaskProgressPercent">0%</strong>
+          </div>
+          <div id="bulkTaskProgressBar" class="bulk-task-progress-track" role="progressbar" aria-label="Progreso de la consulta" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span id="bulkTaskProgressFill"></span>
+          </div>
+          <div class="bulk-task-progress-meta">
+            <span id="bulkTaskProgressCounts">0 terminadas · 0 errores</span>
+            <span id="bulkTaskProgressEta">Calculando tiempo…</span>
+          </div>
+        </div>
+        <div id="bulkTaskSummary" class="bulk-task-summary"></div>
+        <div class="bulk-task-table-wrap">
+          <table><thead><tr><th>Tienda</th><th>Lote</th><th>Task ID</th><th>Estado</th><th>Detalle</th></tr></thead><tbody id="bulkTaskTable"></tbody></table>
+        </div>
+        <div id="bulkTaskPagination" class="bulk-task-pagination hidden">
+          <button id="bulkTaskPrevious" class="button subtle" type="button">Anterior</button>
+          <span id="bulkTaskPageSummary">Página 1 de 1</span>
+          <label>Filas <select id="bulkTaskPageSize"><option value="50" selected>50</option><option value="100">100</option><option value="200">200</option></select></label>
+          <button id="bulkTaskNext" class="button subtle" type="button">Siguiente</button>
+        </div>
+      </div>
+      <details class="single-task-panel">
+        <summary>Consulta individual</summary>
+        <div class="query-form">
+          <div class="task-store-control">
+            <span class="control-label">Tienda del Task ID</span>
+            <div class="task-store-filters">
+              <input id="taskStoreSearch" type="search" aria-label="Buscar la tienda del Task ID" placeholder="Buscar nombre, ciudad o ID">
+              <select id="taskCityFilter" aria-label="Filtrar tienda por ciudad"><option value="">Todas las ciudades</option></select>
+            </div>
+            <div id="taskStorePicker" class="task-store-picker" role="listbox" aria-label="Resultados de tiendas"></div>
+            <div id="taskStoreSelected" class="task-store-selected">Selecciona una tienda.</div>
+          </div>
+          <label class="field"><span>Task ID exacto</span><input id="taskIdInput" inputmode="numeric" placeholder="576467…"></label>
+          <button id="queryButton" class="button secondary">Consultar Task ID</button>
+        </div>
+      </details>
+      <pre id="queryResult" class="hidden"></pre>
+    </section>
+
+    <section id="documentation" class="panel documentation-panel" data-view-panel="guide">
+      <div class="documentation-heading">
+        <div>
+          <p class="eyebrow">DOCUMENTACIÓN OPERATIVA</p>
+          <h2>Cómo funcionan la plantilla y el envío</h2>
+          <p>Referencia de las reglas que realmente valida esta herramienta antes de construir y enviar el JSON a DiDi.</p>
+        </div>
+        <a class="back-to-top" href="#documentation">Volver arriba ↑</a>
+      </div>
+
+      <nav class="documentation-index" aria-label="Contenido de la documentación">
+        <a href="#doc-flow"><span>01</span> Flujo completo</a>
+        <a href="#doc-template"><span>02</span> Plantilla</a>
+        <a href="#doc-types"><span>03</span> Tipos y campos</a>
+        <a href="#doc-rules"><span>04</span> Reglas</a>
+        <a href="#doc-grouping"><span>05</span> Agrupación</a>
+        <a href="#doc-delivery"><span>06</span> Envío y seguimiento</a>
+        <a href="#doc-diagnostics"><span>07</span> Diagnóstico</a>
+        <a href="#doc-automation"><span>08</span> Operación SFTP</a>
+      </nav>
+
+      <article id="doc-flow" class="documentation-block">
+        <div class="documentation-block-title"><span>01</span><div><h3>Flujo completo</h3><p>Del archivo al resultado de la API.</p></div></div>
+        <ol class="flow-list">
+            <li><strong>Cargar</strong><span>Se elige la marca y se lee un archivo local o de su cuenta SFTP de promociones.</span></li>
+          <li><strong>Validar</strong><span>Se revisan columnas, tipos, fechas, identificadores, mecánicas y filas duplicadas.</span></li>
+          <li><strong>Seleccionar</strong><span>Se eligen las promociones y una, varias o todas las tiendas de la marca.</span></li>
+          <li><strong>Transformar</strong><span>Opcionalmente se agrupan promociones y se cambian Activity ID o UPC.</span></li>
+          <li><strong>Revisar</strong><span>Se genera el JSON exacto y se divide en lotes válidos antes de habilitar el envío.</span></li>
+          <li><strong>Enviar y consultar</strong><span>Cada tienda usa su token; consulta los Task IDs en la sección Seguimiento.</span></li>
+        </ol>
+        <aside class="documentation-callout"><strong>La vista previa es obligatoria.</strong> Cambiar la selección, los identificadores o el destino requiere generar una nueva antes de enviar.</aside>
+      </article>
+
+      <article id="doc-template" class="documentation-block">
+        <div class="documentation-block-title"><span>02</span><div><h3>Plantilla de entrada</h3><p>Formatos, encabezados y una fila por producto.</p></div></div>
+        <div class="documentation-grid two-columns">
+          <div>
+            <h4>Formatos admitidos</h4>
+            <ul class="rule-list">
+              <li><code>.csv</code>, <code>.txt</code>, <code>.tsv</code>, <code>.xlsx</code> y <code>.xls</code>.</li>
+              <li>Máximo 12 MB desde el navegador.</li>
+              <li>En CSV, TXT y TSV el encabezado es opcional. Sus nombres no son obligatorios: se usa la posición siempre que existan exactamente 14 columnas en el orden estándar de Soriana.</li>
+              <li>En CSV se detecta <code>|</code>, coma, punto y coma o tabulación.</li>
+              <li>En Excel debe existir una sola hoja utilizable y las celdas no pueden contener fórmulas.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Cómo se agrupan las filas</h4>
+            <p class="documentation-copy">Cada fila representa un UPC dentro de una promoción. Las filas con el mismo <code>shopid</code> y <code>activityid</code> se convierten en una sola promoción con varios elementos en <code>item_activity_list</code>.</p>
+          </div>
+        </div>
+        <h4>Orden estándar de 14 columnas (con o sin encabezado)</h4>
+        <div class="template-code" role="region" aria-label="Orden estándar de la plantilla"><code>shopid,activityid,activityname,startdate,enddate,activitytype,sku,discountamount,discountpercentage,mxn_n,mxn_m,BXGY_X,BXGY_Y,activityaction</code></div>
+        <p class="documentation-copy">Este es el mismo número y orden de columnas utilizado por los archivos SFTP de Soriana. Si existe encabezado pero sus nombres son distintos o incompletos, se usa el orden posicional. No se reordenan, agregan ni omiten valores.</p>
+        <div class="table-wrap documentation-table-wrap">
+          <table class="documentation-table">
+            <thead><tr><th>Dato</th><th>Encabezado recomendado</th><th>También se acepta</th><th>Uso</th></tr></thead>
+            <tbody>
+              <tr><td>Tienda origen</td><td><code>shopid</code></td><td><code>shop_id</code>, <code>storeid</code>, <code>store_id</code></td><td>Obligatorio</td></tr>
+              <tr><td>ID de promoción</td><td><code>activityid</code></td><td><code>activity_id</code></td><td>Obligatorio</td></tr>
+              <tr><td>Nombre</td><td><code>activityname</code></td><td><code>activity_name</code></td><td>Obligatorio</td></tr>
+              <tr><td>Inicio</td><td><code>startdate</code></td><td><code>start_date</code></td><td>Obligatorio</td></tr>
+              <tr><td>Fin</td><td><code>enddate</code></td><td><code>end_date</code></td><td>Obligatorio</td></tr>
+              <tr><td>Tipo</td><td><code>activitytype</code></td><td><code>activity_type</code>, <code>activitttype</code></td><td>Obligatorio</td></tr>
+              <tr><td>Producto</td><td><code>sku</code></td><td><code>skuid</code>, <code>sku_id</code>, <code>app_item_id</code>, <code>upc</code></td><td>Obligatorio</td></tr>
+              <tr><td>Acción</td><td><code>activityaction</code></td><td><code>activity_action</code>, <code>action</code></td><td>La plantilla usa 1; puede cambiarse en la interfaz</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article id="doc-types" class="documentation-block">
+        <div class="documentation-block-title"><span>03</span><div><h3>Tipos de promoción</h3><p>Solo se admiten los tipos 2, 4 y 8.</p></div></div>
+        <div class="promo-type-grid">
+          <section class="promo-type-card">
+            <span class="promo-type-number">2</span>
+            <h4>Descuento porcentual</h4>
+            <p>Usa <code>discountpercentage</code> o <code>DiscPercentage</code>.</p>
+            <ul><li>Debe ser un entero entre 5 y 99.</li><li>Los valores de 1 a 4 y 100 son rechazados por DiDi.</li><li>Los campos de tipos 4 y 8 deben quedar vacíos.</li></ul>
+          </section>
+          <section class="promo-type-card">
+            <span class="promo-type-number">4</span>
+            <h4>Compra N, recibe M</h4>
+            <p>Usa <code>mxn_n</code>/<code>BuyNum</code> y <code>mxn_m</code>/<code>GetNum</code>.</p>
+            <ul><li>Ambos son enteros positivos.</li><li><code>buy_num</code> debe ser menor que <code>get_num</code>.</li><li>Ejemplo 3×2: BuyNum=2 y GetNum=3.</li></ul>
+          </section>
+          <section class="promo-type-card">
+            <span class="promo-type-number">8</span>
+            <h4>Cantidad a precio fijo</h4>
+            <p>Usa <code>BXGY_X</code> y <code>BXGY_Y</code> o <code>final_discounted_price</code>.</p>
+            <ul><li><code>BXGY_X</code> es un entero positivo.</li><li>El precio se interpreta en pesos y se convierte exactamente a centavos.</li><li>Se agrega <code>child_type: 5</code>.</li></ul>
+          </section>
+        </div>
+        <aside class="documentation-callout warning"><strong>Regla confirmada por la API.</strong> DiDi devuelve <code>errno: 10001</code> y el mensaje <code>【discount_perc】 must be between 5 and 99 integer</code> cuando algún producto queda fuera de ese rango. La herramienta permite omitir explícitamente esos productos antes de generar el JSON.</aside>
+        <aside class="documentation-callout warning"><strong>No se redondean precios.</strong> Para pesos se admiten como máximo dos decimales. Un valor con fracciones menores a un centavo se rechaza.</aside>
+      </article>
+
+      <article id="doc-rules" class="documentation-block">
+        <div class="documentation-block-title"><span>04</span><div><h3>Reglas y validaciones</h3><p>Qué debe cumplirse para generar la vista previa.</p></div></div>
+        <div class="documentation-grid two-columns">
+          <div>
+            <h4>Identificadores y fechas</h4>
+            <ul class="rule-list">
+              <li>Guarda <code>shopid</code>, <code>activityid</code> y <code>sku</code> como texto para conservar ceros e IDs largos.</li>
+              <li>No se acepta notación científica. Excel pierde precisión después de 15 dígitos si el valor no se guardó como texto.</li>
+              <li>Las fechas usan exactamente <code>YYYY-MM-DD HH:mm:ss</code>, sin zona horaria ni milisegundos.</li>
+              <li>La fecha inicial no puede ser posterior a la fecha final.</li>
+              <li>Los Activity ID o UPC modificados deben contener de 1 a 64 dígitos.</li>
+              <li>En todo JSON de creación, <code>activity_name</code> comienza con el Activity ID final: <code>&lt;ActivityID&gt; · &lt;nombre&gt;</code>.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Consistencia de promociones</h4>
+            <ul class="rule-list">
+              <li>El archivo de creación usa <code>activityaction=1</code>. En la interfaz puedes elegir 1 para crear o actualizar, y 2 para detener.</li>
+              <li>Si un UPC se repite dentro del mismo <code>shopid</code> + <code>activityid</code>, debes elegir explícitamente qué fila y mecánica conservar antes de generar la vista previa.</li>
+              <li>Las filas con descuento de 0% requieren elegir entre conservarlas exactamente como están u omitirlas del JSON.</li>
+              <li>Los productos con <code>discount_perc</code> de 1 a 4 o igual a 100 no se envían salvo que el usuario elija omitirlos. La cantidad, los porcentajes y las filas omitidas quedan registrados en la auditoría.</li>
+              <li>Todas las filas de una promoción deben coincidir en tipo, acción y vigencia. Si un mismo Activity ID contiene nombres distintos, se usa el nombre común <code>Promoción &lt;ActivityID&gt;</code> y se muestra una advertencia.</li>
+              <li>Solo deben llenarse los campos numéricos correspondientes al tipo elegido.</li>
+              <li>Un UPC puede aparecer en promociones distintas; se conserva y se muestra como advertencia.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="id-mode-grid">
+          <div><strong>Acción 1 · Crear o actualizar</strong><span>Envía todos los datos de la plantilla para crear o actualizar la promoción.</span></div>
+          <div><strong>Acción 2 · Detener</strong><span>Envía únicamente <code>action</code> y el Activity ID original.</span></div>
+          <div><strong>Acciones mixtas</strong><span>Cada promoción elige su acción; el mismo <code>promo_list</code> puede crear una actividad y detener otra.</span></div>
+          <div><strong>Conservar</strong><span>Mantiene cada Activity ID del archivo.</span></div>
+          <div><strong>Manual</strong><span>Requiere un único resultado final y un ID nuevo que no exista en el archivo.</span></div>
+          <div><strong>Aleatorio</strong><span>Genera un ID numérico único y de longitud equivalente para cada promoción.</span></div>
+          <div><strong>Cambiar UPC</strong><span>Aplica el reemplazo en todos los destinos y bloquea colisiones dentro de una promoción.</span></div>
+        </div>
+      </article>
+
+      <article id="doc-grouping" class="documentation-block">
+        <div class="documentation-block-title"><span>05</span><div><h3>Agrupación de promociones</h3><p>Cuándo se pueden consolidar varias actividades.</p></div></div>
+        <p class="documentation-copy">Al activar <strong>Agrupar coincidencias</strong>, solo se consolidan promociones que tengan exactamente la misma tienda origen, acción, tipo, subtipo, fecha inicial y fecha final.</p>
+        <div class="grouping-rules">
+          <div><span>Coinciden</span><strong>Se unen los productos</strong><p>Los UPC idénticos se conservan una sola vez cuando su mecánica también es idéntica.</p></div>
+          <div><span>Nuevo evento</span><strong>Activity ID nuevo</strong><p>Todo grupo de dos o más promociones recibe un ID numérico único para no sobrescribir las actividades originales.</p></div>
+          <div><span>Conflicto</span><strong>Se bloquea la agrupación</strong><p>Si el mismo UPC tiene mecánicas diferentes, se detiene la vista previa y se muestra el conflicto.</p></div>
+        </div>
+      </article>
+
+      <article id="doc-delivery" class="documentation-block">
+        <div class="documentation-block-title"><span>06</span><div><h3>Destino, envío y Task ID</h3><p>Cómo llega cada solicitud a producción.</p></div></div>
+        <div class="documentation-grid two-columns">
+          <div>
+            <h4>Destino y autenticación</h4>
+            <ul class="rule-list">
+              <li>El <code>auth_token</code> determina la tienda que recibe la promoción.</li>
+              <li><code>app_item_id_type=0</code> interpreta el producto como <code>app_item_id</code>; <code>1</code> lo interpreta como UPC.</li>
+              <li>Los perfiles de marca aplican valores iniciales. Soriana usa UPC de manera predeterminada y los ajustes se conservan en este navegador.</li>
+              <li>Cada tienda usa su propio token; un mismo token no puede reutilizarse entre destinos.</li>
+              <li>Para varias tiendas, Tequila genera los tokens sin mostrarlos en la interfaz.</li>
+              <li>“Toda la marca” crea una solicitud independiente y autenticada para cada tienda.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Lotes y resultado</h4>
+            <ul class="rule-list">
+              <li>Cada solicitud admite hasta <strong><span id="docBatchSize">499</span> Activity IDs</strong> y <strong><span id="docMaxItems">5,999</span> productos en total</strong>.</li>
+              <li>El límite de productos se aplica a toda la solicitud, no a cada promoción. Si una promoción no cabe completa, continúa con el mismo Activity ID en el siguiente lote.</li>
+              <li>Un rechazo de una tienda no detiene las tiendas restantes.</li>
+              <li>Los resultados se clasifican como aceptados, rechazados o desconocidos.</li>
+              <li>Al generar el JSON se guarda una auditoría local con el archivo y su hash, la selección, las tiendas, los cuerpos JSON exactos y un inventario de Activity IDs para revisar o detener. Después del envío se agregan las respuestas y los Task IDs, sin guardar tokens.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="task-explanation">
+          <div class="task-step"><span>1</span><p><strong>DiDi recibe el POST</strong> y responde si la solicitud fue aceptada para procesarse.</p></div>
+          <div class="task-arrow" aria-hidden="true">→</div>
+          <div class="task-step"><span>2</span><p><strong>Se conserva el Task ID exacto</strong> como texto para evitar redondeo de identificadores de 64 bits.</p></div>
+          <div class="task-arrow" aria-hidden="true">→</div>
+          <div class="task-step"><span>3</span><p><strong>Se consulta con la misma tienda</strong> porque el Task ID debe validarse con su token correspondiente. En envíos múltiples se consultan todos en paralelo y se filtran en una tabla.</p></div>
+        </div>
+        <aside class="documentation-callout"><strong>Progreso real y pantalla ligera.</strong> La consulta muestra primero los lotes de credenciales y después los Task IDs terminados, el porcentaje y el tiempo estimado. La tabla presenta 50 filas por página y descarga el JSON original únicamente cuando abres “Ver JSON”.</aside>
+        <aside class="documentation-callout"><strong>Aceptado no significa aplicado.</strong> La respuesta inicial confirma que DiDi recibió el lote; la consulta del Task ID confirma su procesamiento final.</aside>
+      </article>
+
+      <article id="doc-diagnostics" class="documentation-block">
+        <div class="documentation-block-title"><span>07</span><div><h3>Diagnóstico automático</h3><p>Muestreo preventivo, sin modificar producción.</p></div></div>
+        <p class="documentation-copy">La herramienta agrupa las cuentas SFTP por marca, elige el archivo cargable más reciente de una tienda y lo procesa con el mismo convertidor que genera los JSON. Un resultado sano significa que esa muestra no activó las reglas; no certifica todos los archivos de la marca.</p>
+        <div class="id-mode-grid">
+          <div><strong>Crítico</strong><span>El archivo no cumple el estándar o contiene una decisión peligrosa, como 0%, UPC duplicado incompatible o precio de un centavo.</span></div>
+          <div><strong>Advertencia</strong><span>El valor es técnicamente válido, pero está fuera de los umbrales normales y requiere revisión humana.</span></div>
+          <div><strong>Informativo</strong><span>Formato poco común que puede ser correcto según el catálogo de la marca.</span></div>
+        </div>
+        <aside class="documentation-callout warning"><strong>Es una muestra.</strong> Se revisa una tienda por marca para detectar señales rápidamente; el diagnóstico no sustituye una validación completa de todos los archivos.</aside>
+      </article>
+
+      <article id="doc-automation" class="documentation-block">
+        <div class="documentation-block-title"><span>08</span><div><h3>Operación SFTP por tienda</h3><p>Edición opcional y envío masivo con una sola vista previa.</p></div></div>
+        <ol class="flow-list">
+          <li><strong>Elegir cuenta</strong><span>La cuenta fija la marca, las tiendas disponibles, el perfil de productos y las credenciales utilizadas.</span></li>
+          <li><strong>Elegir alcance</strong><span>“Más reciente” toma un solo archivo por <code>shopid</code>; “específico” procesa únicamente el archivo seleccionado.</span></li>
+          <li><strong>Filtrar mecánica</strong><span>Solo se preparan los tipos 2, 4 u 8 seleccionados. La tabla indica su nombre, promociones y productos.</span></li>
+          <li><strong>Aplicar reglas</strong><span>Para tipo 2 se omiten 0% y porcentajes fuera de 5–99. Los UPC duplicados idénticos se consolidan; una mecánica contradictoria bloquea esa tienda.</span></li>
+          <li><strong>Asignar ID</strong><span>Las promociones con el mismo tipo y vigencia se agrupan. El Activity ID indicado se aplica únicamente cuando el archivo produce una sola actividad final.</span></li>
+          <li><strong>Editar con respaldo</strong><span>Si se cambia la vigencia, se compara la huella del original, se crea un respaldo en <code>.promo-manager-backups</code>, se sube a una ruta temporal y se verifica antes de reemplazar.</span></li>
+          <li><strong>Enviar por tienda</strong><span>Cada archivo se asocia con su tienda por App Shop ID y cada request usa el token propio de esa tienda. El fallo de una tienda no detiene las restantes.</span></li>
+        </ol>
+        <aside class="documentation-callout warning"><strong>La preparación no modifica nada.</strong> La edición SFTP y el envío a la API solo comienzan después de marcar la confirmación y pulsar “Ejecutar operación”. Si el archivo cambió después de la vista previa, no se sobrescribe.</aside>
+      </article>
+    </section>
+  </main>
+  <script src="./app.js" defer></script>
+</body>
+</html>

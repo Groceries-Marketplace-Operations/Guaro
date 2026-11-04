@@ -1,0 +1,22 @@
+{
+  "name": "didi-promo-manager",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Convierte CSV y XLSX de promociones a JSON y permite enviarlos a tiendas seleccionadas.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --use-system-ca src/cli.mjs",
+    "web": "node --use-system-ca src/server.mjs",
+    "test": "node --env-file=test/test.env --test",
+    "sync:soriana-stores": "node scripts/sync-soriana-stores.mjs",
+    "help": "node src/cli.mjs --help"
+  },
+  "dependencies": {
+    "csv-parse": "7.0.3",
+    "ssh2-sftp-client": "^12.0.1",
+    "xlsx": "file:vendor/xlsx-0.20.3.tgz"
+  }
+}

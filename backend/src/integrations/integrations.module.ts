@@ -35,6 +35,8 @@ import { AutoOpenRecoveryService } from './auto-open-recovery.service';
 import { AutoOpenScheduler } from './auto-open.scheduler';
 import { AutoOpenSelectionService } from './auto-open-selection.service';
 import { StoreOpeningGuardService } from './store-opening-guard.service';
+import { NetoAutomationController } from './neto-automation.controller';
+import { NetoAutomationService } from './neto-automation.service';
 
 @Module({
   imports: [
@@ -51,7 +53,7 @@ import { StoreOpeningGuardService } from './store-opening-guard.service';
     ConfigModule,
     CatalogModule,
   ],
-  controllers: [CompletionRateController, AutoTurnOffController, AutoFetchController, StoreEmergencyController, ForcedOpenController, AutoOpenPoolsController],
+  controllers: [CompletionRateController, AutoTurnOffController, AutoFetchController, StoreEmergencyController, ForcedOpenController, AutoOpenPoolsController, NetoAutomationController],
   providers: [
     StoreCrService,
     CompletionRateService,
@@ -76,6 +78,7 @@ import { StoreOpeningGuardService } from './store-opening-guard.service';
     AutoOpenProcessor,
     AutoOpenRecoveryService,
     AutoOpenScheduler,
+    NetoAutomationService,
   ],
   exports: [StoreOpeningGuardService],
 })
