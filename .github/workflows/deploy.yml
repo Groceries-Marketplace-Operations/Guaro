@@ -436,31 +436,40 @@ jobs:
               docker builder prune -af
               docker image prune -af
             fi
-            umask 077
-            mkdir -p backups
-            # Keep four existing backups before writing the next one. This
-            # avoids briefly needing space for six full database dumps on
-            # hosts that are already close to their disk threshold.
-            find backups -maxdepth 1 -type f -name 'pre-deploy-*.dump' -printf '%T@ %p\n' \
-              | sort -nr \
-              | tail -n +5 \
-              | cut -d' ' -f2- \
-              | xargs -r rm -f --
-            backup_stamp="$(date +%Y%m%d-%H%M%S)"
-            backup_file="backups/pre-deploy-${backup_stamp}.dump"
-            backup_tmp="backups/.pre-deploy-${backup_stamp}.dump.tmp"
-            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
-              sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" -Fc' > "$backup_tmp"
-            test -s "$backup_tmp"
-            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
-              pg_restore -l < "$backup_tmp" >/dev/null
-            mv -- "$backup_tmp" "$backup_file"
-            backup_tmp=""
-            find backups -maxdepth 1 -type f -name 'pre-deploy-*.dump' -printf '%T@ %p\n' \
-              | sort -nr \
-              | tail -n +6 \
-              | cut -d' ' -f2- \
-              | xargs -r rm -f --
+            # A full pg_dump of the large operational database can take more
+            # than the deployment timeout and compete with live order work.
+            # Keep that safety gate for schema or migration changes. A code
+            # only release preserves the current database and existing backup.
+            schema_changes="$(git diff --name-only HEAD "$deploy_sha" -- prisma/schema.prisma prisma/migrations prisma/deploy)"
+            if [ -n "$schema_changes" ]; then
+              umask 077
+              mkdir -p backups
+              # Keep four existing backups before writing the next one. This
+              # avoids briefly needing space for six full database dumps on
+              # hosts that are already close to their disk threshold.
+              find backups -maxdepth 1 -type f -name 'pre-deploy-*.dump' -printf '%T@ %p\n' \
+                | sort -nr \
+                | tail -n +5 \
+                | cut -d' ' -f2- \
+                | xargs -r rm -f --
+              backup_stamp="$(date +%Y%m%d-%H%M%S)"
+              backup_file="backups/pre-deploy-${backup_stamp}.dump"
+              backup_tmp="backups/.pre-deploy-${backup_stamp}.dump.tmp"
+              docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
+                sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" -Fc' > "$backup_tmp"
+              test -s "$backup_tmp"
+              docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T guaro-db \
+                pg_restore -l < "$backup_tmp" >/dev/null
+              mv -- "$backup_tmp" "$backup_file"
+              backup_tmp=""
+              find backups -maxdepth 1 -type f -name 'pre-deploy-*.dump' -printf '%T@ %p\n' \
+                | sort -nr \
+                | tail -n +6 \
+                | cut -d' ' -f2- \
+                | xargs -r rm -f --
+            else
+              echo "No Prisma schema or migration changes; retaining the existing backup"
+            fi
 
             # Capture the actual images used by the running containers rather
             # than trusting latest, which a prior failed load may have moved.
