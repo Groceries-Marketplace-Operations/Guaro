@@ -10,6 +10,8 @@ export { GROCERY_TASK_STATUS_MIN_INTERVAL_MS } from './grocery-task-status-limit
 
 export const GROCERY_UPLOAD_ENDPOINTS = ['uploadGrocery', 'updateItemsync'] as const;
 export type GroceryUploadEndpoint = typeof GROCERY_UPLOAD_ENDPOINTS[number];
+export const GROCERY_TASK_STATUS_REQUEST_TIMEOUT_MS = 30_000;
+export const GROCERY_SUBMISSION_REQUEST_TIMEOUT_MS = 90_000;
 
 export interface GroceryItemFailure {
   appItemId: string;
@@ -82,6 +84,7 @@ export async function checkGroceryUploadTaskOnce(
   taskId: string,
   refreshAuthToken?: () => Promise<string>,
   rateLimitKey = 'global',
+  requestTimeoutMs = GROCERY_TASK_STATUS_REQUEST_TIMEOUT_MS,
 ): Promise<GroceryUploadTaskCheckResult> {
   return withGroceryTaskStatusRateLimit(async () => {
     const endpoint = 'POST /v3/item/item/getGroceryMenuTaskInfo';
@@ -89,6 +92,7 @@ export async function checkGroceryUploadTaskOnce(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ auth_token: authToken, task_id: taskId }),
+      signal: AbortSignal.timeout(requestTimeoutMs),
     });
     const rawBody = await response.text();
     const errno = Number(rawBody.match(/"errno"\s*:\s*(-?\d+)/)?.[1]);
@@ -197,12 +201,14 @@ export async function submitGroceryBatch(
   batch: FlatGroceryUpload,
   uploadEndpoint: string,
   mergePolicy: number,
+  requestTimeoutMs = GROCERY_SUBMISSION_REQUEST_TIMEOUT_MS,
 ): Promise<GroceryBatchSubmission | GroceryBatchUploadResult> {
   const request = buildGroceryUploadRequest(authToken, batch, uploadEndpoint, mergePolicy);
   const response = await fetchWithEndpointContext(request.endpoint, request.url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request.payload),
+    signal: AbortSignal.timeout(requestTimeoutMs),
   });
   const body = parseJsonKeepingIds(await response.text()) as Record<string, any>;
   const referenceId = uploadEndpoint === 'uploadGrocery'

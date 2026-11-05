@@ -9,15 +9,22 @@ const APP_ID = '5764607780881696497';
 const ROOT = path.resolve(process.env.DIDI_NETO_DATA_ROOT || '/app/uploads/tiendas-neto');
 const CONTROL = path.join(ROOT, 'supervisor-control.json');
 const STATUS = path.join(ROOT, 'supervisor-status.json');
+const RUNNER_STATUS = path.join(ROOT, 'weekly-menu-v5', 'status.json');
 const RUNNER = path.join(__dirname, 'run.mjs');
 const POLL_MS = 5_000;
 const RETRY_MS = 60_000;
+const RUNNER_STALL_MS = 5 * 60_000;
+const RUNNER_START_GRACE_MS = 10 * 60_000;
+const FORCE_KILL_MS = 30_000;
 
 const prisma = new PrismaClient();
 let child = null;
 let childExited = null;
 let stopping = false;
 let signalSent = false;
+let signalSentAt = 0;
+let stopReason = null;
+let childStartedAt = 0;
 let lastExit = null;
 let nextStartAt = 0;
 
@@ -68,12 +75,17 @@ async function launch() {
     stdio: ['ignore', 'inherit', 'inherit'],
   });
   signalSent = false;
+  signalSentAt = 0;
+  stopReason = null;
+  childStartedAt = Date.now();
   const startedAt = new Date().toISOString();
   childExited = new Promise(resolve => {
     child.once('exit', (code, signal) => {
       lastExit = { at: new Date().toISOString(), code, signal, startedAt };
       child = null;
       signalSent = false;
+      signalSentAt = 0;
+      childStartedAt = 0;
       nextStartAt = Date.now() + RETRY_MS;
       resolve(lastExit);
     });
@@ -81,6 +93,8 @@ async function launch() {
       lastExit = { at: new Date().toISOString(), error: safeError(error), startedAt };
       child = null;
       signalSent = false;
+      signalSentAt = 0;
+      childStartedAt = 0;
       nextStartAt = Date.now() + RETRY_MS;
       resolve(lastExit);
     });
@@ -88,14 +102,47 @@ async function launch() {
   console.log(`Tiendas Neto runner started pid=${child.pid}`);
 }
 
-function requestStop() {
+function requestStop(reason = 'requested') {
   if (!child || signalSent) return;
   signalSent = true;
+  signalSentAt = Date.now();
+  stopReason = reason;
   child.kill('SIGTERM');
 }
 
+function forceStopIfNeeded() {
+  if (!child || !signalSent || !signalSentAt || Date.now() - signalSentAt < FORCE_KILL_MS) return;
+  console.error(`Tiendas Neto runner force-stopped reason=${stopReason ?? 'requested'} pid=${child.pid}`);
+  child.kill('SIGKILL');
+  signalSentAt = Number.POSITIVE_INFINITY;
+}
+
+async function runnerHealth() {
+  if (!child) return { responsive: false, reason: 'not_running' };
+  const status = await readJson(RUNNER_STATUS);
+  if (Number(status?.pid) !== child.pid) {
+    const ageMs = Math.max(0, Date.now() - childStartedAt);
+    return {
+      responsive: ageMs <= RUNNER_START_GRACE_MS,
+      reason: 'awaiting_current_runner_status',
+      ageMs,
+      phase: status?.phase ?? null,
+      statusUpdatedAt: status?.updatedAt ?? null,
+    };
+  }
+  const updatedAtMs = Date.parse(status?.updatedAt);
+  const ageMs = Number.isFinite(updatedAtMs) ? Math.max(0, Date.now() - updatedAtMs) : Number.POSITIVE_INFINITY;
+  return {
+    responsive: ageMs <= RUNNER_STALL_MS,
+    reason: ageMs <= RUNNER_STALL_MS ? 'responsive' : 'status_stalled',
+    ageMs,
+    phase: status?.phase ?? null,
+    statusUpdatedAt: status?.updatedAt ?? null,
+  };
+}
+
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => { stopping = true; requestStop(); });
+  process.on(signal, () => { stopping = true; requestStop(`supervisor_${signal.toLowerCase()}`); });
 }
 
 async function main() {
@@ -103,7 +150,13 @@ async function main() {
   for (;;) {
     const control = await readJson(CONTROL);
     const enabled = control?.enabled === true;
-    if (stopping || !enabled) requestStop();
+    let health = child ? await runnerHealth() : null;
+    if (child && health && !health.responsive && !signalSent) {
+      console.error(`Tiendas Neto runner watchdog detected ${health.reason} age_ms=${health.ageMs} phase=${health.phase ?? 'unknown'}`);
+      requestStop('watchdog_stall');
+    }
+    if (stopping || !enabled) requestStop(stopping ? 'supervisor_stopping' : 'disabled');
+    forceStopIfNeeded();
     if (!stopping && enabled && !child && Date.now() >= nextStartAt) {
       try { await launch(); }
       catch (error) {
@@ -112,12 +165,19 @@ async function main() {
         console.error(`Tiendas Neto start failed: ${lastExit.error}`);
       }
     }
+    health = child ? await runnerHealth() : null;
     await writeJson(STATUS, {
       schemaVersion: 1,
       enabled,
       running: Boolean(child),
-      stopping: stopping || (!enabled && signalSent),
+      stopping: Boolean(signalSent),
       pid: child?.pid ?? null,
+      runnerResponsive: health?.responsive ?? false,
+      runnerHealthReason: health?.reason ?? 'not_running',
+      runnerPhase: health?.phase ?? null,
+      runnerStatusUpdatedAt: health?.statusUpdatedAt ?? null,
+      runnerStatusAgeMs: Number.isFinite(health?.ageMs) ? health.ageMs : null,
+      stopReason,
       lastExit,
       nextStartAt: !child && enabled ? new Date(nextStartAt).toISOString() : null,
       updatedAt: new Date().toISOString(),
@@ -154,7 +214,7 @@ async function authTest(appShopId) {
 const entry = process.argv[2] === '--auth-test' ? authTest(process.argv[3]) : main();
 entry.catch(async error => {
   console.error(`Tiendas Neto supervisor fatal: ${safeError(error)}`);
-  requestStop();
+  requestStop('supervisor_fatal');
   if (childExited) await Promise.race([childExited, sleep(100_000)]);
   await prisma.$disconnect().catch(() => undefined);
   process.exitCode = 1;

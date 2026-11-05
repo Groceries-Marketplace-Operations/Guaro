@@ -817,6 +817,11 @@ async function pollUploadToTerminal(shop, state, save) {
       state.polls = Number(state.polls ?? 0) + 1;
       state.lastPollAt = now();
       state.lastTaskStatus = check.status;
+      await setStatus({
+        lastTaskPollAt: state.lastPollAt,
+        lastTaskPollShopId: appShopId,
+        lastTaskStatus: check.status,
+      });
       if (!check.terminal) {
         state.status = 'task_pending';
         await save();
@@ -837,6 +842,11 @@ async function pollUploadToTerminal(shop, state, save) {
       state.lastError = publicError(error);
       state.lastPollErrorAt = now();
       await save();
+      await setStatus({
+        lastTaskPollAt: state.lastPollErrorAt,
+        lastTaskPollShopId: appShopId,
+        lastTaskPollError: state.lastError,
+      });
       await sleep(TASK_RECHECK_MS);
     }
   }
@@ -1034,7 +1044,11 @@ async function acquireOwnedLock(file) {
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
       const existing = await readJsonIfExists(file).catch(() => undefined);
-      if (existing?.host === lockHost && isProcessAlive(Number(existing?.pid))) {
+      const existingPid = Number(existing?.pid);
+      const reusedCurrentPid = existing?.host === lockHost
+        && existingPid === process.pid
+        && existing?.token !== lockToken;
+      if (!reusedCurrentPid && existing?.host === lockHost && isProcessAlive(existingPid)) {
         throw new Error(`Another runner owns ${path.basename(file)} (PID ${existing.pid})`);
       }
       if (existing?.host !== lockHost) {

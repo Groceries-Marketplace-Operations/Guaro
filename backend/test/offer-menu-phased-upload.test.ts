@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import {
   checkGroceryUploadTaskOnce,
   GroceryBatchSubmissionRejectedError,
@@ -16,6 +16,18 @@ const batch: FlatGroceryUpload = {
   categoryIds: ['category_0'],
 };
 
+function installNeverEndingFetch(t: TestContext): void {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
+    const signal = init?.signal;
+    assert.ok(signal, 'request must include an AbortSignal');
+    const rejectOnAbort = () => reject(signal.reason ?? new Error('request aborted'));
+    if (signal.aborted) rejectOnAbort();
+    else signal.addEventListener('abort', rejectOnAbort, { once: true });
+  });
+}
+
 test('offer menu submission returns the taskID without polling its status', async t => {
   const originalFetch = global.fetch;
   const calls: string[] = [];
@@ -30,6 +42,24 @@ test('offer menu submission returns the taskID without polling its status', asyn
   assert.deepEqual(submission, { referenceId: 'task-123' });
   assert.equal(calls.length, 1);
   assert.match(calls[0], /\/v3\/item\/item\/uploadGrocery$/);
+});
+
+test('task status polling aborts a transport that never responds', async t => {
+  installNeverEndingFetch(t);
+
+  await assert.rejects(
+    () => checkGroceryUploadTaskOnce('token', 'task-timeout', undefined, `timeout-${Date.now()}`, 10),
+    (error: Error) => /getGroceryMenuTaskInfo failed/.test(error.message),
+  );
+});
+
+test('menu submission aborts a transport that never responds', async t => {
+  installNeverEndingFetch(t);
+
+  await assert.rejects(
+    () => submitGroceryBatch('token', batch, 'uploadGrocery', 1, 10),
+    (error: Error) => /uploadGrocery failed/.test(error.message),
+  );
 });
 
 test('an explicit uploadGrocery rejection is distinguishable from ambiguous transport failure and is not retried', async t => {
