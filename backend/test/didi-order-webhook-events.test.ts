@@ -534,18 +534,20 @@ test('production builds all webhook filter indexes online through psql autocommi
 
 test('production deploy expands schema, creates online indexes, then records Prisma migrations', () => {
   const workflow = readFileSync(resolve(__dirname, '../../.github/workflows/deploy.yml'), 'utf8');
-  const expansion = workflow.indexOf(
+  assert.match(workflow, /git show "\$\{deploy_sha\}:ops\/deploy-production\.sh"/);
+  const deployScript = readFileSync(resolve(__dirname, '../../ops/deploy-production.sh'), 'utf8');
+  const expansion = deployScript.indexOf(
     'prisma/migrations/20261016020000_didi_order_webhook_financials/migration.sql',
   );
-  const onlineIndexes = workflow.indexOf('prisma/deploy/didi_order_webhook_indexes_online.sql');
-  const migrateDeploy = workflow.indexOf('npx prisma migrate deploy --schema=./prisma/schema.prisma');
+  const onlineIndexes = deployScript.indexOf('prisma/deploy/didi_order_webhook_indexes_online.sql');
+  const migrateDeploy = deployScript.indexOf('npx prisma migrate deploy --schema=./prisma/schema.prisma');
 
   assert.ok(expansion >= 0);
   assert.ok(onlineIndexes > expansion);
   assert.ok(migrateDeploy > onlineIndexes);
-  assert.match(workflow, /psql -X -v ON_ERROR_STOP=1/);
+  assert.match(deployScript, /psql -X -v ON_ERROR_STOP=1/);
   assert.match(
-    workflow,
+    deployScript,
     /migrate resolve --rolled-back 20261015005000_didi_order_webhook_filter_indexes/,
   );
 });

@@ -18,7 +18,10 @@ const batch: FlatGroceryUpload = {
 
 function installNeverEndingFetch(t: TestContext): void {
   const originalFetch = global.fetch;
-  t.after(() => { global.fetch = originalFetch; });
+  // AbortSignal.timeout uses an unref'd timer in Node 20. Keep this test's
+  // event loop alive until the expected abort fires.
+  const keepAlive = setInterval(() => undefined, 1_000);
+  t.after(() => { clearInterval(keepAlive); global.fetch = originalFetch; });
   global.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
     const signal = init?.signal;
     assert.ok(signal, 'request must include an AbortSignal');
