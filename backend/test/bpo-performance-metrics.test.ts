@@ -24,6 +24,12 @@ function fixture() {
         return 3;
       },
     },
+    taskAssignmentDelay: {
+      aggregate: async (input: { where: { task?: { status?: { not?: TaskStatus } } } }) => {
+        assert.equal(input.where.task?.status?.not, TaskStatus.failed);
+        return { _count: { _all: 1 }, _sum: { delayMinutes: 12 } };
+      },
+    },
     $queryRaw: async (strings: TemplateStringsArray) => {
       rawSql = strings.join(' ');
       return [{ avg_hours: 1.5 }];
@@ -45,6 +51,8 @@ test('BPO people metrics exclude every step that belongs to a failed task', asyn
     stepsCompleted: 7,
     stepsFailed: 2,
     stepsInProgress: 3,
+    delayedAssignments: 1,
+    delayedWorkMinutes: 12,
     avgCompletionHours: 1.5,
   });
   assert.equal(observed().countInputs.length, 3);
