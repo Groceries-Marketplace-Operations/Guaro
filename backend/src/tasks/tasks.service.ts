@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { AccountRole, Country, ExecutionType, FormFieldTipo, Prisma, StepFailureReason, StepStatus, TaskStatus } from '@prisma/client';
+import { AccountRole, Country, ExecutionType, FormFieldTipo, Prisma, StepFailureReason, StepStatus, TaskPriority, TaskStatus } from '@prisma/client';
 import { stat } from 'fs/promises';
 import { join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
@@ -32,6 +32,13 @@ const TASK_INCLUDE = {
   taskType: { select: { id: true, name: true, sectionId: true } },
   brand: { select: { id: true, brandId: true, brandName: true, country: true } },
   createdBy: { select: { id: true, name: true, email: true } },
+  assignmentDelays: {
+    orderBy: { recordedAt: 'desc' as const },
+    include: {
+      account: { select: { id: true, name: true } },
+      replacementAccount: { select: { id: true, name: true } },
+    },
+  },
   stepInstances: {
     orderBy: { stepDefinition: { order: 'asc' as const } },
     include: {
@@ -71,6 +78,8 @@ const TASK_LIST_INCLUDE = {
       id: true,
       status: true,
       assignedToId: true,
+      dueAt: true,
+      assignedAt: true,
       stepDefinition: {
         select: {
           id: true,
@@ -242,6 +251,7 @@ export class TasksService {
           brandId: resolvedBrandId,
           createdById,
           status: isScheduled ? TaskStatus.scheduled : TaskStatus.pending,
+          priority: taskType.defaultPriority,
           scheduledStart: dto.scheduledStart ? new Date(dto.scheduledStart) : null,
           scheduledEnd: dto.scheduledEnd ? new Date(dto.scheduledEnd) : null,
         },
@@ -303,6 +313,13 @@ export class TasksService {
     return this.findOne(task.id);
   }
 
+  async updatePriority(id: string, priority: TaskPriority, user: JwtUser) {
+    this.assertAdminAssignment(user);
+    await this.findOne(id, { roles: user.roles, accountId: user.id, sectionId: user.sectionId });
+    await this.prisma.task.update({ where: { id }, data: { priority } });
+    return this.findOne(id, { roles: user.roles, accountId: user.id, sectionId: user.sectionId });
+  }
+
   // ── Queries ───────────────────────────────────────────────────────────────
 
   async findAll(
@@ -318,6 +335,7 @@ export class TasksService {
       sectionId?: string;
       country?: Country;
       taskTypeId?: string;
+      priority?: TaskPriority;
     } = {},
   ) {
     const {
@@ -329,6 +347,7 @@ export class TasksService {
       sectionId: filterSectionId,
       country,
       taskTypeId,
+      priority,
     } = filters;
     const skip = (page - 1) * limit;
     const where = await this.taskWhere(roles, accountId, sectionId, {
@@ -338,6 +357,7 @@ export class TasksService {
       sectionId: filterSectionId,
       country,
       taskTypeId,
+      priority,
     });
 
     const [data, total] = await Promise.all([
@@ -478,6 +498,7 @@ export class TasksService {
       sectionId?: string;
       country?: Country;
       taskTypeId?: string;
+      priority?: TaskPriority;
     } = {},
   ): Promise<Prisma.TaskWhereInput> {
     const isSuperAdmin = roles.includes(AccountRole.super_admin);
@@ -509,6 +530,7 @@ export class TasksService {
     }
 
     if (filters.status) AND.push({ status: filters.status });
+    if (filters.priority) AND.push({ priority: filters.priority });
     if (filters.brandId) AND.push({ brandId: filters.brandId });
     if (filters.sectionId) AND.push({ taskType: { sectionId: filters.sectionId } });
     if (filters.taskTypeId) AND.push({ taskTypeId: filters.taskTypeId });

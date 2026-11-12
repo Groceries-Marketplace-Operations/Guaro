@@ -122,6 +122,13 @@ enum TaskStatus {
   @@map("TaskEstado")
 }
 
+enum TaskPriority {
+  low
+  normal
+  high
+  urgent
+}
+
 enum StepStatus {
   pending
   in_progress
@@ -390,6 +397,8 @@ model Account {
   sectionId      String?       @map("section_id") @db.Uuid
   workload       Int           @default(0) @map("carga")
   rrCounter      Int           @default(0) @map("contador_rr")
+  delayedAssignments Int        @default(0) @map("delayed_assignments")
+  delayedWorkMinutes Int        @default(0) @map("delayed_work_minutes")
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
   deletedAt      DateTime?     @map("deleted_at")
@@ -407,6 +416,8 @@ model Account {
   storeEmergencyEvents                       StoreEmergencyEvent[]                @relation("StoreEmergencyEventActor")
   createdForcedOpenOperations                ForcedOpenOperation[]                @relation("ForcedOpenOperationCreator")
   assignedSteps                              StepInstance[]
+  taskDelays                                 TaskAssignmentDelay[]              @relation("TaskDelayAssignee")
+  taskDelayReplacements                      TaskAssignmentDelay[]              @relation("TaskDelayReplacement")
   stepCandidate                              StepDefinitionAccount[]
   ruleCandidate                              BrandAssignmentRuleAccount[]
   createdInvitations                         Invitation[]                         @relation("InvitacionCreador")
@@ -489,6 +500,12 @@ model TaskType {
   name        String    @map("nombre")
   descripcion String?
   schedulable Boolean   @default(false) @map("programable")
+  defaultPriority TaskPriority @default(normal) @map("default_priority")
+  deliveryMinutes Int?    @map("delivery_minutes")
+  workDays        Int[]   @default([1, 2, 3, 4, 5]) @map("work_days")
+  workStartMinute Int     @default(540) @map("work_start_minute")
+  workEndMinute   Int     @default(1080) @map("work_end_minute")
+  workTimeZone    String  @default("America/Mexico_City") @map("work_time_zone")
   active      Boolean   @default(true) @map("activo")
   order       Int       @default(0) @map("orden")
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -1403,6 +1420,7 @@ model Task {
   brandId        String?    @map("brand_id") @db.Uuid
   createdById    String     @map("created_by") @db.Uuid
   status         TaskStatus @default(pending) @map("estado")
+  priority       TaskPriority @default(normal) @map("priority")
   scheduledStart DateTime?  @map("programado_inicio")
   scheduledEnd   DateTime?  @map("programado_fin")
   createdAt      DateTime   @default(now()) @map("created_at")
@@ -1413,6 +1431,7 @@ model Task {
   brand                        Brand?                         @relation(fields: [brandId], references: [id])
   createdBy                    Account                        @relation("TaskCreador", fields: [createdById], references: [id])
   stepInstances                StepInstance[]
+  assignmentDelays             TaskAssignmentDelay[]
   formValues                   FormValue[]
   taskShops                    TaskShop[]
   storeOnboardingEnrollment    StoreOnboardingTaskEnrollment? @relation("StoreOnboardingEnrollmentTask")
@@ -1426,6 +1445,7 @@ model Task {
   @@index([brandId])
   @@index([createdById])
   @@index([status])
+  @@index([priority, status, createdAt])
   @@map("task")
 }
 
@@ -1446,6 +1466,11 @@ model StepInstance {
   stepDefinitionId String             @map("step_definition_id") @db.Uuid
   status           StepStatus         @default(pending) @map("estado")
   assignedToId     String?            @map("asignado_id") @db.Uuid
+  assignedAt       DateTime?          @map("assigned_at") @db.Timestamptz
+  dueAt            DateTime?          @map("due_at") @db.Timestamptz
+  assignmentEpoch  Int                @default(0) @map("assignment_epoch")
+  nextReassignmentAt DateTime?        @map("next_reassignment_at") @db.Timestamptz
+  slaPausedAt      DateTime?          @map("sla_paused_at") @db.Timestamptz
   result           Json?              @map("resultado")
   note             String?            @map("nota")
   failureReason    StepFailureReason? @map("motivo_fallo")
@@ -1458,11 +1483,35 @@ model StepInstance {
   task                   Task                   @relation(fields: [taskId], references: [id], onDelete: Cascade)
   stepDefinition         StepDefinition         @relation(fields: [stepDefinitionId], references: [id])
   assignedTo             Account?               @relation(fields: [assignedToId], references: [id])
+  assignmentDelays       TaskAssignmentDelay[]
   storeOnboardingBatches StoreOnboardingBatch[]
 
   @@index([taskId])
   @@index([assignedToId])
+  @@index([dueAt, nextReassignmentAt])
   @@map("step_instance")
+}
+
+model TaskAssignmentDelay {
+  id                   String   @id @default(uuid()) @db.Uuid
+  taskId               String   @map("task_id") @db.Uuid
+  stepInstanceId       String   @map("step_instance_id") @db.Uuid
+  accountId            String   @map("account_id") @db.Uuid
+  assignmentEpoch      Int      @map("assignment_epoch")
+  dueAt                DateTime @map("due_at") @db.Timestamptz
+  recordedAt           DateTime @default(now()) @map("recorded_at") @db.Timestamptz
+  delayMinutes         Int      @map("delay_minutes")
+  replacementAccountId String?  @map("replacement_account_id") @db.Uuid
+
+  task               Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  stepInstance       StepInstance @relation(fields: [stepInstanceId], references: [id], onDelete: Cascade)
+  account            Account      @relation("TaskDelayAssignee", fields: [accountId], references: [id])
+  replacementAccount Account?     @relation("TaskDelayReplacement", fields: [replacementAccountId], references: [id])
+
+  @@unique([stepInstanceId, assignmentEpoch])
+  @@index([accountId, recordedAt])
+  @@index([taskId])
+  @@map("task_assignment_delay")
 }
 
 model FormValue {

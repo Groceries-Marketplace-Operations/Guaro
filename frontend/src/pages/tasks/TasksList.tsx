@@ -11,6 +11,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { hasPermission } from '../../auth/permissions';
 import { useT } from '../../i18n';
 import type { Account, Country, Task, TaskStatus, Paginated } from '../../types';
+import TaskPriorityBadge from '../../components/tasks/TaskPriorityBadge';
 import './tasks-list.css';
 
 const LIMIT = 25;
@@ -40,6 +41,7 @@ export default function TasksList() {
   const [brandF, setBrandF] = useState('');
   const [countryF, setCountryF] = useState<Country | ''>('');
   const [taskTypeF, setTaskTypeF] = useState('');
+  const [priorityF, setPriorityF] = useState<Task['priority'] | ''>('');
   const [sectionF, setSectionF] = useState(() => (
     sectionFilterStorageKey ? localStorage.getItem(sectionFilterStorageKey) ?? '' : ''
   ));
@@ -91,6 +93,7 @@ export default function TasksList() {
     ...(activeSectionF && { sectionId: activeSectionF }),
     ...(countryF && { country: countryF }),
     ...(taskTypeF && { taskTypeId: taskTypeF }),
+    ...(priorityF && { priority: priorityF }),
   };
 
   const { data: result, isLoading } = useQuery<Paginated<Task>>({
@@ -155,7 +158,7 @@ export default function TasksList() {
     else eligibleVisibleIds.forEach(id => next.add(id));
     return next;
   });
-  const activeFilterCount = [q.trim(), statusF, activeSectionF, brandF, countryF, taskTypeF].filter(Boolean).length;
+  const activeFilterCount = [q.trim(), statusF, activeSectionF, brandF, countryF, taskTypeF, priorityF].filter(Boolean).length;
   const resultStart = total === 0 ? 0 : ((page - 1) * LIMIT) + 1;
   const resultEnd = Math.min(page * LIMIT, total);
   const clearFilters = () => {
@@ -165,6 +168,7 @@ export default function TasksList() {
     setBrandF('');
     setCountryF('');
     setTaskTypeF('');
+    setPriorityF('');
     setSectionF('');
     setPage(1);
     if (sectionFilterStorageKey) localStorage.removeItem(sectionFilterStorageKey);
@@ -298,6 +302,22 @@ export default function TasksList() {
                 ariaLabel={t('pages.tasksList.taskTypeFilter')}
               />
             </div>
+            <div className="tasks-filter-field">
+              <span>{t('taskTiming.priorityFilter')}</span>
+              <SearchableSelect
+                {...searchableSelectCopy}
+                value={priorityF}
+                options={(['low', 'normal', 'high', 'urgent'] as const).map(level => ({
+                  value: level,
+                  label: t(`taskTiming.priority.${level}`),
+                }))}
+                onChange={value => { setPriorityF(value as Task['priority'] | ''); setPage(1); }}
+                placeholder={t('taskTiming.allPriorities')}
+                searchPlaceholder={t('taskTiming.allPriorities')}
+                emptyMessage={t('pages.tasksList.noFilterOptions')}
+                ariaLabel={t('taskTiming.priorityFilter')}
+              />
+            </div>
           </div>
 
           <div className="tasks-status-filter" role="group" aria-label={t('pages.tasksList.statusFilter')}>
@@ -354,16 +374,18 @@ export default function TasksList() {
                 <th>{t('pages.tasksList.colBrand')}</th>
                 <th>{t('pages.tasksList.colTaskType')}</th>
                 <th>{t('pages.tasksList.colStatus')}</th>
+                <th>{t('taskTiming.priority')}</th>
                 <th>{t('pages.tasksList.colActiveStep')}</th>
+                <th>{t('taskTiming.deadline')}</th>
                 {canReassign && <th>{t('pages.tasksList.colAssignedBpo')}</th>}
                 <th>{t('pages.tasksList.colCreatedBy')}</th>
                 <th>{t('pages.tasksList.colDate')}</th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={canReassign ? 8 : 6} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>}
+              {isLoading && <tr><td colSpan={canReassign ? 10 : 8} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>}
               {!isLoading && tasks.length === 0 && (
-                <tr><td colSpan={canReassign ? 8 : 6}>
+                <tr><td colSpan={canReassign ? 10 : 8}>
                   <div className="empty-state">
                     <h3>{t('pages.tasksList.noTasksFound')}</h3>
                     <p>{t('pages.tasksList.noTasksHint')}</p>
@@ -392,7 +414,13 @@ export default function TasksList() {
                   </td>
                   <td className="tasks-type-cell"><strong>{tk.taskType?.name ?? '—'}</strong><small>{tk.id.slice(0, 8)}</small></td>
                   <td><StatusBadge status={tk.status} /></td>
+                  <td><TaskPriorityBadge priority={tk.priority} /></td>
                   <td className="text-muted text-sm">{activeStepFor(tk) ?? '—'}</td>
+                  <td className="text-sm" style={{ color: activeHumanStepsFor(tk).some(step => step.dueAt && new Date(step.dueAt) < new Date()) ? 'var(--red)' : 'var(--text-muted)' }}>
+                    {activeHumanStepsFor(tk).map(step => step.dueAt).filter(Boolean).sort()[0]
+                      ? new Date(activeHumanStepsFor(tk).map(step => step.dueAt).filter(Boolean).sort()[0]!).toLocaleString()
+                      : '—'}
+                  </td>
                   {canReassign && <td className="text-muted text-sm">{assignedBposFor(tk)}</td>}
                   <td className="text-muted">{tk.createdBy?.name ?? '—'}</td>
                   <td className="text-muted text-sm tasks-date-cell"><span>{new Date(tk.createdAt).toLocaleDateString()}</span><small>{new Date(tk.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></td>

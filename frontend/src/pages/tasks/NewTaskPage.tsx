@@ -8,6 +8,7 @@ import { taskTypesApi, brandsApi, tasksApi, appConfigApi } from '../../api';
 import { useT } from '../../i18n';
 import type { TaskType, FormField, Brand, Shop, FileValidationResult } from '../../types';
 import { downloadTaskTemplate } from '../../utils/downloadTaskTemplate';
+import './new-task.css';
 
 type ApiError = { response?: { data?: { message?: string | string[] } } };
 function errMsg(ex: unknown) {
@@ -437,6 +438,8 @@ export default function NewTaskPage() {
 
   const [selectedTTId, setSelectedTTId] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const [typeSearch, setTypeSearch] = useState('');
+  const [mobileTypePickerOpen, setMobileTypePickerOpen] = useState(true);
   const [scheduledStart, setScheduledStart] = useState('');
   const [formValues, setFormValues] = useState<Record<string, FieldValue>>({});
   const [urlErrors, setUrlErrors] = useState<Record<string, string>>({});
@@ -446,7 +449,6 @@ export default function NewTaskPage() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const [targetShopIds, setTargetShopIds] = useState<string[]>([]);
-  const [taskTypeSearch, setTaskTypeSearch] = useState('');
   const [downloadingCommercialTemplate, setDownloadingCommercialTemplate] = useState(false);
 
   const { data: taskTypesResult } = useQuery<{ data: TaskType[] }>({
@@ -460,7 +462,10 @@ export default function NewTaskPage() {
     const requested = searchParams.get('taskType');
     if (!requested) return;
     const match = taskTypes.find(type => type.id === requested || type.name === requested);
-    if (match) setSelectedTTId(match.id);
+    if (match) {
+      setSelectedTTId(match.id);
+      setMobileTypePickerOpen(false);
+    }
   }, [searchParams, selectedTTId, taskTypes]);
 
   const { data: selectedTT = null } = useQuery<TaskType>({
@@ -518,21 +523,32 @@ export default function NewTaskPage() {
   });
 
   const bySection = useMemo(() => {
-    const query = taskTypeSearch.trim().toLocaleLowerCase();
     const map = new Map<string, { sectionId: string; sectionName: string; types: TaskType[] }>();
     for (const tt of taskTypes) {
       if (tt.active === false) continue;
       const sectionName = tt.section?.name ?? 'No section';
-      if (query && !`${tt.name} ${tt.description ?? ''} ${sectionName}`.toLocaleLowerCase().includes(query)) continue;
       const key = tt.sectionId;
       if (!map.has(key)) map.set(key, { sectionId: key, sectionName, types: [] });
       map.get(key)!.types.push(tt);
     }
     return [...map.values()];
-  }, [taskTypeSearch, taskTypes]);
+  }, [taskTypes]);
+
+  const visibleSections = useMemo(() => {
+    const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+    const query = normalize(typeSearch.trim());
+    if (!query) return bySection;
+    return bySection.map(section => ({
+      ...section,
+      types: section.types.filter(tt => normalize(`${section.sectionName} ${tt.name} ${tt.description ?? ''}`).includes(query)),
+    })).filter(section => section.types.length > 0);
+  }, [bySection, typeSearch]);
+
+  const selectedTypeLabel = taskTypes.find(type => type.id === selectedTTId)?.name;
 
   const pickTaskType = (tt: TaskType) => {
     setSelectedTTId(tt.id);
+    setMobileTypePickerOpen(false);
     setFormValues({});
     setUrlErrors({});
     setScheduledStart('');
@@ -972,76 +988,73 @@ export default function NewTaskPage() {
     <>
       <Topbar breadcrumb={[{ label: t('nav.tasks'), href: '/tasks' }, { label: t('pages.newTask.breadcrumb') }]} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gridColumn: 2, minHeight: 'calc(100vh - var(--topbar-h))' }}>
+      <div className="new-task-layout">
 
-        <div style={{ borderRight: '1px solid var(--border)', overflowY: 'auto', padding: '20px 0', background: 'var(--surface-2)' }}>
-          <div style={{ padding: '0 16px 12px', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            {t('pages.newTask.taskTypesHeader')}
+        <aside className={`new-task-type-panel ${!mobileTypePickerOpen && selectedTTId ? 'is-collapsed' : ''}`} aria-label={t('pages.newTask.taskTypesHeader')}>
+          <div className="new-task-type-panel-header">
+            <div>
+              <strong>{t('pages.newTask.taskTypesHeader')}</strong>
+              {selectedTypeLabel && <span className="new-task-selected-type">{selectedTypeLabel}</span>}
+            </div>
+            {selectedTTId && <button type="button" className="new-task-type-mobile-toggle"
+              aria-expanded={mobileTypePickerOpen} onClick={() => setMobileTypePickerOpen(open => !open)}>
+              {mobileTypePickerOpen ? t('pages.newTask.hideTypes') : t('pages.newTask.changeType')}
+            </button>}
           </div>
 
-          <div style={{ padding: '0 12px 14px' }}>
-            <input
-              className="form-input"
-              type="search"
-              value={taskTypeSearch}
-              onChange={event => setTaskTypeSearch(event.target.value)}
-              placeholder={t('pages.newTask.searchTaskType')}
-              aria-label={t('pages.newTask.searchTaskType')}
-              style={{ background: 'var(--surface)' }}
-            />
+          <div className="new-task-type-search">
+            <input className="form-input" type="search" value={typeSearch}
+              onChange={event => setTypeSearch(event.target.value)}
+              placeholder={t('pages.newTask.searchTypes')}
+              aria-label={t('pages.newTask.searchTypes')} />
           </div>
 
-          {taskTypes.length === 0 && (
-            <p style={{ padding: '0 16px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{t('pages.newTask.noTaskTypes')}</p>
-          )}
+          <nav className="new-task-type-list" aria-label={t('pages.newTask.taskTypesHeader')}>
+          {taskTypes.length === 0 && <p className="new-task-type-empty">{t('pages.newTask.noTaskTypes')}</p>}
+          {taskTypes.length > 0 && visibleSections.length === 0 &&
+            <p className="new-task-type-empty">{t('pages.newTask.noMatchingTypes')}</p>}
 
-          {taskTypes.length > 0 && bySection.length === 0 && (
-            <p style={{ padding: '0 16px', fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
-              {t('pages.newTask.noTaskTypeMatches')}
-            </p>
-          )}
-
-          {bySection.map(({ sectionId, sectionName, types }) => {
-            const collapsed = !taskTypeSearch && collapsedSections.has(sectionId);
+          {visibleSections.map(({ sectionId, sectionName, types }) => {
+            const collapsed = !typeSearch.trim() && collapsedSections.has(sectionId);
             return (
-              <div key={sectionId} style={{ marginBottom: 4 }}>
-                <button
+              <div key={sectionId} className="new-task-type-section">
+                <button type="button" className="new-task-type-section-button" aria-expanded={!collapsed}
                   onClick={() => toggleSection(sectionId)}
-                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 16px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}
                 >
-                  {sectionName}
+                  <span>{sectionName}</span><span className="new-task-type-count">{types.length}</span>
                   {collapsed ? <ChevronRight /> : <ChevronDown />}
                 </button>
 
                 {!collapsed && types.map(tt => {
                   const isActive = selectedTTId === tt.id;
+                  const description = tt.description?.trim();
                   return (
-                    <button key={tt.id} onClick={() => pickTaskType(tt)}
-                      style={{ width: '100%', display: 'block', textAlign: 'left', padding: '9px 16px 9px 24px', background: isActive ? 'var(--orange-muted)' : 'none', border: 'none', borderLeft: isActive ? '3px solid var(--orange)' : '3px solid transparent', cursor: 'pointer', color: isActive ? 'var(--orange-dark)' : 'var(--text-primary)', fontWeight: isActive ? 600 : 400, fontSize: '0.84rem', transition: 'background 0.1s' }}
+                    <button key={tt.id} type="button" onClick={() => pickTaskType(tt)}
+                      className={`new-task-type-option ${isActive ? 'is-active' : ''}`}
+                      aria-pressed={isActive} title={description && description !== tt.name ? description : tt.name}
                     >
-                      <div style={{ lineHeight: 1.3 }}>{tt.name}</div>
-                      {tt.description && (
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2, fontWeight: 400 }}>
-                          {tt.description}
-                        </div>
-                      )}
+                      <span className="new-task-type-name">{tt.name}</span>
+                      {description && description !== tt.name &&
+                        <span className="new-task-type-description">{description}</span>}
                     </button>
                   );
                 })}
               </div>
             );
           })}
-        </div>
+          </nav>
+        </aside>
 
-        <div style={{ overflowY: 'auto', padding: '32px 40px' }}>
+        <main className="new-task-main">
           {!selectedTT ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, color: 'var(--text-muted)' }}>
+            <div className="new-task-empty-state">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="48" height="48" style={{ opacity: 0.3 }}>
                 <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
                 <rect x="9" y="3" width="6" height="4" rx="1"/>
                 <line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="12" y2="16"/>
               </svg>
-              <p style={{ fontSize: '0.9rem' }}>{t('pages.newTask.selectPrompt')}</p>
+              <h1>{t('pages.newTask.selectPrompt')}</h1>
+              <p>{t('pages.newTask.selectPromptHint')}</p>
             </div>
           ) : (
             <div className="new-task-workspace">
@@ -1069,6 +1082,12 @@ export default function NewTaskPage() {
               </div>
 
               {err && <div className="error-banner" style={{ marginBottom: 20 }}>{err}</div>}
+
+              {selectedTT.deliveryMinutes && <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
+                <p className="form-hint">
+                  {t('taskTiming.title')}: {t('taskTiming.hoursSummary', { hours: String(selectedTT.deliveryMinutes / 60) })}.
+                </p>
+              </div>}
 
               {selectedTT.schedulable && (
                 <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
@@ -1194,7 +1213,7 @@ export default function NewTaskPage() {
               />
             </div>
           )}
-        </div>
+        </main>
       </div>
     </>
   );

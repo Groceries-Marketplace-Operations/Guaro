@@ -22,6 +22,8 @@ interface BpoPerf {
   stepsCompleted: number;
   stepsFailed: number;
   stepsInProgress: number;
+  delayedAssignments: number;
+  delayedWorkMinutes: number;
   avgCompletionHours: number | null;
 }
 
@@ -228,6 +230,7 @@ export default function BpoManagement() {
                   <th>{t('pages.bpoMgmt.colInProgress')}</th>
                   <th>{t('pages.bpoMgmt.colDone')}</th>
                   <th>{t('pages.bpoMgmt.colFailed')}</th>
+                  <th>{t('taskTiming.overdue')}</th>
                   <th>{t('pages.bpoMgmt.colSuccessRate')}</th>
                   <th>{t('pages.bpoMgmt.colAvgHours')}</th>
                   <th>{t('pages.bpoMgmt.colWorkload')}</th>
@@ -235,10 +238,10 @@ export default function BpoManagement() {
               </thead>
               <tbody>
                 {loadingTeam && (
-                  <tr><td colSpan={7} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>
+                  <tr><td colSpan={8} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>
                 )}
                 {!loadingTeam && team.length === 0 && (
-                  <tr><td colSpan={7}><div className="empty-state"><p>{t('pages.bpoMgmt.noAgents')}</p></div></td></tr>
+                  <tr><td colSpan={8}><div className="empty-state"><p>{t('pages.bpoMgmt.noAgents')}</p></div></td></tr>
                 )}
                 {team.map(b => (
                   <tr key={b.account.id} style={{ cursor: 'pointer' }} onClick={() => setSelected(b)}>
@@ -253,6 +256,9 @@ export default function BpoManagement() {
                     </td>
                     <td style={{ color: 'var(--green)', fontWeight: 600 }}>{b.stepsCompleted}</td>
                     <td style={{ color: b.stepsFailed > 0 ? 'var(--red)' : 'var(--text-muted)' }}>{b.stepsFailed}</td>
+                    <td style={{ color: b.delayedAssignments > 0 ? 'var(--red)' : 'var(--text-muted)' }}>
+                      <strong>{b.delayedAssignments}</strong> <span className="text-sm">({b.delayedWorkMinutes} min)</span>
+                    </td>
                     <td style={{ minWidth: 120 }}>{completionBar(b.stepsCompleted, b.stepsFailed)}</td>
                     <td className="text-muted">
                       {b.avgCompletionHours != null ? `${Number(b.avgCompletionHours).toFixed(1)} h` : '—'}
@@ -378,6 +384,7 @@ export default function BpoManagement() {
               { label: t('pages.bpoMgmt.modalStatDone'), value: selected.stepsCompleted, color: 'var(--green)' },
               { label: t('pages.bpoMgmt.modalStatInProgress'), value: selected.stepsInProgress, color: 'var(--amber)' },
               { label: t('pages.bpoMgmt.modalStatFailed'), value: selected.stepsFailed, color: selected.stepsFailed > 0 ? 'var(--red)' : undefined },
+              { label: t('taskTiming.overdue'), value: selected.delayedAssignments, color: selected.delayedAssignments > 0 ? 'var(--red)' : undefined },
               { label: t('pages.bpoMgmt.modalStatAvgHours'), value: selected.avgCompletionHours != null ? Number(selected.avgCompletionHours).toFixed(1) : '—', color: undefined },
             ].map(stat => (
               <div key={stat.label} style={{ textAlign: 'center', padding: '10px 16px', background: 'var(--surface-2)', borderRadius: 8, flex: 1, minWidth: 90 }}>

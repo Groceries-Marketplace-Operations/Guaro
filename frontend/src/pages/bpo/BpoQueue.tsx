@@ -5,15 +5,17 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import { bpoApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
+import TaskPriorityBadge from '../../components/tasks/TaskPriorityBadge';
 
 interface ActiveTask {
   id: string;
   status: string;
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
   brand?: { brandName: string; country: string };
   createdBy?: { id: string; name?: string; email?: string };
   relationship?: { createdByMe: boolean; assignedToMe: boolean };
   taskType?: { name: string };
-  stepInstances?: { id: string; status: string; assignedToId?: string; stepDefinition?: { name: string; order: number } }[];
+  stepInstances?: { id: string; status: string; assignedToId?: string; dueAt?: string | null; stepDefinition?: { name: string; order: number } }[];
   updatedAt: string;
   createdAt: string;
 }
@@ -22,6 +24,8 @@ interface Perf {
   stepsCompleted: number;
   stepsFailed: number;
   stepsInProgress: number;
+  delayedAssignments: number;
+  delayedWorkMinutes: number;
   avgCompletionHours: number | null;
 }
 
@@ -83,6 +87,11 @@ export default function BpoQueue() {
               <div className="s-meta">{t('pages.bpoQueue.stepsFailed')}</div>
             </div>
             <div className="stat-card">
+              <div className="s-label">{t('taskTiming.overdue')}</div>
+              <div className="s-value" style={{ color: 'var(--red)' }}>{perf.delayedAssignments}</div>
+              <div className="s-meta">{t('taskTiming.minutesLate', { minutes: String(perf.delayedWorkMinutes) })}</div>
+            </div>
+            <div className="stat-card">
               <div className="s-label">{t('pages.bpoQueue.avgTime')}</div>
               <div className="s-value">
                 {perf.avgCompletionHours != null ? Number(perf.avgCompletionHours).toFixed(1) : '—'}
@@ -100,16 +109,18 @@ export default function BpoQueue() {
                 <th>{t('pages.bpoQueue.colTaskType')}</th>
                 <th>{t('pages.bpoQueue.colRelationship')}</th>
                 <th>{t('pages.bpoQueue.colTaskStatus')}</th>
+                <th>{t('taskTiming.priority')}</th>
                 <th>{t('pages.bpoQueue.colCurrentStep')}</th>
+                <th>{t('taskTiming.deadline')}</th>
                 <th>{t('pages.bpoQueue.colLastUpdate')}</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
-                <tr><td colSpan={6} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>
+                <tr><td colSpan={8} style={{ padding: '20px 16px', color: 'var(--text-muted)' }}>{t('common.loading')}</td></tr>
               )}
               {!isLoading && tasks.length === 0 && (
-                <tr><td colSpan={6}>
+                <tr><td colSpan={8}>
                   <div className="empty-state">
                     <h3>{t('pages.bpoQueue.queueEmpty')}</h3>
                     <p>{t('pages.bpoQueue.noTasksAssigned')}</p>
@@ -146,6 +157,7 @@ export default function BpoQueue() {
                       </span>
                     </td>
                     <td><StatusBadge status={task.status} /></td>
+                    <td><TaskPriorityBadge priority={task.priority} /></td>
                     <td>
                       {step?.stepDefinition?.name
                         ? <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -153,6 +165,9 @@ export default function BpoQueue() {
                             <StatusBadge status={step.status} />
                           </span>
                         : <span className="text-muted">—</span>}
+                    </td>
+                    <td className="text-sm" style={{ color: step?.dueAt && new Date(step.dueAt) < new Date() ? 'var(--red)' : 'var(--text-muted)' }}>
+                      {step?.dueAt ? new Date(step.dueAt).toLocaleString() : '—'}
                     </td>
                     <td className="text-sm text-muted">{new Date(task.updatedAt).toLocaleString()}</td>
                   </tr>

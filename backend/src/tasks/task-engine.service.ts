@@ -5,10 +5,13 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
   AssignmentStrategy,
+  AccountRole,
   ExecutionType,
   Prisma,
   StepFailureReason,
@@ -18,6 +21,8 @@ import {
   WebhookEvent,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { randomUUID } from 'crypto';
+import { addWorkingMinutes, workingMinutesBetween } from './business-time';
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { StoreOnboardingLifecycleService } from '../store-onboarding/store-onboarding-lifecycle.service';
 import {
@@ -35,21 +40,37 @@ type Tx = Prisma.TransactionClient;
 type LockedStep = Prisma.StepInstanceGetPayload<{
   include: {
     stepDefinition: { include: { candidates: true } };
-    task: { include: { taskType: { select: { id: true, name: true } } } };
+    task: { include: { taskType: { select: {
+      id: true; name: true; sectionId: true; deliveryMinutes: true;
+      workDays: true; workStartMinute: true; workEndMinute: true; workTimeZone: true;
+    } } } };
   };
 }>;
 const HANDLER_FENCE_TIMEOUT_MS = 2 * 60 * 60 * 1000 + 5 * 60 * 1000;
 
 @Injectable()
-export class TaskEngineService {
+export class TaskEngineService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TaskEngineService.name);
   private recoveringStoreOnboardingBrands = false;
+  private deadlineTimer?: NodeJS.Timeout;
+  private scanningDeadlines = false;
 
   constructor(
     private prisma: PrismaService,
     private webhookSender: WebhookSenderService,
     @Optional() private storeOnboardingLifecycle?: StoreOnboardingLifecycleService,
   ) {}
+
+  onModuleInit() {
+    if ((process.env.TASK_DEADLINES_ENABLED ?? process.env.SCHEDULED_JOBS_ENABLED ?? 'true') === 'false') return;
+    this.deadlineTimer = setInterval(() => void this.scanExpiredSteps(), 60_000);
+    this.deadlineTimer.unref();
+    setTimeout(() => void this.scanExpiredSteps(), 10_000).unref();
+  }
+
+  onModuleDestroy() {
+    if (this.deadlineTimer) clearInterval(this.deadlineTimer);
+  }
 
   // ── Activate a step (just-in-time assignment) ─────────────────────────────
   // Manual steps: assign BPO + task→assigned (BPO must click "Start Review")
@@ -71,6 +92,10 @@ export class TaskEngineService {
       ) return;
       const assignedToId = await this.assignBpo(tx, step.stepDefinition, step.taskId, step.id);
       isAutomatic = step.stepDefinition.executionType === ExecutionType.automatic;
+      const assignedAt = assignedToId && !isAutomatic ? new Date() : null;
+      const dueAt = assignedAt && step.task.taskType.deliveryMinutes
+        ? addWorkingMinutes(assignedAt, step.task.taskType.deliveryMinutes, step.task.taskType)
+        : null;
 
       if (isAutomatic) {
         await tx.stepInstance.update({
@@ -87,7 +112,10 @@ export class TaskEngineService {
           where: { id: stepInstanceId },
           // workedSeconds=0 is the durable claim marker even when a manual
           // strategy intentionally leaves assignedToId empty.
-          data: { assignedToId, workedSeconds: step.workedSeconds ?? 0 },
+          data: {
+            assignedToId, assignedAt, dueAt,
+            workedSeconds: step.workedSeconds ?? 0,
+          },
         });
         await tx.task.update({
           where: { id: step.taskId },
@@ -166,6 +194,7 @@ export class TaskEngineService {
         normalizedNote = formatCreateBrandNote(completion);
       }
       const now = new Date();
+      await this.recordDelayIfLate(tx, step, now);
       const currentPeriod = step.startedAt
         ? Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)
         : 0;
@@ -257,6 +286,7 @@ export class TaskEngineService {
       if (step.status !== StepStatus.in_progress) {
         throw new BadRequestException('Step must be in_progress to be blocked');
       }
+      await this.recordDelayIfLate(tx, step, new Date());
       const elapsedSeconds = step.startedAt
         ? Math.floor((Date.now() - step.startedAt.getTime()) / 1000)
         : 0;
@@ -267,6 +297,7 @@ export class TaskEngineService {
           note: note ?? null,
           workedSeconds: (step.workedSeconds ?? 0) + elapsedSeconds,
           startedAt: null,
+          slaPausedAt: step.dueAt ? new Date() : null,
         },
       });
       // Cancel sibling instances (pending or in_progress) for the same stepDefinition
@@ -299,7 +330,10 @@ export class TaskEngineService {
       }
       await tx.stepInstance.update({
         where: { id: stepInstanceId },
-        data: { status: StepStatus.in_progress, note: null, startedAt: new Date() },
+        data: {
+          status: StepStatus.in_progress, note: null, startedAt: new Date(),
+          dueAt: this.resumedDueAt(step), slaPausedAt: null,
+        },
       });
       await tx.task.update({
         where: { id: step.taskId },
@@ -324,6 +358,8 @@ export class TaskEngineService {
           failureReason: null,
           startedAt: new Date(),
           completedAt: null,
+          dueAt: this.resumedDueAt(step),
+          slaPausedAt: null,
         },
       });
       await tx.task.update({
@@ -586,6 +622,7 @@ export class TaskEngineService {
       }
 
       const now = new Date();
+      await this.recordDelayIfLate(tx, step, now);
       const elapsedSeconds = step.status === StepStatus.in_progress && step.startedAt
         ? Math.max(0, Math.floor((now.getTime() - step.startedAt.getTime()) / 1000))
         : 0;
@@ -594,6 +631,13 @@ export class TaskEngineService {
         where: { id: stepInstanceId },
         data: {
           assignedToId: accountId,
+          assignedAt: now,
+          dueAt: step.task.taskType.deliveryMinutes
+            ? addWorkingMinutes(now, step.task.taskType.deliveryMinutes, step.task.taskType)
+            : null,
+          assignmentEpoch: { increment: 1 },
+          nextReassignmentAt: null,
+          slaPausedAt: step.status === StepStatus.blocked ? now : null,
           ...(step.status === StepStatus.in_progress
             ? {
                 workedSeconds: (step.workedSeconds ?? 0) + elapsedSeconds,
@@ -618,13 +662,191 @@ export class TaskEngineService {
     await this.sendStepWebhook(stepDefinitionId, WebhookEvent.on_assignment, taskId);
   }
 
+  private resumedDueAt(step: LockedStep): Date | null {
+    if (!step.dueAt) return null;
+    if (!step.slaPausedAt) return step.dueAt;
+    const pausedMinutes = workingMinutesBetween(step.slaPausedAt, new Date(), step.task.taskType);
+    return addWorkingMinutes(step.dueAt, pausedMinutes, step.task.taskType);
+  }
+
+  private async recordDelayIfLate(tx: Tx, step: LockedStep, now: Date) {
+    if (!step.dueAt || !step.assignedToId || step.slaPausedAt || now <= step.dueAt) return;
+    const minutes = workingMinutesBetween(step.dueAt, now, step.task.taskType);
+    const inserted = await tx.$queryRaw<{ id: string }[]>`
+      INSERT INTO task_assignment_delay
+        (id, task_id, step_instance_id, account_id, assignment_epoch, due_at, recorded_at, delay_minutes)
+      VALUES
+        (${randomUUID()}::uuid, ${step.taskId}::uuid, ${step.id}::uuid,
+         ${step.assignedToId}::uuid, ${step.assignmentEpoch}, ${step.dueAt}, ${now}, ${minutes})
+      ON CONFLICT (step_instance_id, assignment_epoch) DO NOTHING
+      RETURNING id
+    `;
+    if (inserted.length) {
+      await tx.account.update({
+        where: { id: step.assignedToId },
+        data: {
+          delayedAssignments: { increment: 1 },
+          delayedWorkMinutes: { increment: minutes },
+        },
+      });
+    } else {
+      const previous = await tx.taskAssignmentDelay.findUnique({
+        where: { stepInstanceId_assignmentEpoch: {
+          stepInstanceId: step.id, assignmentEpoch: step.assignmentEpoch,
+        } },
+        select: { delayMinutes: true },
+      });
+      const extraMinutes = Math.max(0, minutes - (previous?.delayMinutes ?? minutes));
+      if (extraMinutes) {
+        await tx.taskAssignmentDelay.update({
+          where: { stepInstanceId_assignmentEpoch: {
+            stepInstanceId: step.id, assignmentEpoch: step.assignmentEpoch,
+          } },
+          data: { delayMinutes: minutes },
+        });
+        await tx.account.update({
+          where: { id: step.assignedToId },
+          data: { delayedWorkMinutes: { increment: extraMinutes } },
+        });
+      }
+    }
+  }
+
+  private async scanExpiredSteps() {
+    if (this.scanningDeadlines) return;
+    this.scanningDeadlines = true;
+    try {
+      const now = new Date();
+      const steps = await this.prisma.stepInstance.findMany({
+        where: {
+          assignedToId: { not: null }, dueAt: { lt: now }, slaPausedAt: null,
+          status: { in: [StepStatus.pending, StepStatus.in_progress] },
+          OR: [{ nextReassignmentAt: null }, { nextReassignmentAt: { lte: now } }],
+          stepDefinition: { executionType: { in: [ExecutionType.manual_external, ExecutionType.manual_internal] } },
+          task: { deletedAt: null, status: { in: [TaskStatus.assigned, TaskStatus.in_progress] } },
+        },
+        select: { id: true }, orderBy: { dueAt: 'asc' }, take: 100,
+      });
+      for (const step of steps) {
+        try { await this.reassignExpiredStep(step.id); }
+        catch (error) { this.logger.error(`Deadline reassignment ${step.id}: ${(error as Error).message}`); }
+      }
+    } catch (error) {
+      this.logger.error(`Deadline scan: ${(error as Error).message}`);
+    } finally {
+      this.scanningDeadlines = false;
+    }
+  }
+
+  async reassignExpiredStep(stepInstanceId: string): Promise<boolean> {
+    const result = await this.prisma.$transaction(async tx => {
+      const step = await this.claimStepMutation(tx, stepInstanceId, false);
+      const now = new Date();
+      if (!step || !step.assignedToId || !step.dueAt || step.dueAt >= now
+          || step.slaPausedAt || step.nextReassignmentAt && step.nextReassignmentAt > now
+          || step.status !== StepStatus.pending && step.status !== StepStatus.in_progress
+          || step.task.status !== TaskStatus.assigned && step.task.status !== TaskStatus.in_progress
+          || step.task.deletedAt || step.stepDefinition.executionType === ExecutionType.automatic) return null;
+
+      await this.recordDelayIfLate(tx, step, now);
+      const nextAccountId = await this.findReplacementBpo(tx, step);
+      if (!nextAccountId) {
+        await tx.stepInstance.update({
+          where: { id: step.id },
+          data: { nextReassignmentAt: new Date(now.getTime() + 15 * 60_000) },
+        });
+        return null;
+      }
+      const elapsedSeconds = step.status === StepStatus.in_progress && step.startedAt
+        ? Math.max(0, Math.floor((now.getTime() - step.startedAt.getTime()) / 1000)) : 0;
+      await tx.stepInstance.update({
+        where: { id: step.id },
+        data: {
+          assignedToId: nextAccountId, assignedAt: now,
+          dueAt: step.task.taskType.deliveryMinutes
+            ? addWorkingMinutes(now, step.task.taskType.deliveryMinutes, step.task.taskType)
+            : null,
+          assignmentEpoch: { increment: 1 }, nextReassignmentAt: null,
+          ...(step.status === StepStatus.in_progress && {
+            workedSeconds: (step.workedSeconds ?? 0) + elapsedSeconds, startedAt: now,
+          }),
+        },
+      });
+      await tx.taskAssignmentDelay.update({
+        where: { stepInstanceId_assignmentEpoch: {
+          stepInstanceId: step.id, assignmentEpoch: step.assignmentEpoch,
+        } },
+        data: { replacementAccountId: nextAccountId },
+      });
+      return { taskId: step.taskId, stepDefinitionId: step.stepDefinitionId };
+    });
+    if (!result) return false;
+    await this.sendStepWebhook(result.stepDefinitionId, WebhookEvent.on_assignment, result.taskId);
+    return true;
+  }
+
+  private async findReplacementBpo(tx: Tx, step: LockedStep): Promise<string | null> {
+    let candidateIds = step.stepDefinition.candidates.map(candidate => candidate.accountId);
+    if (step.stepDefinition.assignmentStrategy === AssignmentStrategy.brand_assignment) {
+      const values = await tx.formValue.findMany({
+        where: { taskId: step.taskId, formField: { tipo: { in: ['select_ka_type', 'select_country'] } } },
+        include: { formField: { select: { tipo: true } } },
+      });
+      const kaType = values.find(value => value.formField.tipo === 'select_ka_type')?.valor;
+      const country = values.find(value => value.formField.tipo === 'select_country')?.valor;
+      if (kaType && country) {
+        const rule = await tx.brandAssignmentRule.findUnique({
+          where: { kaType_country: { kaType: kaType as any, country: country as any } },
+          include: { candidates: true },
+        });
+        candidateIds = rule?.candidates.map(candidate => candidate.accountId) ?? [];
+      } else candidateIds = [];
+    }
+    if (!candidateIds.length
+      && step.stepDefinition.assignmentStrategy !== AssignmentStrategy.manual
+      && step.stepDefinition.assignmentStrategy !== AssignmentStrategy.same_previous_step) {
+      return null;
+    }
+    const pool = await tx.account.findMany({
+      where: {
+        deletedAt: null, roles: { has: AccountRole.bpo },
+        id: { not: step.assignedToId!, ...(candidateIds.length ? { in: candidateIds } : {}) },
+        ...(!candidateIds.length && { sectionId: step.task.taskType.sectionId }),
+      },
+      select: { id: true, rrCounter: true },
+    });
+    if (!pool.length) return null;
+    const previous = await tx.taskAssignmentDelay.findMany({
+      where: { stepInstanceId: step.id }, select: { accountId: true },
+    });
+    const delayedIds = new Set(previous.map(row => row.accountId));
+    const fresh = pool.filter(account => !delayedIds.has(account.id));
+    const eligible = fresh.length ? fresh : pool;
+    const loads = await tx.stepInstance.groupBy({
+      by: ['assignedToId'],
+      where: {
+        assignedToId: { in: eligible.map(account => account.id) },
+        status: { in: [StepStatus.pending, StepStatus.in_progress] },
+      },
+      _count: { _all: true },
+    });
+    const loadById = new Map(loads.map(row => [row.assignedToId, row._count._all]));
+    eligible.sort((a, b) => (loadById.get(a.id) ?? 0) - (loadById.get(b.id) ?? 0)
+      || a.rrCounter - b.rrCounter || a.id.localeCompare(b.id));
+    await tx.account.update({ where: { id: eligible[0].id }, data: { rrCounter: { increment: 1 } } });
+    return eligible[0].id;
+  }
+
   private async lockStep(tx: Tx, stepInstanceId: string) {
     await tx.$queryRaw`SELECT "id" FROM "step_instance" WHERE "id" = ${stepInstanceId}::uuid FOR UPDATE`;
     return tx.stepInstance.findUnique({
       where: { id: stepInstanceId },
       include: {
         stepDefinition: { include: { candidates: true } },
-        task: { include: { taskType: { select: { id: true, name: true } } } },
+        task: { include: { taskType: { select: {
+          id: true, name: true, sectionId: true, deliveryMinutes: true,
+          workDays: true, workStartMinute: true, workEndMinute: true, workTimeZone: true,
+        } } } },
       },
     });
   }

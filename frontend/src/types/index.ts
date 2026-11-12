@@ -1,5 +1,6 @@
 export type AccountRole = 'user' | 'bpo' | 'admin' | 'super_admin' | 'director';
 export type TaskStatus = 'scheduled' | 'pending' | 'assigned' | 'in_progress' | 'blocked' | 'done' | 'failed';
+export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type StepStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'blocked' | 'cancelled';
 export type ExecutionType = 'manual_internal' | 'manual_external' | 'automatic';
 export type AssignmentStrategy = 'fixed' | 'round_robin' | 'brand_assignment' | 'by_weight' | 'manual' | 'same_previous_step';
@@ -82,6 +83,12 @@ export interface TaskType {
   name: string;
   description?: string;
   schedulable: boolean;
+  defaultPriority: TaskPriority;
+    deliveryMinutes?: number | null;
+    workDays?: number[];
+    workStartMinute?: number;
+    workEndMinute?: number;
+    workTimeZone?: string;
   active: boolean;
   order: number;
   sectionId: string;
@@ -538,6 +545,9 @@ export interface StepInstance {
   id: string;
   status: StepStatus;
   assignedToId?: string;
+    assignedAt?: string | null;
+    dueAt?: string | null;
+    assignmentEpoch?: number;
   stepDefinition?: StepDefinition;
   assignedTo?: Account;
   note?: string;
@@ -562,12 +572,22 @@ export interface FormValue {
 export interface Task {
   id: string;
   status: TaskStatus;
+    priority: TaskPriority;
   brand?: Brand;
   taskType?: TaskType;
   createdBy?: Account;
   scheduledStart?: string;
   scheduledEnd?: string;
   stepInstances?: StepInstance[];
+    assignmentDelays?: Array<{
+      id: string;
+      accountId: string;
+      account?: { id: string; name: string };
+      replacementAccount?: { id: string; name: string } | null;
+      recordedAt: string;
+      delayMinutes: number;
+      dueAt: string;
+    }>;
   formValues?: FormValue[];
   createdAt: string;
 }
@@ -590,6 +610,7 @@ export interface TaskListParams {
   limit?: number;
   q?: string;
   status?: TaskStatus;
+    priority?: Task['priority'];
   brandId?: string;
   sectionId?: string;
   country?: Country;

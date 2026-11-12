@@ -17,6 +17,7 @@ import { UpdateTaskTypeDto } from './dto/update-task-type.dto';
 import { SectionAccessService } from '../sections/section-access.service';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { PermissionAccessService } from '../access-control/permission-access.service';
+import { assertWorkSchedule } from '../tasks/business-time';
 
 const TASK_TYPE_INCLUDE = {
   stepDefinitions: {
@@ -42,6 +43,19 @@ export class TaskTypesService {
     private sectionAccess: SectionAccessService,
     private permissionAccess: PermissionAccessService,
   ) {}
+
+  private assertDeliveryPolicy(schedule: {
+    workDays: number[];
+    workStartMinute: number;
+    workEndMinute: number;
+    workTimeZone: string;
+  }) {
+    try {
+      assertWorkSchedule(schedule);
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : 'Invalid work schedule');
+    }
+  }
 
   // ── TaskType ──────────────────────────────────────────────────────────────
 
@@ -70,6 +84,12 @@ export class TaskTypesService {
           descripcion: true,
           active: true,
           schedulable: true,
+          defaultPriority: true,
+          deliveryMinutes: true,
+          workDays: true,
+          workStartMinute: true,
+          workEndMinute: true,
+          workTimeZone: true,
           order: true,
           sectionId: true,
           section: { select: { id: true, name: true, order: true } },
@@ -107,6 +127,12 @@ export class TaskTypesService {
           descripcion: true,
           active: true,
           schedulable: true,
+          defaultPriority: true,
+          deliveryMinutes: true,
+          workDays: true,
+          workStartMinute: true,
+          workEndMinute: true,
+          workTimeZone: true,
           order: true,
           sectionId: true,
           section: { select: { id: true, name: true, order: true } },
@@ -178,6 +204,12 @@ export class TaskTypesService {
 
   async create(dto: CreateTaskTypeDto, roles: AccountRole[], sectionId: string | null) {
     this.assertAdminOfSection(roles, sectionId, dto.sectionId);
+    this.assertDeliveryPolicy({
+      workDays: dto.workDays ?? [1, 2, 3, 4, 5],
+      workStartMinute: dto.workStartMinute ?? 540,
+      workEndMinute: dto.workEndMinute ?? 1080,
+      workTimeZone: dto.workTimeZone ?? 'America/Mexico_City',
+    });
     const { description, ...rest } = dto;
     const aggregate = await this.prisma.taskType.aggregate({ where: { sectionId: dto.sectionId }, _max: { order: true } });
     return this.prisma.taskType.create({
@@ -188,6 +220,12 @@ export class TaskTypesService {
 
   async update(id: string, dto: UpdateTaskTypeDto, roles: AccountRole[], sectionId: string | null) {
     const tt = await this.assertTaskTypeAccess(id, roles, sectionId);
+    this.assertDeliveryPolicy({
+      workDays: dto.workDays ?? tt.workDays,
+      workStartMinute: dto.workStartMinute ?? tt.workStartMinute,
+      workEndMinute: dto.workEndMinute ?? tt.workEndMinute,
+      workTimeZone: dto.workTimeZone ?? tt.workTimeZone,
+    });
     const { description, sectionId: targetSectionId, ...rest } = dto;
     const movingSections = targetSectionId !== undefined && targetSectionId !== tt.sectionId;
     if (movingSections) {
@@ -245,6 +283,12 @@ export class TaskTypesService {
           name: `${source.name} (copy)`,
           descripcion: (source as any).descripcion ?? null,
           schedulable: source.schedulable,
+          defaultPriority: source.defaultPriority,
+          deliveryMinutes: source.deliveryMinutes,
+          workDays: source.workDays,
+          workStartMinute: source.workStartMinute,
+          workEndMinute: source.workEndMinute,
+          workTimeZone: source.workTimeZone,
           active: false,
           order: (aggregate._max.order ?? -1) + 1,
         },

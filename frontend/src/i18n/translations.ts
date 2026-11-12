@@ -1,7 +1,9 @@
 import { zhCN } from './zh-CN';
+import { enTaskTiming, esTaskTiming } from './taskTiming';
 
 export const translations: Record<'en' | 'es' | 'zh-CN', Record<string, string>> = {
   en: {
+    ...enTaskTiming,
     // ── Common ──────────────────────────────────────────────────────────────
     'common.save': 'Save',
     'common.cancel': 'Cancel',
@@ -713,7 +715,12 @@ export const translations: Record<'en' | 'es' | 'zh-CN', Record<string, string>>
     'pages.newTask.searchTaskType': 'Type to find a task type…',
     'pages.newTask.noTaskTypeMatches': 'No task types match this search.',
     'pages.newTask.noTaskTypes': 'No task types available.',
-    'pages.newTask.selectPrompt': 'Select a task type on the left to get started',
+    'pages.newTask.selectPrompt': 'Choose a task type to get started',
+    'pages.newTask.selectPromptHint': 'Search the list or browse by section to open its request form.',
+    'pages.newTask.searchTypes': 'Search task types…',
+    'pages.newTask.noMatchingTypes': 'No matching task types.',
+    'pages.newTask.changeType': 'Change type',
+    'pages.newTask.hideTypes': 'Hide list',
     'pages.newTask.schedulable': 'Schedulable',
     'pages.newTask.scheduleSection': 'Schedule (optional)',
     'pages.newTask.scheduleHint': 'The task will activate at this date and time. If left empty, it starts immediately.',
@@ -1202,6 +1209,7 @@ export const translations: Record<'en' | 'es' | 'zh-CN', Record<string, string>>
   },
 
   es: {
+    ...esTaskTiming,
     // ── Common ──────────────────────────────────────────────────────────────
     'common.save': 'Guardar',
     'common.cancel': 'Cancelar',
@@ -1913,7 +1921,12 @@ export const translations: Record<'en' | 'es' | 'zh-CN', Record<string, string>>
     'pages.newTask.searchTaskType': 'Escribe para encontrar un tipo de tarea…',
     'pages.newTask.noTaskTypeMatches': 'No hay tipos de tarea que coincidan con la búsqueda.',
     'pages.newTask.noTaskTypes': 'No hay tipos de tarea disponibles.',
-    'pages.newTask.selectPrompt': 'Selecciona un tipo de tarea a la izquierda para comenzar',
+    'pages.newTask.selectPrompt': 'Elige un tipo de tarea para comenzar',
+    'pages.newTask.selectPromptHint': 'Busca en la lista o explora las secciones para abrir el formulario.',
+    'pages.newTask.searchTypes': 'Buscar tipos de tarea…',
+    'pages.newTask.noMatchingTypes': 'No hay tipos de tarea que coincidan.',
+    'pages.newTask.changeType': 'Cambiar tipo',
+    'pages.newTask.hideTypes': 'Ocultar lista',
     'pages.newTask.schedulable': 'Programable',
     'pages.newTask.scheduleSection': 'Programar (opcional)',
     'pages.newTask.scheduleHint': 'La tarea se activará en esta fecha y hora. Si se deja vacío, inicia de inmediato.',

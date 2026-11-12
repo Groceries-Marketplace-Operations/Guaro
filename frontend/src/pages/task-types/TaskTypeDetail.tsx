@@ -6,8 +6,11 @@ import Modal from '../../components/ui/Modal';
 import { taskTypesApi } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
-import type { TaskType, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account, Section } from '../../types';
+import type { TaskType, TaskPriority, StepDefinition, FormField, ExecutionType, AssignmentStrategy, Handler, Webhook, WebhookEvent, Account, Section } from '../../types';
+import TaskPriorityBadge from '../../components/tasks/TaskPriorityBadge';
 import { downloadTaskTemplate } from '../../utils/downloadTaskTemplate';
+import WorkScheduleFields, { DEFAULT_WORK_SCHEDULE, workScheduleSummary } from './WorkScheduleFields';
+import './task-types.css';
 
 const PlusIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -89,11 +92,17 @@ export default function TaskTypeDetail() {
 
   // Edit task type header
   const [openEditTT, setOpenEditTT] = useState(false);
-  const [ttForm, setTtForm] = useState({ name: '', description: '', sectionId: '', schedulable: false });
+  const [ttForm, setTtForm] = useState({ name: '', description: '', sectionId: '', schedulable: false, defaultPriority: 'normal' as TaskPriority, ...DEFAULT_WORK_SCHEDULE });
 
   const openEditTaskType = () => {
     if (!tt) return;
-    setTtForm({ name: tt.name, description: tt.description ?? '', sectionId: tt.sectionId, schedulable: tt.schedulable });
+    setTtForm({
+      name: tt.name, description: tt.description ?? '', sectionId: tt.sectionId, schedulable: tt.schedulable,
+      defaultPriority: tt.defaultPriority ?? 'normal',
+      deliveryMinutes: tt.deliveryMinutes ?? null, workDays: tt.workDays ?? [1, 2, 3, 4, 5],
+      workStartMinute: tt.workStartMinute ?? 540, workEndMinute: tt.workEndMinute ?? 1080,
+      workTimeZone: tt.workTimeZone ?? 'America/Mexico_City',
+    });
     setOpenEditTT(true);
   };
   const deleteTaskType = async () => {
@@ -121,7 +130,8 @@ export default function TaskTypeDetail() {
     e.preventDefault();
     setSaving(true); setErr('');
     try {
-      await taskTypesApi.update(id!, ttForm);
+      const { sectionId, ...changes } = ttForm;
+      await taskTypesApi.update(id!, sectionId === tt?.sectionId ? changes : ttForm);
       qc.invalidateQueries({ queryKey: ['task-type', id] });
       qc.invalidateQueries({ queryKey: ['task-types'] });
       setOpenEditTT(false);
@@ -393,7 +403,7 @@ export default function TaskTypeDetail() {
     <>
       <Topbar breadcrumb={[{ label: t('nav.taskTypes'), href: '/task-types' }, { label: tt.name }]} />
       <main className="main-content">
-        <div className="page-header">
+        <div className="page-header tt-page-header">
           <div className="page-header-info">
             <h1>{tt.name}</h1>
             <p>{tt.description ?? ''}{tt.section ? ` · ${tt.section.name}` : ''}</p>
@@ -436,6 +446,12 @@ export default function TaskTypeDetail() {
               </button>
             )}
           </div>
+        </div>
+
+        <div className="tt-detail-overview">
+          <div><span>{t('taskTiming.title')}</span><strong>{tt.deliveryMinutes ? t('taskTiming.hoursSummary', { hours: String(tt.deliveryMinutes / 60) }) : t('taskTiming.disabled')}</strong></div>
+          <div><span>{t('taskTiming.calendar')}</span><strong>{workScheduleSummary(tt, t)}</strong></div>
+          <div><span>{t('taskTiming.defaultPriority')}</span><strong><TaskPriorityBadge priority={tt.defaultPriority} /></strong></div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -1044,6 +1060,16 @@ export default function TaskTypeDetail() {
                 {t('pages.taskTypeDetail.ttSchedulableCheck')}
               </label>
             </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="edit-task-type-default-priority">{t('taskTiming.defaultPriority')}</label>
+              <select id="edit-task-type-default-priority" className="form-select" value={ttForm.defaultPriority}
+                onChange={event => setTtForm(current => ({ ...current, defaultPriority: event.target.value as TaskPriority }))}>
+                {(['low', 'normal', 'high', 'urgent'] as const).map(level =>
+                  <option key={level} value={level}>{t(`taskTiming.priority.${level}`)}</option>)}
+              </select>
+              <p className="form-hint">{t('taskTiming.defaultPriorityHint')}</p>
+            </div>
+            <WorkScheduleFields value={ttForm} onChange={patch => setTtForm(current => ({ ...current, ...patch }))} />
           </form>
         </Modal>
       )}

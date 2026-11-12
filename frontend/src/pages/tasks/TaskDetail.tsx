@@ -9,6 +9,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { useT } from '../../i18n';
 import type { Task, StepInstance, StepStatus, FormValue, Account } from '../../types';
 import TaskNote from '../../components/tasks/TaskNote';
+import TaskPriorityBadge from '../../components/tasks/TaskPriorityBadge';
 import './task-detail.css';
 
 const CheckIcon = () => (
@@ -210,6 +211,16 @@ export default function TaskDetail() {
   });
 
   const canManualAssign = roles.some(r => r === 'admin' || r === 'super_admin');
+  const updatePriority = async (priority: Task['priority']) => {
+    if (!task) return;
+    try {
+      await tasksApi.updatePriority(task.id, priority);
+      await qc.invalidateQueries({ queryKey: ['task', id] });
+    } catch (ex: unknown) {
+      const error = ex as { response?: { data?: { message?: string } } };
+      setErr(error.response?.data?.message ?? 'No se pudo cambiar la prioridad.');
+    }
+  };
   const { data: bpoAccountsResult } = useQuery<{ data: Account[] }>({
     queryKey: ['tasks', 'assignable-bpos'],
     queryFn: () => tasksApi.assignableBpos().then(r => r.data),
@@ -550,7 +561,17 @@ export default function TaskDetail() {
             <h1>{task.taskType?.name}</h1>
             <p>{task.brand?.brandName} · {task.brand?.country}</p>
           </div>
-          <StatusBadge status={task.status} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <StatusBadge status={task.status} />
+            {canManualAssign ? (
+              <select aria-label={t('taskTiming.priority')} className="form-select" value={task.priority ?? 'normal'}
+                onChange={event => void updatePriority(event.target.value as Task['priority'])}
+                style={{ width: 'auto', minWidth: 120 }}>
+                {(['low', 'normal', 'high', 'urgent'] as const).map(level =>
+                  <option key={level} value={level}>{t(`taskTiming.priority.${level}`)}</option>)}
+              </select>
+            ) : <TaskPriorityBadge priority={task.priority} />}
+          </div>
         </div>
 
         {err && !action && <div className="error-banner" style={{ marginBottom: 16 }}>{err}</div>}
@@ -582,6 +603,7 @@ export default function TaskDetail() {
                   <th>{t('pages.taskDetail.colType')}</th>
                   <th>{t('pages.taskDetail.colAssignedTo')}</th>
                   <th>{t('pages.taskDetail.colStatus')}</th>
+                  <th>{t('taskTiming.deadline')}</th>
                   <th>{t('pages.taskDetail.colNote')}</th>
                   <th></th>
                 </tr>
@@ -594,6 +616,12 @@ export default function TaskDetail() {
                     <td className="text-muted text-sm">{s.stepDefinition?.executionType?.replace('_', ' ') ?? '—'}</td>
                     <td>{s.assignedTo?.name ?? <span className="text-muted">—</span>}</td>
                     <td><StatusBadge status={s.status} /></td>
+                    <td className="text-sm" style={{ whiteSpace: 'nowrap' }}>
+                      {s.dueAt ? <span style={{ color: s.status !== 'done' && s.status !== 'failed'
+                        && new Date(s.dueAt) < new Date() ? 'var(--red)' : 'var(--text-muted)' }}>
+                        {new Date(s.dueAt).toLocaleString()}
+                      </span> : <span className="text-muted">—</span>}
+                    </td>
                     <td className="task-step-note-cell"><TaskNote note={s.note} /></td>
                     <td className="task-step-actions">
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -703,6 +731,23 @@ export default function TaskDetail() {
             </table>
           </div>
         </div>
+
+        {(task.assignmentDelays?.length ?? 0) > 0 && (
+          <div className="card mb-4" style={{ marginTop: 18 }}>
+            <div className="card-header"><span className="card-title">{t('taskTiming.delayHistory')}</span></div>
+            <div className="table-wrap"><table>
+              <thead><tr><th>{t('taskTiming.delayedBpo')}</th><th>{t('taskTiming.expiredAt')}</th><th>{t('taskTiming.workDelay')}</th><th>{t('taskTiming.reassignedTo')}</th></tr></thead>
+              <tbody>{task.assignmentDelays!.map(delay => (
+                <tr key={delay.id}>
+                  <td>{delay.account?.name ?? '—'}</td>
+                  <td>{new Date(delay.dueAt).toLocaleString()}</td>
+                  <td>{delay.delayMinutes} min</td>
+                  <td>{delay.replacementAccount?.name ?? t('taskTiming.awaitingBpo')}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>
+          </div>
+        )}
 
         {completedBrandResults.map(({ step, result }) => (
           <section className="card mt-2 create-brand-result" key={`created-brand-${step.id}`}>

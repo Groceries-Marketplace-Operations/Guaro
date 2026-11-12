@@ -264,6 +264,8 @@ export const tasksApi = {
   }>('/tasks/shop-options', { params }),
   get: (id: string) => client.get(`/tasks/${id}`),
   create: (data: object) => client.post('/tasks', data),
+  updatePriority: (id: string, priority: import('../types').Task['priority']) =>
+    client.patch(`/tasks/${id}/priority`, { priority }),
   completeStep: (taskId: string, stepId: string, data: object) =>
     client.patch(`/tasks/${taskId}/steps/${stepId}/complete`, data),
   importCreatedStores: (taskId: string, stepId: string, file: File) => {

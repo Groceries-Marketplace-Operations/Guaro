@@ -218,6 +218,12 @@ jobs:
             aux_services_started=false
             promo_only=false
             paused_queues=""
+            caddy_config='/root/grocerytools/grocerytools/Caddyfile'
+            caddy_backup=''
+            caddy_on_standby=false
+            caddy_reload_attempted=false
+            standby_backend_started=false
+            standby_frontend_started=false
 
             cleanup_artifacts() {
               if [ -n "$backup_tmp" ]; then
@@ -273,6 +279,81 @@ jobs:
                 sleep 5
               done
               return 1
+            }
+
+            start_standby_routes() {
+              test -f "$caddy_config"
+              test -z "$(docker ps -a --filter name='^/guaro-backend-standby$' --format '{{.Names}}')"
+              test -z "$(docker ps -a --filter name='^/guaro-frontend-standby$' --format '{{.Names}}')"
+              test "$(grep -o 'guaro-backend-1:3000' "$caddy_config" | wc -l)" -ge 1
+              test "$(grep -o 'guaro-frontend-1:80' "$caddy_config" | wc -l)" -ge 1
+
+              docker compose -f docker-compose.prod.yml --env-file .env.prod run -d \
+                --no-deps --name guaro-backend-standby \
+                -e SCHEDULED_JOBS_ENABLED=false -e TASK_DEADLINES_ENABLED=false backend
+              standby_backend_started=true
+              for attempt in $(seq 1 24); do
+                if docker exec guaro-backend-standby node -e \
+                  "fetch('http://127.0.0.1:3000/auth/me', { signal: AbortSignal.timeout(5000) }).then(r => process.exit(r.status === 401 ? 0 : 1)).catch(() => process.exit(1))"; then
+                  break
+                fi
+                test "$attempt" -lt 24
+                sleep 5
+              done
+
+              docker compose -f docker-compose.prod.yml --env-file .env.prod run -d \
+                --no-deps --name guaro-frontend-standby frontend
+              standby_frontend_started=true
+              for attempt in $(seq 1 24); do
+                if docker exec grocerytools-caddy-1 wget -q -T 5 -O /dev/null \
+                  http://guaro-frontend-standby/; then
+                  break
+                fi
+                test "$attempt" -lt 24
+                sleep 5
+              done
+
+              caddy_backup="$(mktemp /tmp/guaro-caddy-${deploy_sha}.XXXXXX)"
+              cp -p -- "$caddy_config" "$caddy_backup"
+              caddy_next="$(mktemp /tmp/guaro-caddy-next-${deploy_sha}.XXXXXX)"
+              sed -e 's/guaro-backend-1:3000/guaro-backend-standby:3000/g' \
+                  -e 's/guaro-frontend-1:80/guaro-frontend-standby:80/g' \
+                  "$caddy_backup" > "$caddy_next"
+              cp -- "$caddy_next" "$caddy_config"
+              rm -f -- "$caddy_next"
+              docker exec grocerytools-caddy-1 caddy validate --config /etc/caddy/Caddyfile
+              caddy_reload_attempted=true
+              docker exec grocerytools-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+              caddy_on_standby=true
+              echo 'Guaro traffic is on healthy standby containers during the service switch'
+            }
+
+            restore_primary_routes() {
+              if [ -z "$caddy_backup" ]; then
+                return 0
+              fi
+              cp -- "$caddy_backup" "$caddy_config"
+              docker exec grocerytools-caddy-1 caddy validate --config /etc/caddy/Caddyfile
+              docker exec grocerytools-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+              caddy_on_standby=false
+              return 0
+            }
+
+            stop_standby() {
+              if [ "$standby_frontend_started" = "true" ]; then
+                docker stop -t 30 guaro-frontend-standby >/dev/null
+                docker rm guaro-frontend-standby >/dev/null
+                standby_frontend_started=false
+              fi
+              if [ "$standby_backend_started" = "true" ]; then
+                docker stop -t 240 guaro-backend-standby >/dev/null
+                docker rm guaro-backend-standby >/dev/null
+                standby_backend_started=false
+              fi
+              if [ -n "$caddy_backup" ]; then
+                rm -f -- "$caddy_backup"
+                caddy_backup=''
+              fi
             }
 
             resume_background_queues() {
@@ -381,8 +462,21 @@ jobs:
               original_status=$?
               trap - EXIT
               set +e
+              rollback_failed=0
               if [ "$original_status" -ne 0 ] && [ "$rollback_armed" = "true" ]; then
-                rollback_deployment || true
+                rollback_deployment || rollback_failed=1
+              fi
+              if [ "$rollback_failed" -eq 0 ] && [ -n "$caddy_backup" ]; then
+                if restore_primary_routes; then
+                  if [ "$caddy_reload_attempted" = "true" ]; then
+                    sleep 220
+                  fi
+                  stop_standby || true
+                else
+                  echo 'CRITICAL: standby routes could not be restored; standby containers remain online' >&2
+                fi
+              elif [ "$rollback_failed" -eq 0 ]; then
+                stop_standby || true
               fi
               resume_background_queues || true
               cleanup_artifacts
@@ -495,6 +589,10 @@ jobs:
             docker tag "$previous_frontend_image" "$frontend_rollback_tag"
             rollback_armed=true
 
+            if [ "$promo_only" != "true" ]; then
+              start_standby_routes
+            fi
+
             git checkout --detach "$deploy_sha"
             test "$(git rev-parse HEAD)" = "$deploy_sha"
             compose_images="$(docker compose -f docker-compose.prod.yml --env-file .env.prod config --images)"
@@ -551,6 +649,10 @@ jobs:
             fi
             docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --no-deps backend \
               npx prisma migrate deploy --schema=./prisma/schema.prisma
+            docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T \
+              -e PGOPTIONS='-c max_parallel_maintenance_workers=0' guaro-db \
+              sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+              < prisma/deploy/task_sla_indexes_online.sql
             aux_services_started=true
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d \
               --no-build --no-deps promo-manager neto-worker
@@ -597,8 +699,13 @@ jobs:
               docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail=120 frontend
               exit 1
             fi
-            resume_background_queues
+
+            restore_primary_routes
             rollback_armed=false
+            # Allow in-flight webhook acceptance on the old backend to finish.
+            sleep 220
+            stop_standby
+            resume_background_queues
             docker image prune -f --filter 'until=168h'
             docker builder prune -af --filter 'until=168h' --keep-storage 2GB
             journalctl --vacuum-size=300M || true

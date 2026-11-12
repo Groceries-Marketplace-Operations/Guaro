@@ -8,7 +8,8 @@ import { createReadStream, mkdirSync } from 'fs';
 import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
 import { pipeline } from 'stream/promises';
-import { AccountRole, Country, TaskStatus } from '@prisma/client';
+import { AccountRole, Country, TaskPriority, TaskStatus } from '@prisma/client';
+import { UpdateTaskPriorityDto } from './dto/update-task-priority.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtUser } from '../auth/types/jwt-user.interface';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -57,6 +58,7 @@ export class TasksController {
     @Query('sectionId') sectionId?: string,
     @Query('country', new ParseEnumPipe(Country, { optional: true })) country?: Country,
     @Query('taskTypeId', new ParseUUIDPipe({ optional: true })) taskTypeId?: string,
+    @Query('priority', new ParseEnumPipe(TaskPriority, { optional: true })) priority?: TaskPriority,
   ) {
     return this.tasksService.findAll(u.roles, u.id, u.sectionId, {
       page,
@@ -67,6 +69,7 @@ export class TasksController {
       sectionId,
       country,
       taskTypeId,
+      priority,
     });
   }
 
@@ -208,6 +211,13 @@ export class TasksController {
   @Roles(AccountRole.user, AccountRole.bpo, AccountRole.admin, AccountRole.super_admin)
   create(@CurrentUser() u: JwtUser, @Body() dto: CreateTaskDto) {
     return this.tasksService.create(dto, u);
+  }
+
+  @Patch(':id/priority')
+  @Permissions('tasks.assign')
+  @Roles(AccountRole.admin, AccountRole.super_admin)
+  updatePriority(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTaskPriorityDto, @CurrentUser() u: JwtUser) {
+    return this.tasksService.updatePriority(id, dto.priority, u);
   }
 
   @Patch('bulk-reassign')

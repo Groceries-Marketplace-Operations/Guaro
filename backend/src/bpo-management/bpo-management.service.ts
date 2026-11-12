@@ -35,12 +35,13 @@ export class BpoManagementService {
             id: true,
             status: true,
             assignedToId: true,
+            dueAt: true,
             stepDefinition: { select: { name: true, order: true, executionType: true } },
           },
           orderBy: { stepDefinition: { order: 'asc' } },
         },
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }],
     });
     return tasks.map(task => ({
       ...task,
@@ -282,10 +283,18 @@ export class BpoManagementService {
       task: taskFilter,
     };
 
-    const [totalCompleted, totalFailed, totalInProgress] = await Promise.all([
+    const [totalCompleted, totalFailed, totalInProgress, delaySummary] = await Promise.all([
       this.prisma.stepInstance.count({ where: stepWhere(StepStatus.done) }),
       this.prisma.stepInstance.count({ where: stepWhere(StepStatus.failed) }),
       this.prisma.stepInstance.count({ where: activeWhere }),
+      this.prisma.taskAssignmentDelay.aggregate({
+        where: {
+          accountId,
+          task: taskFilter,
+        },
+        _count: { _all: true },
+        _sum: { delayMinutes: true },
+      }),
     ]);
 
     // Average active work time — filter through task to match ORM queries above
@@ -312,6 +321,8 @@ export class BpoManagementService {
       stepsCompleted: totalCompleted,
       stepsFailed: totalFailed,
       stepsInProgress: totalInProgress,
+      delayedAssignments: delaySummary._count._all,
+      delayedWorkMinutes: delaySummary._sum.delayMinutes ?? 0,
       avgCompletionHours: avgResult[0]?.avg_hours ?? null,
     };
   }

@@ -70,7 +70,10 @@ export class SchedulerService {
       where: {
         status: { in: [StepStatus.in_progress, StepStatus.blocked] },
         stepDefinition: { executionType: { in: [ExecutionType.manual_external, ExecutionType.manual_internal] } },
-        task: { scheduledEnd: { lte: now }, status: TaskStatus.in_progress },
+          task: {
+            scheduledEnd: { lte: now }, status: TaskStatus.in_progress,
+            taskType: { deliveryMinutes: null },
+          },
       },
       include: {
         stepDefinition: true,

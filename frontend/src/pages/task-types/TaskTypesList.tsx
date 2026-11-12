@@ -6,7 +6,10 @@ import Modal from '../../components/ui/Modal';
 import Paginator from '../../components/ui/Paginator';
 import { taskTypesApi } from '../../api';
 import { useT } from '../../i18n';
-import type { TaskType, Section, Paginated } from '../../types';
+import type { TaskType, TaskPriority, Section, Paginated } from '../../types';
+import TaskPriorityBadge from '../../components/tasks/TaskPriorityBadge';
+import WorkScheduleFields, { DEFAULT_WORK_SCHEDULE, workScheduleSummary } from './WorkScheduleFields';
+import './task-types.css';
 
 const PlusIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -23,7 +26,7 @@ export default function TaskTypesList() {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
-  const [form, setForm] = useState({ name: '', description: '', sectionId: '', schedulable: false });
+  const [form, setForm] = useState({ name: '', description: '', sectionId: '', schedulable: false, defaultPriority: 'normal' as TaskPriority, ...DEFAULT_WORK_SCHEDULE });
   const [q, setQ] = useState('');
   const [dq, setDq] = useState('');
   const [page, setPage] = useState(1);
@@ -97,7 +100,7 @@ export default function TaskTypesList() {
     <>
       <Topbar breadcrumb={[{ label: t('nav.taskTypes') }]} />
       <main className="main-content">
-        <div className="page-header">
+        <div className="page-header tt-page-header">
           <div className="page-header-info">
             <h1>{t('pages.taskTypesList.title')}</h1>
             <p>{subtitle}</p>
@@ -105,6 +108,12 @@ export default function TaskTypesList() {
           <button className="btn btn-primary" onClick={() => setOpen(true)} disabled={sections.length === 0}>
             <PlusIcon /> {t('pages.taskTypesList.newTaskType')}
           </button>
+        </div>
+
+        <div className="tt-overview">
+          <div><strong>{total}</strong><span>{t('taskTiming.types')}</span></div>
+          <div><strong>{types.filter(type => type.active).length}</strong><span>{t('taskTiming.active')}</span></div>
+          <div><strong>{types.filter(type => type.deliveryMinutes).length}</strong><span>{t('taskTiming.configured')}</span></div>
         </div>
 
         {sections.length === 1 && (
@@ -136,9 +145,9 @@ export default function TaskTypesList() {
           </div>
         ) : (
           <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
+          <div className="tt-card-grid">
             {types.map(tp => (
-              <div key={tp.id} className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.1s' }}
+              <div key={tp.id} className="card tt-type-card" style={{ cursor: 'pointer' }}
                 onClick={() => nav(`/task-types/${tp.id}`)}
                 onMouseOver={e => (e.currentTarget.style.boxShadow = 'var(--shadow-sm)')}
                 onMouseOut={e => (e.currentTarget.style.boxShadow = 'none')}
@@ -146,6 +155,7 @@ export default function TaskTypesList() {
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
                   <div style={{ fontWeight: 700, fontSize: '0.95rem', color: tp.active === false ? 'var(--text-muted)' : undefined }}>{tp.name}</div>
                   <div style={{ display: 'flex', gap: 5 }}>
+                    <TaskPriorityBadge priority={tp.defaultPriority} />
                     {tp.schedulable && (
                       <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'var(--blue-bg)', color: 'var(--blue)' }}>
                         {t('pages.taskTypesList.schedulable')}
@@ -166,6 +176,10 @@ export default function TaskTypesList() {
                 </div>
                 <div style={{ marginTop: 8, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   {t('pages.taskTypesList.sectionLabel')}: {tp.section?.name ?? '—'}
+                </div>
+                <div className={`tt-card-sla ${tp.deliveryMinutes ? 'is-active' : ''}`}>
+                  <span className="tt-card-sla__icon">◷</span>
+                  <span>{workScheduleSummary(tp, t)}</span>
                 </div>
                 <div style={{ marginTop: 12, display: 'flex', gap: 6 }}>
                   {(() => {
@@ -232,6 +246,16 @@ export default function TaskTypesList() {
                 {t('pages.taskTypesList.schedulableCheck')}
               </label>
             </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="task-type-default-priority">{t('taskTiming.defaultPriority')}</label>
+              <select id="task-type-default-priority" className="form-select" value={form.defaultPriority}
+                onChange={event => setForm(current => ({ ...current, defaultPriority: event.target.value as TaskPriority }))}>
+                {(['low', 'normal', 'high', 'urgent'] as const).map(level =>
+                  <option key={level} value={level}>{t(`taskTiming.priority.${level}`)}</option>)}
+              </select>
+              <p className="form-hint">{t('taskTiming.defaultPriorityHint')}</p>
+            </div>
+            <WorkScheduleFields value={form} onChange={patch => setForm(current => ({ ...current, ...patch }))} />
           </form>
         </Modal>
       )}
