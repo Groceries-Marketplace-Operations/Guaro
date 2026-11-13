@@ -29,7 +29,7 @@ export class UpdateAutoTurnOffRuleDto {
   @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(5000)
+  @ArrayMaxSize(9000)
   @IsString({ each: true })
   shopIds?: string[];
 

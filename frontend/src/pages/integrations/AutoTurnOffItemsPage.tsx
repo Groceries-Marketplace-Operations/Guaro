@@ -102,6 +102,7 @@ function parseUpcs(value: string) {
 }
 
 const parseShopIds = parseUpcs;
+const MAX_SHOP_IDS_PER_RULE = 9000;
 
 function toLocalDateTimeInput(iso: string) {
   const date = new Date(iso);
@@ -190,7 +191,8 @@ export default function AutoTurnOffItemsPage() {
     dailyTimesHelp: 'Las horas se interpretan en la zona horaria del país del pool.',
     endpoint: 'Versión de Stock API', asyncEndpoint: 'setStock (asíncrono)', syncEndpoint: 'setstockSync (síncrono)',
     stockValue: 'Valor de stock', stockValueHelp: 'Se enviará este entero a todos los UPCs de la regla. Usa 0 para apagarlos o un valor mayor para establecer disponibilidad.',
-    shopHelp: 'Ingresa un shop_id de DiDi por línea o separado por coma. Debe tener 19 dígitos e iniciar con 57.',
+    shopHelp: 'Ingresa un shop_id de DiDi por línea o separado por coma. Debe tener 19 dígitos e iniciar con 57. Máximo 9,000 tiendas por regla.',
+    shopLimit: 'Se permiten hasta 9,000 tiendas por regla.',
     frequencyHelp: 'setStock requiere mínimo 10 minutos; setstockSync permite desde 1 minuto.',
     syncLimit: 'setstockSync permite como máximo 2,000 UPCs por regla.',
     startsAt: 'Iniciar apagado', endsAt: 'Detener automáticamente', noEnd: 'Sin fecha de término', status: 'Estado', queued: 'En cola', runningStatus: 'Ejecutando', scheduledStatus: 'Programada',
@@ -236,7 +238,8 @@ export default function AutoTurnOffItemsPage() {
     dailyTimesHelp: '时间按池所在国家/地区的时区解释。',
     endpoint: 'Stock API 版本', asyncEndpoint: 'setStock（异步）', syncEndpoint: 'setstockSync（同步）',
     stockValue: '库存值', stockValueHelp: '此整数将发送给规则中的每个 UPC。使用 0 下架商品，或使用更大的值设置可用库存。',
-    shopHelp: '每行输入一个 DiDi shop_id，或用逗号分隔。shop_id 必须包含 19 位数字且以 57 开头。',
+    shopHelp: '每行输入一个 DiDi shop_id，或用逗号分隔。shop_id 必须包含 19 位数字且以 57 开头。每条规则最多 9,000 家店铺。',
+    shopLimit: '每条规则最多允许 9,000 家店铺。',
     frequencyHelp: 'setStock 的最小间隔为 10 分钟；setstockSync 允许从 1 分钟开始。',
     syncLimit: 'setstockSync 每条规则最多接受 2,000 个 UPC。',
     startsAt: '开始下架', endsAt: '自动停止', noEnd: '无结束日期', status: '状态', queued: '排队中', runningStatus: '执行中', scheduledStatus: '已调度',
@@ -282,7 +285,8 @@ export default function AutoTurnOffItemsPage() {
     dailyTimesHelp: 'Times use the timezone of the pool country.',
     endpoint: 'Stock API version', asyncEndpoint: 'setStock (asynchronous)', syncEndpoint: 'setstockSync (synchronous)',
     stockValue: 'Stock value', stockValueHelp: 'This integer is sent for every UPC in the rule. Use 0 to turn items off or a greater value to set availability.',
-    shopHelp: 'Enter one DiDi shop_id per line or comma-separated. It must contain 19 digits and start with 57.',
+    shopHelp: 'Enter one DiDi shop_id per line or comma-separated. It must contain 19 digits and start with 57. Maximum 9,000 stores per rule.',
+    shopLimit: 'A rule can contain up to 9,000 stores.',
     frequencyHelp: 'setStock requires at least 10 minutes; setstockSync allows intervals from 1 minute.',
     syncLimit: 'setstockSync accepts a maximum of 2,000 UPCs per rule.',
     startsAt: 'Start turning off', endsAt: 'Stop automatically', noEnd: 'No end date', status: 'Status', queued: 'Queued', runningStatus: 'Running', scheduledStatus: 'Scheduled',
@@ -431,6 +435,7 @@ export default function AutoTurnOffItemsPage() {
     if (!ruleForm.name.trim() || !ruleForm.brandId || shopIds.length === 0 || upcs.length === 0 || !ruleForm.startsAt) {
       return setError(copy.completeRequired);
     }
+    if (shopIds.length > MAX_SHOP_IDS_PER_RULE) return setError(copy.shopLimit);
     const minimumMinutes = ruleForm.stockEndpoint === 'setStock' ? 10 : 1;
     if (ruleForm.scheduleMode === 'interval'
       && (!Number.isInteger(intervalMinutes) || intervalMinutes < minimumMinutes)) return setError(copy.frequencyHelp);
@@ -725,7 +730,7 @@ export default function AutoTurnOffItemsPage() {
               </div>
             )}
             <div className="form-group">
-              <label className="form-label">{copy.shops} ({parseShopIds(ruleForm.shopIds).length})</label>
+              <label className="form-label">{copy.shops} ({parseShopIds(ruleForm.shopIds).length} / {MAX_SHOP_IDS_PER_RULE.toLocaleString()})</label>
               {!!ruleForm.brandId && (
                 <div style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', borderRadius: 8, padding: 10, marginBottom: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: brandShops.length > 0 ? 8 : 0 }}>

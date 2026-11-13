@@ -28,7 +28,7 @@ export class CreateAutoTurnOffRuleDto {
 
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(5000)
+  @ArrayMaxSize(9000)
   @IsString({ each: true })
   shopIds: string[];
 
