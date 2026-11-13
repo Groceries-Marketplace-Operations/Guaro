@@ -152,25 +152,34 @@ export class AutoTurnOffCoordinator {
           progressPercent: Math.min(99, Math.floor((progressCurrent / progressTotal) * 100)),
         },
       });
-    });
+    }, { maxWait: 10_000, timeout: 30_000 });
 
     const runnable = shopJobs.filter((item): item is typeof item & { appShopId: string } => Boolean(item.appShopId));
 
     try {
       await this.ensureRunning(executionId);
-      const first = runnable[0];
-      const data = first
-        ? { shopExecutionId: first.id, phase: 'local' as const }
-        : { executionId, phase: 'advance' as const };
-      const jobId = first ? `${first.id}-local` : `advance-${executionId}`;
-      await this.shopQueue.add('turn-off-shop-items', data, {
-        jobId,
-        attempts: 1,
-        removeOnComplete: 1000,
-        removeOnFail: 1000,
-      });
+      for (let offset = 0; offset < runnable.length; offset += 100) {
+        await this.shopQueue.addBulk(runnable.slice(offset, offset + 100).map(item => ({
+          name: 'turn-off-shop-items',
+          data: { shopExecutionId: item.id, phase: 'local' as const },
+          opts: {
+            jobId: `${item.id}-local`,
+            attempts: 1,
+            removeOnComplete: 1000,
+            removeOnFail: 1000,
+          },
+        })));
+      }
+      if (runnable.length === 0) {
+        await this.shopQueue.add('turn-off-shop-items', { executionId, phase: 'advance' }, {
+          jobId: `advance-${executionId}`,
+          attempts: 1,
+          removeOnComplete: 1000,
+          removeOnFail: 1000,
+        });
+      }
       this.logger.log(
-        `Started local-first sequential worker for rule "${rule.name}" `
+        `Queued parallel shop workers for rule "${rule.name}" `
         + `(${runnable.length} local, ${shopJobs.length - runnable.length} deferred shop(s))`,
       );
     } catch (error) {

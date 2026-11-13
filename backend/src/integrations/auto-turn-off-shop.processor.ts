@@ -8,6 +8,7 @@ import { catalogMutationResourceKey, OperationalLeaseService } from '../prisma/o
 import { WebhookSenderService } from '../webhooks/webhook-sender.service';
 import { decrypt } from '../common/crypto.util';
 import { fetchShopIdMap, getAuthToken } from '../queue/handlers/didi-food.util';
+import { waitForShopStockSlot } from './auto-turn-off-stock-limiter';
 import {
   AutoTurnOffCancelledError,
   buildStockList,
@@ -43,12 +44,12 @@ type ShopTarget = Prisma.AutoTurnOffShopExecutionGetPayload<{
 }>;
 
 @Injectable()
-@Processor('auto-turn-off-shop', { concurrency: 24 })
+@Processor('auto-turn-off-shop', { concurrency: 6 })
 export class AutoTurnOffShopProcessor extends WorkerHost {
   private readonly logger = new Logger(AutoTurnOffShopProcessor.name);
   private readonly activeByApplication = new Map<string, number>();
   private readonly waitingByApplication = new Map<string, Array<() => void>>();
-  private readonly maxPerApplication = 3;
+  private readonly maxPerApplication = 6;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -207,6 +208,16 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     if (cached.candidates.length > 0) {
       await this.ensureActive(target.id, execution.id);
       try {
+        const application = rule.brand.application!;
+        await waitForShopStockSlot(
+          await this.shopQueue.client,
+          application.appId,
+          target.appShopId!,
+          async () => {
+            await this.ensureActive(target.id, execution.id);
+            await ensureCatalogActive();
+          },
+        );
         await ensureCatalogActive();
         localResult = await callStockApi(
           endpoint,
@@ -436,19 +447,16 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
     });
     if (execution?.status !== 'running') return;
 
-    const nextLocal = await this.prisma.autoTurnOffShopExecution.findFirst({
+    const localWorkRemaining = await this.prisma.autoTurnOffShopExecution.count({
       where: {
         executionId,
-        status: 'pending',
-        currentStep: { in: ['queued_local', 'queued_resolved'] },
+        OR: [
+          { status: 'running' },
+          { status: 'pending', currentStep: { in: ['queued_local', 'queued_resolved'] } },
+        ],
       },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true },
     });
-    if (nextLocal) {
-      await this.enqueueShop(nextLocal.id, 'local');
-      return;
-    }
+    if (localWorkRemaining > 0) return;
 
     const unresolvedCount = await this.prisma.autoTurnOffShopExecution.count({
       where: { executionId, status: 'pending', currentStep: 'waiting_shop_resolution' },
@@ -565,6 +573,20 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
       .map(shop => ({ shopId: shop.shopId, appShopId: mappings.get(shop.shopId) }))
       .filter((shop): shop is { shopId: string; appShopId: string } => Boolean(shop.appShopId));
     await this.persistResolvedShops(execution.rule.brandId, resolved);
+    const resolvedJobs = deferred.filter(shop => mappings.has(shop.shopId));
+    for (let offset = 0; offset < resolvedJobs.length; offset += 100) {
+      const chunk = resolvedJobs.slice(offset, offset + 100);
+      await this.shopQueue.addBulk(chunk.map(shop => ({
+        name: 'turn-off-shop-items',
+        data: { shopExecutionId: shop.id, phase: 'local' as const },
+        opts: {
+          jobId: `${shop.id}-local`,
+          attempts: 1,
+          removeOnComplete: 1000,
+          removeOnFail: 1000,
+        },
+      })));
+    }
     if (resolved.length > 0) {
       const previous = execution.rule.resolvedShopIds
         && typeof execution.rule.resolvedShopIds === 'object'
@@ -595,15 +617,6 @@ export class AutoTurnOffShopProcessor extends WorkerHost {
         update: { appShopId: shop.appShopId, brandId, deletedAt: null },
       })));
     }
-  }
-
-  private async enqueueShop(shopExecutionId: string, phase: ShopPhase) {
-    await this.shopQueue.add('turn-off-shop-items', { shopExecutionId, phase }, {
-      jobId: `${shopExecutionId}-${phase}`,
-      attempts: 1,
-      removeOnComplete: 1000,
-      removeOnFail: 1000,
-    });
   }
 
   private async failExecution(executionId: string, message: string) {
