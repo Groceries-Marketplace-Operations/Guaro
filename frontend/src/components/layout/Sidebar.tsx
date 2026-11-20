@@ -81,6 +81,7 @@ export default function Sidebar() {
   const roles = account?.roles ?? [];
 
   const isSA       = roles.includes('super_admin');
+  const canSftpProcessing = (isSA || roles.includes('admin')) && hasPermission(account, 'integrations.sftp_processing');
   const isDirector = roles.includes('director');
   const can = (permission: string) => hasPermission(account, permission);
   const isStoreOnboardingOperator = roles.some(role => ['user', 'bpo', 'director', 'admin', 'super_admin'].includes(role));
@@ -154,11 +155,14 @@ export default function Sidebar() {
         </NavLink>
         </div>}
 
-        {can('brands.view') && <div className="sidebar-section">
+        {(can('brands.view') || canSftpProcessing) && <div className="sidebar-section">
         <div className="sidebar-section-label">{t('nav.catalog')}</div>
-        <NavLink to="/brands" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+        {can('brands.view') && <NavLink to="/brands" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
           <IconTag /> {t('nav.brands')}
-        </NavLink>
+        </NavLink>}
+        {canSftpProcessing && <NavLink to="/integrations/sftp-processing" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          <IconLayers /> {t('nav.sftpProcessing')}
+        </NavLink>}
         </div>}
 
         {(can('tasks.view') || can('task_types.manage')) && <div className="sidebar-section">

@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
-import { FileIntegrationKind, Prisma } from '@prisma/client';
+import { Country, FileIntegrationKind, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { existsSync, readFileSync } from 'fs';
 import { basename, resolve, sep } from 'path';
@@ -11,6 +11,7 @@ import {
   nextDailyFileIntegrationRun,
 } from './daily-status-activation.util';
 import { UpsertFileIntegrationRuleDto } from './dto/upsert-file-integration-rule.dto';
+import { normalizeUpc, parseSftpFilterMode, priceFilterTimeZone } from './file-integration.util';
 
 const PROMOTION_SHOPS_PER_RUN_LIMIT = 20;
 
@@ -22,11 +23,17 @@ export class FileIntegrationsService {
   ) {}
 
   async list(kind: FileIntegrationKind) {
+    const recentCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const rules = await this.prisma.fileIntegrationRule.findMany({
       where: { kind, deletedAt: null },
       include: {
         sftpApplication: { select: { id: true, name: true, host: true, port: true, rootPath: true, active: true } },
-        executions: { orderBy: { createdAt: 'desc' }, take: 5 },
+        executions: {
+          where: kind === FileIntegrationKind.price_filter
+            ? { OR: [{ finishedAt: { gte: recentCutoff } }, { status: { in: ['pending', 'running'] } }] }
+            : undefined,
+          orderBy: { createdAt: 'desc' }, take: 5,
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -51,6 +58,21 @@ export class FileIntegrationsService {
 
   async create(dto: UpsertFileIntegrationRuleDto, createdById: string) {
     const data = await this.normalize(dto);
+    if (data.kind === FileIntegrationKind.price_filter) {
+      const existing = await this.prisma.fileIntegrationRule.findFirst({
+        where: {
+          kind: FileIntegrationKind.price_filter,
+          deletedAt: null,
+          sftpApplicationId: data.sftpApplicationId,
+          filePattern: data.filePattern,
+          sourceScope: data.sourceScope,
+        },
+        select: { id: true, name: true },
+      });
+      if (existing) {
+        throw new BadRequestException(`An SFTP processing rule already covers these files (${existing.name}). Edit the existing rule instead`);
+      }
+    }
     return this.prisma.fileIntegrationRule.create({
       data: { ...data, createdById },
     });
@@ -58,10 +80,20 @@ export class FileIntegrationsService {
 
   async update(id: string, dto: UpsertFileIntegrationRuleDto) {
     const current = await this.findRule(id);
-    const data = await this.normalize(dto);
+    if (current.kind === FileIntegrationKind.price_filter || dto.kind === FileIntegrationKind.price_filter) {
+      const activeExecution = await this.prisma.fileIntegrationExecution.count({
+        where: { ruleId: id, status: { in: ['pending', 'running'] } },
+      });
+      if (activeExecution) {
+        throw new BadRequestException('Stop the active SFTP processing execution before editing this rule');
+      }
+    }
+    const data = await this.normalize(dto, current.filterMode);
     const fileSelectionChanged = current.sftpApplicationId !== data.sftpApplicationId
+      || current.country !== data.country
       || current.filePattern !== data.filePattern
       || current.sourceScope !== data.sourceScope
+      || current.filterMode !== data.filterMode
       || current.delimiter !== data.delimiter
       || current.priceColumn !== data.priceColumn
       || current.upcColumn !== data.upcColumn
@@ -75,7 +107,13 @@ export class FileIntegrationsService {
         where: { id },
         data: {
           ...data,
-          fileStateInitializedAt: fileSelectionChanged ? null : undefined,
+          // Code-list edits must revisit files already seen by this rule.
+          // Amount-only rules retain their prior history semantics.
+          fileStateInitializedAt: fileSelectionChanged
+            ? data.filterMode === 'code' || data.filterMode === 'amount_and_code'
+              ? new Date()
+              : null
+            : undefined,
         },
       });
     });
@@ -130,20 +168,30 @@ export class FileIntegrationsService {
   }
 
   async executions(id: string, page = 1) {
-    await this.findRule(id);
+    const rule = await this.findRule(id);
+    const where: Prisma.FileIntegrationExecutionWhereInput = rule.kind === FileIntegrationKind.price_filter
+      ? { ruleId: id, OR: [
+        { finishedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+        { status: { in: ['pending', 'running'] } },
+      ] }
+      : { ruleId: id };
     const limit = 20;
     const [data, total] = await Promise.all([
       this.prisma.fileIntegrationExecution.findMany({
-        where: { ruleId: id }, orderBy: { createdAt: 'desc' }, skip: (Math.max(page, 1) - 1) * limit, take: limit,
+        where, orderBy: { createdAt: 'desc' }, skip: (Math.max(page, 1) - 1) * limit, take: limit,
       }),
-      this.prisma.fileIntegrationExecution.count({ where: { ruleId: id } }),
+      this.prisma.fileIntegrationExecution.count({ where }),
     ]);
     return { data: data.map(value => this.serializeExecution(value)), total, page: Math.max(page, 1), limit };
   }
 
   async download(executionId: string, fileName: string) {
-    const execution = await this.prisma.fileIntegrationExecution.findUnique({ where: { id: executionId } });
+    const execution = await this.prisma.fileIntegrationExecution.findUnique({ where: { id: executionId }, include: { rule: { select: { kind: true } } } });
     if (!execution) throw new NotFoundException('Execution not found');
+    if (execution.rule.kind === FileIntegrationKind.price_filter && execution.finishedAt
+      && execution.finishedAt.getTime() < Date.now() - 24 * 60 * 60 * 1000) {
+      throw new NotFoundException('Execution report expired after 24 hours');
+    }
     const safeName = basename(fileName);
     if (safeName !== fileName) throw new BadRequestException('Invalid file name');
     const base = resolve(process.cwd(), 'uploads', 'integrations', executionId);
@@ -159,18 +207,49 @@ export class FileIntegrationsService {
     return { executionId, name };
   }
 
-  private async normalize(dto: UpsertFileIntegrationRuleDto): Promise<Prisma.FileIntegrationRuleUncheckedCreateInput> {
+  private async normalize(
+    dto: UpsertFileIntegrationRuleDto,
+    currentFilterMode?: string,
+  ): Promise<Prisma.FileIntegrationRuleUncheckedCreateInput> {
     const app = await this.prisma.sftpApplication.findFirst({
-      where: { id: dto.sftpApplicationId, deletedAt: null }, select: { id: true },
+      where: { id: dto.sftpApplicationId, deletedAt: null }, select: { id: true, name: true, active: true },
     });
     if (!app) throw new BadRequestException('SFTP application not found');
+    if (dto.kind === FileIntegrationKind.price_filter && dto.active === true && !app.active) {
+      throw new BadRequestException('Activate the SFTP application before enabling this processing rule');
+    }
+    const requestedCodes = (dto.excludedUpcs ?? []).map(normalizeUpc);
+    if (requestedCodes.some(code => !code || code.length > 64 || /[\r\n\0]/.test(code))) {
+      throw new BadRequestException('Every code must be a non-empty value of at most 64 characters');
+    }
+    const excludedUpcs = [...new Set(requestedCodes)];
+    if (excludedUpcs.length > 10_000) {
+      throw new BadRequestException('A code filter supports at most 10,000 unique codes');
+    }
+    const filterMode = dto.kind === FileIntegrationKind.price_filter
+      ? parseSftpFilterMode(dto.filterMode
+        ?? currentFilterMode
+        ?? (excludedUpcs.length > 0 ? 'amount_and_code' : 'amount'))
+      : 'amount';
+    const byAmount = filterMode === 'amount' || filterMode === 'amount_and_code';
+    const byCode = filterMode === 'code' || filterMode === 'amount_and_code';
     if (dto.kind === FileIntegrationKind.price_filter) {
-      if (!dto.country || dto.thresholdAmount === undefined || dto.priceColumn === undefined) {
-        throw new BadRequestException('Country, threshold amount and zero-based price column are required for price filters');
+      if (!dto.country) {
+        throw new BadRequestException('Country is required for SFTP processing rules');
+      }
+      const scope = dto.sourceScope?.trim() || 'all';
+      if (!['all', 'city_club'].includes(scope) || (scope === 'city_club' && dto.country !== Country.MX)) {
+        throw new BadRequestException('City Club scope is available only for Mexico; use all for other countries');
+      }
+      if (scope === 'city_club' && !/soriana|city\s*club/i.test(app.name)) {
+        throw new BadRequestException('City Club scope requires the Soriana SFTP account');
       }
       if (!dto.intervalMinutes) throw new BadRequestException('A recurrence interval is required for price filters');
-      if ((dto.excludedUpcs?.length ?? 0) > 0 && dto.upcColumn === undefined) {
-        throw new BadRequestException('A zero-based UPC column is required when selected UPCs must be removed');
+      if (byAmount && (dto.thresholdAmount === undefined || dto.priceColumn === undefined)) {
+        throw new BadRequestException('Amount filters require a threshold and zero-based amount column');
+      }
+      if (byCode && (excludedUpcs.length === 0 || dto.upcColumn === undefined)) {
+        throw new BadRequestException('Code filters require codes and a zero-based code column');
       }
     }
     if (dto.kind === FileIntegrationKind.store_file_splitter) {
@@ -186,9 +265,11 @@ export class FileIntegrationsService {
       : dto.kind === FileIntegrationKind.store_file_splitter
         ? dto.dailyTime?.trim() || null
         : null;
-    const timezone = dto.timezone?.trim() || (dto.kind === FileIntegrationKind.store_file_splitter
-      ? 'Etc/GMT+6'
-      : DAILY_STATUS_ACTIVATION_TIMEZONE);
+    const timezone = dto.kind === FileIntegrationKind.price_filter
+      ? priceFilterTimeZone(dto.country)
+      : dto.timezone?.trim() || (dto.kind === FileIntegrationKind.store_file_splitter
+        ? 'Etc/GMT+6'
+        : DAILY_STATUS_ACTIVATION_TIMEZONE);
     if (dailyTime) {
       try {
         nextDailyFileIntegrationRun(dailyTime, timezone);
@@ -205,7 +286,6 @@ export class FileIntegrationsService {
       : dailyTime
         ? nextDailyFileIntegrationRun(dailyTime, timezone)
         : dto.intervalMinutes ? new Date(Date.now() + dto.intervalMinutes * 60_000) : null;
-    const excludedUpcs = [...new Set((dto.excludedUpcs ?? []).map(value => value.trim()).filter(Boolean))];
     return {
       name: dto.name.trim(), kind: dto.kind, country: dto.country ?? null,
       sftpApplicationId: dto.sftpApplicationId, active,
@@ -220,14 +300,17 @@ export class FileIntegrationsService {
         : dto.kind === FileIntegrationKind.daily_status_activation
           ? 'filename_date_today'
           : dto.sourceScope?.trim() || 'all',
-      thresholdAmount: dto.thresholdAmount === undefined ? null : new Prisma.Decimal(dto.thresholdAmount),
+      filterMode,
+      thresholdAmount: dto.kind === FileIntegrationKind.price_filter && !byAmount
+        ? null
+        : dto.thresholdAmount === undefined ? null : new Prisma.Decimal(dto.thresholdAmount),
       delimiter: dto.kind === FileIntegrationKind.store_file_splitter
         || dto.kind === FileIntegrationKind.daily_status_activation
         ? '|'
         : dto.delimiter?.trim() || null,
-      priceColumn: dto.priceColumn ?? null,
-      upcColumn: dto.kind === FileIntegrationKind.price_filter ? dto.upcColumn ?? null : null,
-      excludedUpcs: dto.kind === FileIntegrationKind.price_filter ? excludedUpcs : [],
+      priceColumn: dto.kind === FileIntegrationKind.price_filter && !byAmount ? null : dto.priceColumn ?? null,
+      upcColumn: dto.kind === FileIntegrationKind.price_filter && byCode ? dto.upcColumn ?? null : null,
+      excludedUpcs: dto.kind === FileIntegrationKind.price_filter && byCode ? excludedUpcs : [],
       maxFilesPerRun: dto.kind === FileIntegrationKind.complex_promotion_reader
         ? Math.min(dto.maxFilesPerRun ?? PROMOTION_SHOPS_PER_RUN_LIMIT, PROMOTION_SHOPS_PER_RUN_LIMIT)
         : dto.kind === FileIntegrationKind.store_file_splitter ? 1

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
@@ -21,6 +21,10 @@ const KA_TYPES          = ['KA', 'CKA', 'SME'];
 function fmt(val?: string | null) {
   if (!val) return '—';
   return val.replace(/_/g, ' ');
+}
+
+function normalizeShopSearch(value?: string | null) {
+  return (value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().trim();
 }
 
 function safeExternalUrl(value?: string | null): string | null {
@@ -168,6 +172,7 @@ export default function BrandDetail() {
   const [selectedAppId, setSelectedAppId] = useState('');
   const [savingApp, setSavingApp] = useState(false);
   const [selectedShopIds, setSelectedShopIds] = useState<Set<string>>(new Set());
+  const [shopSearch, setShopSearch] = useState('');
   const [batchStatus, setBatchStatus] = useState('');
   const [savingBatch, setSavingBatch] = useState(false);
   const [openAddShop, setOpenAddShop] = useState(false);
@@ -201,6 +206,14 @@ export default function BrandDetail() {
 
   const shops = shopsResult?.data ?? [];
   const tasks = tasksResult?.data ?? [];
+  const visibleShops = useMemo(() => {
+    const terms = normalizeShopSearch(shopSearch).split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return shops;
+    return shops.filter(shop => {
+      const searchable = normalizeShopSearch([shop.shopId, shop.appShopId, shop.name, shop.city].join(' '));
+      return terms.every(term => searchable.includes(term));
+    });
+  }, [shops, shopSearch]);
 
   const { data: menuResult, isLoading: loadingMenu } = useQuery<Paginated<BrandItem> & { shopsWithMenu: number; lastSyncedAt?: string }>({
     queryKey: ['brand-menu', id, menuPage, menuSearch],
@@ -331,10 +344,10 @@ export default function BrandDetail() {
   };
 
   const toggleAllShops = () => {
-    if (selectedShopIds.size === shops.length) {
+    if (visibleShops.length > 0 && visibleShops.every(shop => selectedShopIds.has(shop.id))) {
       setSelectedShopIds(new Set());
     } else {
-      setSelectedShopIds(new Set(shops.map(s => s.id)));
+      setSelectedShopIds(new Set(visibleShops.map(shop => shop.id)));
     }
   };
 
@@ -565,6 +578,18 @@ export default function BrandDetail() {
         {tab === 'shops' && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+              <input
+                type="search"
+                className="form-input"
+                aria-label={t('pages.brandDetail.searchShops')}
+                placeholder={t('pages.brandDetail.searchShops')}
+                value={shopSearch}
+                onChange={event => { setShopSearch(event.target.value); setSelectedShopIds(new Set()); }}
+                style={{ width: 'min(100%, 420px)', margin: 0 }}
+              />
+              {shopSearch.trim() && <span className="text-muted text-sm">
+                {t('pages.brandDetail.shopSearchCount').replace('{shown}', String(visibleShops.length)).replace('{total}', String(shops.length))}
+              </span>}
               {selectedShopIds.size > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'var(--orange-muted)', borderRadius: 8, border: '1px solid rgba(255,105,0,0.2)' }}>
                   <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--orange-dark)' }}>
@@ -616,7 +641,7 @@ export default function BrandDetail() {
                       <input
                         type="checkbox"
                         style={{ accentColor: 'var(--orange)', cursor: 'pointer' }}
-                        checked={shops.length > 0 && selectedShopIds.size === shops.length}
+                        checked={visibleShops.length > 0 && visibleShops.every(shop => selectedShopIds.has(shop.id))}
                         onChange={toggleAllShops}
                       />
                     </th>
@@ -630,7 +655,8 @@ export default function BrandDetail() {
                 </thead>
                 <tbody>
                   {shops.length === 0 && <tr><td colSpan={7}><div className="empty-state"><p>{t('pages.brandDetail.noShops')}</p></div></td></tr>}
-                  {shops.map(s => (
+                  {shops.length > 0 && visibleShops.length === 0 && <tr><td colSpan={7}><div className="empty-state"><p>{t('pages.brandDetail.noMatchingShops')}</p></div></td></tr>}
+                  {visibleShops.map(s => (
                     <tr key={s.id} style={{ cursor: 'pointer', background: selectedShopIds.has(s.id) ? 'rgba(255,105,0,0.04)' : '' }}>
                       <td onClick={e => { e.stopPropagation(); toggleShop(s.id); }}>
                         <input

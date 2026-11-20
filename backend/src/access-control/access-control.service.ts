@@ -39,6 +39,7 @@ const ACCESS_AREAS = {
       'integrations.completion_rate',
       'integrations.forced_open', 'integrations.auto_stores_fetch', 'integrations.auto_menu_fetch',
       'integrations.auto_turn_off', 'integrations.emergencies', 'integrations.promotions_sftp',
+      'integrations.sftp_processing',
       'integrations.custom', 'integrations.promotion_api', 'integrations.sftp_api',
     ],
     permissions: [
@@ -47,6 +48,7 @@ const ACCESS_AREAS = {
       'integrations.auto_stores_fetch', 'integrations.auto_stores_fetch.configure', 'integrations.auto_stores_fetch.execute',
       'integrations.auto_menu_fetch', 'integrations.auto_menu_fetch.configure', 'integrations.auto_menu_fetch.execute',
       'integrations.auto_turn_off', 'integrations.auto_turn_off.configure', 'integrations.auto_turn_off.execute',
+      'integrations.sftp_processing', 'integrations.sftp_processing.configure', 'integrations.sftp_processing.execute',
       'integrations.emergencies', 'integrations.emergencies.execute',
       'integrations.promotions_sftp', 'integrations.promotions_sftp.configure', 'integrations.promotions_sftp.execute',
       'integrations.custom', 'integrations.custom.configure', 'integrations.custom.execute',

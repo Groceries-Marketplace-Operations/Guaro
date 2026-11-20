@@ -1,14 +1,14 @@
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { FileIntegrationKind, FileIntegrationRule, Prisma } from '@prisma/client';
+import { Country, FileIntegrationKind, FileIntegrationRule, Prisma } from '@prisma/client';
 import { Job } from 'bullmq';
 import { createHash } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import { posix, resolve } from 'path';
 import SftpClient = require('ssh2-sftp-client');
 import { PrismaService } from '../prisma/prisma.service';
-import { detectDelimiter, looksLikeCityClub, normalizeUpc, parseAmount, wildcardToRegExp } from './file-integration.util';
+import { cityClubFileMatches, detectDelimiter, filesModifiedToday, filterSftpRows, looksLikeCityClub, normalizeUpc, priceFilterTimeZone, sorianaShopIdFromFileName, wildcardToRegExp } from './file-integration.util';
 import { lastTimestampDate, localDateKey, transformDailyStatusCsv } from './daily-status-activation.util';
 import { parsePromotionLines, promotionShopIdFromFileName } from './promotion-file.util';
 import { SftpConnectionService } from './sftp-connection.service';
@@ -85,6 +85,8 @@ export class FileIntegrationProcessor extends WorkerHost {
     }
     const storeArtifacts = rule.kind === FileIntegrationKind.price_filter
       && this.config.get('FILE_INTEGRATIONS_STORE_ARTIFACTS', 'false').toLowerCase() === 'true';
+    const excludedUpcs = new Set(rule.excludedUpcs.map(normalizeUpc).filter(Boolean));
+    let cityClubShopIds: Set<string> | null = null;
 
     const results: FileResult[] = [];
     let filesScanned = 0;
@@ -97,12 +99,25 @@ export class FileIntegrationProcessor extends WorkerHost {
     let priceScanAt: Date | null = null;
 
     try {
+      if (rule.kind === FileIntegrationKind.price_filter && rule.sourceScope === 'city_club') {
+        cityClubShopIds = await this.loadCityClubShopIds();
+      }
       await this.sftp.withClient(rule.sftpApplicationId, async (client, rootPath) => {
         await this.ensureActive(executionId);
         const matcher = wildcardToRegExp(rule.filePattern);
-        const allFiles = (await this.withSftpTimeout(client, client.list(rootPath), 'SFTP directory listing'))
+        const matchedFiles = (await this.withSftpTimeout(client, client.list(rootPath), 'SFTP directory listing'))
           .filter(file => file.type === '-' && matcher.test(file.name))
           .sort((a, b) => a.modifyTime - b.modifyTime || a.name.localeCompare(b.name));
+        const cityClubIdsForScan = cityClubShopIds;
+        const scopedFiles = cityClubIdsForScan
+          ? matchedFiles.filter(file => {
+              const shopId = sorianaShopIdFromFileName(file.name);
+              return shopId ? cityClubIdsForScan.has(shopId) : cityClubFileMatches(file.name, cityClubIdsForScan);
+            })
+          : matchedFiles;
+        const allFiles = rule.kind === FileIntegrationKind.price_filter
+          ? filesModifiedToday(scopedFiles, new Date(started), priceFilterTimeZone(rule.country))
+          : scopedFiles;
         filesScanned = allFiles.length;
         const newFiles = rule.lastRemoteModifiedAt
           ? allFiles.filter(file => file.modifyTime > rule.lastRemoteModifiedAt!.getTime())
@@ -169,7 +184,9 @@ export class FileIntegrationProcessor extends WorkerHost {
             const delimiter = detectDelimiter(lines[0] ?? '', rule.delimiter);
             base.delimiter = delimiter === '\t' ? '\\t' : delimiter;
 
-            if (rule.sourceScope === 'city_club' && !looksLikeCityClub(file.name, lines)) {
+            if (rule.sourceScope === 'city_club' && !(cityClubShopIds
+              ? cityClubFileMatches(file.name, cityClubShopIds)
+              : looksLikeCityClub(file.name, lines))) {
               base.skipped = 'File does not belong to City Club';
               results.push(base);
               newestModifiedAt = this.maxDate(newestModifiedAt, modifiedAt);
@@ -210,35 +227,20 @@ export class FileIntegrationProcessor extends WorkerHost {
               continue;
             }
 
-            if (rule.priceColumn === null || rule.thresholdAmount === null) throw new Error('Price filter is missing its column or threshold');
-            if (rule.excludedUpcs.length > 0 && rule.upcColumn === null) throw new Error('Price filter has selected UPCs but no UPC column');
-            const kept: string[] = [];
-            const threshold = Number(rule.thresholdAmount);
-            const excludedUpcs = new Set(rule.excludedUpcs.map(normalizeUpc).filter(Boolean));
-            base.rowsRemovedByAmount = 0;
-            base.rowsRemovedByUpc = 0;
-            for (const line of lines) {
-              if (!line.trim()) { kept.push(line); continue; }
-              base.rowsRead++;
-              const columns = line.split(delimiter);
-              const amount = parseAmount(columns[rule.priceColumn] ?? '');
-              const upc = rule.upcColumn === null ? '' : normalizeUpc(columns[rule.upcColumn] ?? '');
-              if (upc && excludedUpcs.has(upc)) {
-                base.rowsRemoved++;
-                base.rowsRemovedByUpc++;
-              } else if (amount === null) {
-                base.invalidAmounts++;
-                base.rowsKept++;
-                kept.push(line);
-              } else if (amount > threshold) {
-                base.rowsRemoved++;
-                base.rowsRemovedByAmount++;
-              } else {
-                base.rowsKept++;
-                kept.push(line);
-              }
-            }
-            const output = `${kept.join('\n')}${hasTrailingNewline ? '\n' : ''}`;
+            const transformed = filterSftpRows(lines, delimiter, {
+              filterMode: rule.filterMode,
+              thresholdAmount: rule.thresholdAmount === null ? null : Number(rule.thresholdAmount),
+              priceColumn: rule.priceColumn,
+              upcColumn: rule.upcColumn,
+              excludedUpcs,
+            });
+            base.rowsRead = transformed.rowsRead;
+            base.rowsKept = transformed.rowsKept;
+            base.rowsRemoved = transformed.rowsRemoved;
+            base.rowsRemovedByAmount = transformed.rowsRemovedByAmount;
+            base.rowsRemovedByUpc = transformed.rowsRemovedByUpc;
+            base.invalidAmounts = transformed.invalidAmounts;
+            const output = `${transformed.kept.join('\n')}${hasTrailingNewline ? '\n' : ''}`;
             if (storeArtifacts) {
               const beforeName = `before__${file.name}`;
               const afterName = `after__${file.name}`;
@@ -774,6 +776,21 @@ export class FileIntegrationProcessor extends WorkerHost {
     return [...recognized, ...unrecognized]
       .sort((left, right) => left.modifyTime - right.modifyTime || left.name.localeCompare(right.name))
       .slice(0, limit);
+  }
+
+  private async loadCityClubShopIds() {
+    const brands = await this.prisma.brand.findMany({
+      where: { country: Country.MX, brandName: { contains: 'City Club', mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (brands.length === 0) throw new Error('City Club brand is missing from the local store inventory');
+    const shops = await this.prisma.shop.findMany({
+      where: { brandId: { in: brands.map(brand => brand.id) }, deletedAt: null },
+      select: { appShopId: true },
+    });
+    const ids = new Set(shops.map(shop => shop.appShopId.replace(/^0+(?=\d)/, '')));
+    if (ids.size === 0) throw new Error('City Club has no shops in the local store inventory');
+    return ids;
   }
 
   private async replaceRemoteFile(

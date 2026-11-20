@@ -62,6 +62,7 @@ export const zhCNCore: Record<string, string> = {
   'nav.dashboard': '仪表板',
   'nav.catalog': '目录',
   'nav.brands': '品牌',
+  'nav.sftpProcessing': 'SFTP 处理',
   'nav.tasks': '任务',
   'nav.taskTypes': '任务类型',
   'nav.bpo': '运营支持',

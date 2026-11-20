@@ -80,12 +80,26 @@ export class AutoTurnOffScheduler {
     }
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  @Cron('0 */10 * * * *')
   async cleanupOldExecutions() {
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000);
-    const { count } = await this.prisma.autoTurnOffExecution.deleteMany({
-      where: { createdAt: { lt: cutoff } },
+    const cutoff = new Date(Date.now() - 2 * 24 * 60 * 60_000);
+    const expired = await this.prisma.autoTurnOffExecution.findMany({
+      where: {
+        createdAt: { lt: cutoff },
+        status: { notIn: ['pending', 'running'] },
+      },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+      take: 50,
     });
-    if (count > 0) this.logger.log(`Cleaned up ${count} auto turn off executions older than 30 days`);
+    if (expired.length === 0) return;
+    const { count } = await this.prisma.autoTurnOffExecution.deleteMany({
+      where: {
+        id: { in: expired.map(execution => execution.id) },
+        createdAt: { lt: cutoff },
+        status: { notIn: ['pending', 'running'] },
+      },
+    });
+    if (count > 0) this.logger.log(`Cleaned up ${count} auto turn off executions older than 2 days`);
   }
 }

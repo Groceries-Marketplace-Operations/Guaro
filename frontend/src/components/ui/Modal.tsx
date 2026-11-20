@@ -12,13 +12,14 @@ interface Props {
   children: ReactNode;
   footer?: ReactNode;
   size?: 'default' | 'wide';
+  className?: string;
 }
 
-export default function Modal({ title, onClose, children, footer, size = 'default' }: Props) {
+export default function Modal({ title, onClose, children, footer, size = 'default', className = '' }: Props) {
   const titleId = useId();
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal${size === 'wide' ? ' modal--wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <div className={`modal${size === 'wide' ? ' modal--wide' : ''}${className ? ` ${className}` : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="modal-header">
           <h2 id={titleId}>{title}</h2>
           <button type="button" className="modal-close" aria-label="Cerrar" onClick={onClose}><X /></button>

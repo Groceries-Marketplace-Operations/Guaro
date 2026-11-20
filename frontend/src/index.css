@@ -1389,6 +1389,40 @@ tbody td { padding: 11px 16px; vertical-align: middle; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Custom integrations ----------------------------------------------------- */
+.sftp-processing-dashboard { display: grid; gap: 18px; margin-bottom: 20px; }
+.sftp-processing-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 17px; }
+.sftp-processing-guide > div { display: grid; grid-template-columns: 25px minmax(0, 1fr); column-gap: 9px; align-items: start; }
+.sftp-processing-guide-step { grid-row: span 2; display: grid; place-items: center; width: 25px; height: 25px; border-radius: 8px; background: var(--surface-warm); color: var(--accent); font-size: .74rem; font-weight: 800; }
+.sftp-processing-guide strong { font-size: .78rem; }
+.sftp-processing-guide small { margin-top: 3px; color: var(--text-muted); font-size: .7rem; line-height: 1.4; }
+.sftp-processing-criteria { margin: 12px 0 0; padding: 10px 12px; border-radius: 9px; background: var(--surface-warm); color: var(--text-primary); font-size: .77rem; line-height: 1.4; }
+.sftp-processing-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.modal--sftp-rule { max-width: 780px; }
+.sftp-processing-kpi { display: grid; gap: 7px; padding: 16px; min-width: 0; }
+.sftp-processing-kpi > span { color: var(--text-muted); font-size: .72rem; font-weight: 700; }
+.sftp-processing-kpi > strong { font-size: 1.55rem; line-height: 1; }
+.sftp-processing-kpi > small { color: var(--text-muted); font-size: .66rem; line-height: 1.35; }
+.sftp-processing-activity { padding: 18px; }
+.sftp-processing-section-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.sftp-processing-section-heading h2 { margin: 0; font-size: 1rem; }
+.sftp-processing-section-heading p { margin: 4px 0 0; color: var(--text-muted); font-size: .75rem; }
+.sftp-processing-activity .table-wrap { margin-top: 12px; }
+.sftp-processing-filters { display: grid; grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(150px, 220px)); gap: 10px; }
+.sftp-processing-code-input { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; }
+.sftp-processing-code-input > .error-banner { grid-column: 1 / -1; }
+.sftp-processing-notice { margin-bottom: 14px; padding: 11px 13px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 10px; background: var(--surface-warm); font-size: .76rem; line-height: 1.45; }
+@media (max-width: 1100px) {
+  .sftp-processing-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .sftp-processing-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sftp-processing-filters input { grid-column: 1 / -1; }
+}
+@media (max-width: 700px) {
+  .sftp-processing-guide { grid-template-columns: 1fr; }
+  .sftp-processing-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .modal--sftp-rule { max-width: 100%; }
+  .sftp-processing-filters, .sftp-processing-code-input { grid-template-columns: 1fr; }
+  .sftp-processing-filters input { grid-column: auto; }
+}
 .custom-integration-nav {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

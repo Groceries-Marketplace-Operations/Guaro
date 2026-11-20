@@ -64,6 +64,13 @@ function SuperAdminOnly({ children }: { children: React.ReactNode }) {
   return account?.roles.includes('super_admin') ? <>{children}</> : <Navigate to="/access-denied" replace />;
 }
 
+function AdminOnly({ children }: { children: React.ReactNode }) {
+  const { account } = useAuth();
+  return account?.roles.some(role => role === 'admin' || role === 'super_admin')
+    ? <>{children}</>
+    : <Navigate to="/access-denied" replace />;
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
@@ -107,6 +114,7 @@ export default function App() {
               <Route path="integrations/sftp-api" element={protectedPage('integrations.sftp_api', <SftpApiPage />)} />
               <Route path="integrations/sftp-api/:id" element={protectedPage('integrations.sftp_api', <SftpApiPage />)} />
               <Route path="integrations/custom" element={protectedPage('integrations.custom', <FileIntegrationsPage kind="price_filter" />)} />
+              <Route path="integrations/sftp-processing" element={<AdminOnly>{protectedPage('integrations.sftp_processing', <FileIntegrationsPage kind="price_filter" standaloneSftp />)}</AdminOnly>} />
               <Route path="integrations/promotion-api" element={protectedPage('integrations.promotion_api', <PromotionApiPage />)} />
               <Route path="integrations/store-onboarding" element={<StoreOnboardingPage />} />
               <Route path="integrations/store-onboarding/:id" element={<StoreOnboardingPage />} />

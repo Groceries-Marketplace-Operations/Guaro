@@ -1047,6 +1047,7 @@ export interface FileIntegrationRule {
   id: string;
   name: string;
   kind: FileIntegrationKind;
+  filterMode?: 'amount' | 'code' | 'amount_and_code';
   country?: string;
   active: boolean;
   intervalMinutes?: number;

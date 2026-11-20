@@ -1788,6 +1788,7 @@ model FileIntegrationRule {
   lastRemoteModifiedAt   DateTime?           @map("last_remote_modified_at") @db.Timestamptz
   filePattern            String              @default("*") @map("file_pattern")
   sourceScope            String              @default("all") @map("source_scope")
+  filterMode             String              @default("amount") @map("filter_mode")
   thresholdAmount        Decimal?            @map("threshold_amount") @db.Decimal(14, 2)
   delimiter              String?
   priceColumn            Int?                @map("price_column")

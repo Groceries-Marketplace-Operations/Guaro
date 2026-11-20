@@ -37,6 +37,7 @@ import { UpcActivityPriceScheduler } from './upc-activity-price.scheduler';
 import { UpcActivityPriceService } from './upc-activity-price.service';
 import { PromoManagerAccessController } from './promo-manager-access.controller';
 import { PromoManagerProxyController } from './promo-manager-proxy.controller';
+import { SftpProcessingRetentionService } from './sftp-processing-retention.service';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { PromoManagerProxyController } from './promo-manager-proxy.controller';
     FileIntegrationsService,
     FileIntegrationProcessor,
     FileIntegrationScheduler,
+    SftpProcessingRetentionService,
     SftpConnectionService,
     StorePromotionStorageService,
     TargetedPromotionReaderService,

@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, DefaultValuePipe, Delete, ForbiddenException, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { FileIntegrationKind } from '@prisma/client';
+import { AccountRole, FileIntegrationKind } from '@prisma/client';
 import { PermissionAccessService } from '../access-control/permission-access.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -17,6 +17,16 @@ export class FileIntegrationsController {
     private readonly prisma: PrismaService,
     private readonly permissionAccess: PermissionAccessService,
   ) {}
+
+  @Get('sftp-options')
+  async sftpOptions(@CurrentUser() user: JwtUser) {
+    await this.assertKindAccess(user, FileIntegrationKind.price_filter, 'configure');
+    return this.prisma.sftpApplication.findMany({
+      where: { deletedAt: null },
+      select: { id: true, name: true, host: true, active: true },
+      orderBy: { name: 'asc' },
+    });
+  }
 
   @Get('rules/:kind')
   async list(@Param('kind') value: string, @CurrentUser() user: JwtUser) {
@@ -84,8 +94,15 @@ export class FileIntegrationsController {
   }
 
   private async assertKindAccess(user: JwtUser, kind: FileIntegrationKind, action: 'view' | 'configure' | 'execute' = 'view') {
+    if (kind === FileIntegrationKind.price_filter
+      && !user.roles.includes(AccountRole.admin)
+      && !user.roles.includes(AccountRole.super_admin)) {
+      throw new ForbiddenException('Only administrators can access SFTP processing');
+    }
     const basePermission = kind === FileIntegrationKind.complex_promotion_reader
       ? 'integrations.promotions_sftp'
+      : kind === FileIntegrationKind.price_filter
+        ? 'integrations.sftp_processing'
       : 'integrations.custom';
     const permission = action === 'view' ? basePermission : `${basePermission}.${action}`;
     if (!(await this.permissionAccess.can(user, [permission]))) {
