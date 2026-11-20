@@ -36,6 +36,12 @@ export class AutoTurnOffController {
     return this.service.listPools();
   }
 
+  @Get('responsibles')
+  @Permissions('integrations.auto_turn_off.configure')
+  listResponsibles(@CurrentUser() user: JwtUser) {
+    return this.service.listResponsibles(user);
+  }
+
   @Post('pools')
   @Permissions('integrations.auto_turn_off.configure')
   createPool(@Body() dto: CreateAutoTurnOffPoolDto) {

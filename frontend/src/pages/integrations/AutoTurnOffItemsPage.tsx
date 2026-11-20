@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Topbar from '../../components/layout/Topbar';
 import Modal from '../../components/ui/Modal';
 import { autoTurnOffApi, brandsApi, shopsApi, webhooksApi } from '../../api';
+import { useAuth } from '../../auth/AuthContext';
 import { intlLocaleForLang, useLang, useT } from '../../i18n';
 import type { Lang } from '../../i18n';
 import type {
@@ -32,7 +33,7 @@ interface RuleForm {
   name: string;
   brandId: string;
   shopIds: string;
-  upcs: string;
+  upcGroups: UpcGroupForm[];
   stockEndpoint: StockEndpoint;
   stockValue: number;
   scheduleMode: ScheduleMode;
@@ -41,6 +42,15 @@ interface RuleForm {
   executionTimes: string[];
   startsAt: string;
   endsAt: string;
+  active: boolean;
+}
+
+interface UpcGroupForm {
+  id: string;
+  name: string;
+  responsibleId: string;
+  responsibleSearch: string;
+  upcs: string;
   active: boolean;
 }
 
@@ -53,7 +63,7 @@ function defaultStartsAt() {
 
 function newRuleForm(): RuleForm {
   return {
-    name: '', brandId: '', shopIds: '', upcs: '', stockEndpoint: 'setStock', stockValue: 0, frequency: 10,
+    name: '', brandId: '', shopIds: '', upcGroups: [{ id: crypto.randomUUID(), name: '', responsibleId: '', responsibleSearch: '', upcs: '', active: true }], stockEndpoint: 'setStock', stockValue: 0, frequency: 10,
     scheduleMode: 'interval', unit: 'minutes', executionTimes: ['09:00'],
     startsAt: defaultStartsAt(), endsAt: '', active: true,
   };
@@ -158,6 +168,7 @@ function progressStep(step: string | undefined, lang: Lang) {
 
 export default function AutoTurnOffItemsPage() {
   const t = useT();
+  const { account } = useAuth();
   const { lang } = useLang();
   const es = lang === 'es';
   const zh = lang === 'zh-CN';
@@ -201,7 +212,13 @@ export default function AutoTurnOffItemsPage() {
     every: 'Cada', minutes: 'minutos', hours: 'horas', days: 'días',
     selectBrand: 'Selecciona una marca', selectAll: 'Seleccionar todas', clear: 'Limpiar',
     searchShop: 'Buscar tienda…', noShops: 'No hay tiendas para esta marca.',
-    upcHelp: 'Uno por línea o separados por coma. Todos se enviarán con el valor de stock configurado.',
+    upcHelp: 'Uno por línea o separados por coma. Los grupos activos se unen en un solo envío de stock por tienda.',
+    upcGroups: 'Grupos de UPC', addUpcGroup: 'Agregar grupo', groupName: 'Nombre del grupo',
+    groupResponsible: 'Responsable', groupActive: 'Grupo activo',
+    groupRequired: 'Cada grupo necesita nombre, responsable y al menos un UPC.',
+    oneActiveGroup: 'Activa al menos un grupo de UPC.',
+    duplicateGroupUpc: 'Un UPC no puede estar en dos grupos activos.', upcLimit: 'Máximo 5,000 UPC activos por regla.',
+    groupAudit: 'Última edición',
     save: 'Guardar', cancel: 'Cancelar', run: 'Ejecutar ahora', running: 'Encolando…',
     history: 'Historial', hide: 'Ocultar', edit: 'Editar', remove: 'Eliminar',
     next: 'Próxima', last: 'Última', never: 'Nunca', stores: 'tiendas', items: 'UPCs',
@@ -248,7 +265,13 @@ export default function AutoTurnOffItemsPage() {
     every: '每', minutes: '分钟', hours: '小时', days: '天',
     selectBrand: '选择品牌', selectAll: '全选', clear: '清除',
     searchShop: '搜索店铺…', noShops: '未找到该品牌的店铺。',
-    upcHelp: '每行输入一个，或用逗号分隔。所有商品都将使用已配置的库存值发送。',
+    upcHelp: '每行输入一个，或用逗号分隔。启用的组将合并为每家店铺的一次库存请求。',
+    upcGroups: 'UPC 分组', addUpcGroup: '添加分组', groupName: '分组名称',
+    groupResponsible: '负责人', groupActive: '启用分组',
+    groupRequired: '每个分组都需要名称、负责人和至少一个 UPC。',
+    oneActiveGroup: '请至少启用一个 UPC 分组。',
+    duplicateGroupUpc: '同一个 UPC 不能属于两个启用的分组。', upcLimit: '每条规则最多 5,000 个启用的 UPC。',
+    groupAudit: '最后编辑',
     save: '保存', cancel: '取消', run: '立即运行', running: '正在加入队列…',
     history: '历史记录', hide: '隐藏', edit: '编辑', remove: '删除',
     next: '下次', last: '上次', never: '从未', stores: '家店铺', items: 'UPC',
@@ -295,7 +318,13 @@ export default function AutoTurnOffItemsPage() {
     every: 'Every', minutes: 'minutes', hours: 'hours', days: 'days',
     selectBrand: 'Select a brand', selectAll: 'Select all', clear: 'Clear',
     searchShop: 'Search store…', noShops: 'No stores found for this brand.',
-    upcHelp: 'One per line or comma-separated. Every item is sent with the configured stock value.',
+    upcHelp: 'One per line or comma-separated. Active groups are combined into one stock request per store.',
+    upcGroups: 'UPC groups', addUpcGroup: 'Add group', groupName: 'Group name',
+    groupResponsible: 'Responsible person', groupActive: 'Active group',
+    groupRequired: 'Each group needs a name, responsible person and at least one UPC.',
+    oneActiveGroup: 'Activate at least one UPC group.',
+    duplicateGroupUpc: 'A UPC cannot belong to two active groups.', upcLimit: 'Maximum 5,000 active UPCs per rule.',
+    groupAudit: 'Last edited',
     save: 'Save', cancel: 'Cancel', run: 'Run now', running: 'Queueing…',
     history: 'History', hide: 'Hide', edit: 'Edit', remove: 'Delete',
     next: 'Next', last: 'Last', never: 'Never', stores: 'stores', items: 'UPCs',
@@ -325,6 +354,11 @@ export default function AutoTurnOffItemsPage() {
     queryKey: ['auto-turn-off-pools'],
     queryFn: () => autoTurnOffApi.listPools().then(response => response.data as AutoTurnOffPool[]),
     refetchInterval: 5000,
+  });
+  const { data: responsibles = [] } = useQuery<Array<{ id: string; name: string; email: string }>>({
+    queryKey: ['auto-turn-off-responsibles'],
+    queryFn: () => autoTurnOffApi.listResponsibles().then(response => response.data),
+    enabled: ruleModal,
   });
   const { data: webhooks = [] } = useQuery<Webhook[]>({
     queryKey: ['webhooks'],
@@ -386,7 +420,9 @@ export default function AutoTurnOffItemsPage() {
     setError(''); setPoolModal(true);
   };
   const openNewRule = (poolId: string) => {
-    setRulePoolId(poolId); setEditingRule(null); setRuleForm(newRuleForm()); setShopSearch(''); setError(''); setRuleModal(true);
+    const form = newRuleForm();
+    form.upcGroups[0].responsibleId = account?.id ?? '';
+    setRulePoolId(poolId); setEditingRule(null); setRuleForm(form); setShopSearch(''); setError(''); setRuleModal(true);
   };
   const openEditRule = (rule: AutoTurnOffRule) => {
     setRulePoolId(rule.poolId); setEditingRule(rule);
@@ -394,7 +430,13 @@ export default function AutoTurnOffItemsPage() {
       name: rule.name,
       brandId: rule.brandId,
       shopIds: rule.shopIds.join('\n'),
-      upcs: rule.upcs.join('\n'),
+      upcGroups: (rule.upcGroups?.length ? rule.upcGroups : [{
+        id: rule.id, name: 'Original', responsibleId: rule.createdBy.id,
+        responsibleName: rule.createdBy.name, upcs: rule.upcs, active: true,
+      }]).map(group => ({
+        id: group.id, name: group.name, responsibleId: group.responsibleId,
+        responsibleSearch: '', upcs: group.upcs.join('\n'), active: group.active,
+      })),
       stockEndpoint: rule.stockEndpoint,
       stockValue: rule.stockValue ?? 0,
       scheduleMode: rule.scheduleMode ?? 'interval',
@@ -431,10 +473,18 @@ export default function AutoTurnOffItemsPage() {
     const intervalMinutes = toMinutes(ruleForm.frequency, ruleForm.unit);
     const executionTimes = [...new Set(ruleForm.executionTimes.map(value => value.trim()).filter(Boolean))].sort();
     const shopIds = parseShopIds(ruleForm.shopIds);
-    const upcs = parseUpcs(ruleForm.upcs);
-    if (!ruleForm.name.trim() || !ruleForm.brandId || shopIds.length === 0 || upcs.length === 0 || !ruleForm.startsAt) {
+    const upcGroups = ruleForm.upcGroups.map(group => ({
+      id: group.id, name: group.name.trim(), responsibleId: group.responsibleId,
+      upcs: parseUpcs(group.upcs), active: group.active,
+    }));
+    const upcs = upcGroups.filter(group => group.active).flatMap(group => group.upcs);
+    if (!ruleForm.name.trim() || !ruleForm.brandId || shopIds.length === 0 || !ruleForm.startsAt) {
       return setError(copy.completeRequired);
     }
+    if (upcGroups.some(group => !group.name || !group.responsibleId || group.upcs.length === 0)) return setError(copy.groupRequired);
+    if (upcs.length === 0) return setError(copy.oneActiveGroup);
+    if (new Set(upcs).size !== upcs.length) return setError(copy.duplicateGroupUpc);
+    if (upcs.length > 5000) return setError(copy.upcLimit);
     if (shopIds.length > MAX_SHOP_IDS_PER_RULE) return setError(copy.shopLimit);
     const minimumMinutes = ruleForm.stockEndpoint === 'setStock' ? 10 : 1;
     if (ruleForm.scheduleMode === 'interval'
@@ -456,14 +506,14 @@ export default function AutoTurnOffItemsPage() {
     try {
       const payload = {
         name: ruleForm.name.trim(), brandId: ruleForm.brandId, shopIds,
-        upcs, stockEndpoint: ruleForm.stockEndpoint, stockValue: ruleForm.stockValue, intervalMinutes,
+        upcGroups, stockEndpoint: ruleForm.stockEndpoint, stockValue: ruleForm.stockValue, intervalMinutes,
         scheduleMode: ruleForm.scheduleMode,
         executionTimes: ruleForm.scheduleMode === 'daily_times' ? executionTimes : undefined,
         startsAt: new Date(ruleForm.startsAt).toISOString(),
         endsAt: ruleForm.endsAt ? new Date(ruleForm.endsAt).toISOString() : null,
         active: ruleForm.active,
       };
-      if (editingRule) await autoTurnOffApi.updateRule(editingRule.id, payload);
+      if (editingRule) await autoTurnOffApi.updateRule(editingRule.id, { ...payload, expectedConfigVersion: editingRule.configVersion });
       else await autoTurnOffApi.createRule(rulePoolId, payload);
       await refreshPools(); setRuleModal(false);
     } catch (err) { setError(errorMessage(err, lang)); } finally { setSaving(false); }
@@ -573,6 +623,16 @@ export default function AutoTurnOffItemsPage() {
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 4 }}>
                         {copy.createdBy}: {rule.createdBy?.name ?? rule.createdBy?.email ?? '—'} ({new Date(rule.createdAt).toLocaleString(intlLocaleForLang(lang))}) · {copy.updatedBy}: {rule.updatedBy?.name ?? rule.updatedBy?.email ?? '—'} ({new Date(rule.updatedAt).toLocaleString(intlLocaleForLang(lang))})
                       </div>
+                      <details style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 6 }}>
+                        <summary style={{ cursor: 'pointer' }}>{copy.upcGroups}: {rule.upcGroups?.length ?? 1}</summary>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingTop: 6 }}>
+                          {(rule.upcGroups?.length ? rule.upcGroups : [{ id: rule.id, name: 'Original', responsibleName: rule.createdBy?.name ?? rule.createdBy?.email ?? '—', upcs: rule.upcs, active: true }]).map(group => (
+                            <span key={group.id} style={{ ...tag, opacity: group.active ? 1 : 0.55 }}>
+                              {group.name} · {group.responsibleName} · {group.upcs.length} {copy.items}{group.active ? '' : ` · ${copy.inactive}`}
+                            </span>
+                          ))}
+                        </div>
+                      </details>
                       {(rule.executions?.[0]?.status === 'running' || rule.executions?.[0]?.status === 'pending') && <Progress execution={rule.executions[0]} lang={lang} />}
                       {rule.executions?.[0] && !['running', 'pending'].includes(rule.executions[0].status) && (
                         <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 6 }}>
@@ -666,7 +726,7 @@ export default function AutoTurnOffItemsPage() {
       )}
 
       {ruleModal && (
-        <Modal title={editingRule ? copy.editRule : copy.newRule} onClose={() => setRuleModal(false)} footer={(
+        <Modal title={editingRule ? copy.editRule : copy.newRule} size="wide" onClose={() => setRuleModal(false)} footer={(
           <><button className="btn btn-ghost" onClick={() => setRuleModal(false)}>{copy.cancel}</button><button className="btn btn-primary" disabled={saving} onClick={saveRule}>{copy.save}</button></>
         )}>
           <div className="modal-body">
@@ -753,7 +813,39 @@ export default function AutoTurnOffItemsPage() {
               <textarea className="form-input" rows={5} value={ruleForm.shopIds} onChange={event => setRuleForm({ ...ruleForm, shopIds: event.target.value })} placeholder={'5764607795237028465\n5764607795237028466'} />
               <small style={{ color: 'var(--text-muted)' }}>{copy.shopHelp}</small>
             </div>
-            <div className="form-group"><label className="form-label">{copy.upcs} ({parseUpcs(ruleForm.upcs).length})</label><textarea className="form-input" rows={6} value={ruleForm.upcs} onChange={event => setRuleForm({ ...ruleForm, upcs: event.target.value })} placeholder={'750100000001\n750100000002'} /><small style={{ color: 'var(--text-muted)' }}>{copy.upcHelp}</small></div>
+            <div className="form-group">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between', marginBottom: 8 }}>
+                <label className="form-label" style={{ margin: 0 }}>{copy.upcGroups} ({ruleForm.upcGroups.length})</label>
+                <button type="button" className="btn btn-ghost btn-sm" disabled={ruleForm.upcGroups.length >= 100} onClick={() => setRuleForm(current => ({ ...current, upcGroups: [...current.upcGroups, {
+                  id: crypto.randomUUID(), name: '', responsibleId: account?.id ?? '', responsibleSearch: '', upcs: '', active: true,
+                }] }))}>+ {copy.addUpcGroup}</button>
+              </div>
+              <small style={{ color: 'var(--text-muted)' }}>{copy.upcHelp}</small>
+              <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+                {ruleForm.upcGroups.map((group, index) => {
+                  const saved = editingRule?.upcGroups?.find(item => item.id === group.id);
+                  const isSaved = !!saved || editingRule?.id === group.id;
+                  const responsible = responsibles.find(item => item.id === group.responsibleId);
+                  return <div key={group.id} style={{ border: '1px solid var(--border)', borderRadius: 9, padding: 12, background: 'var(--surface-2)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                      <strong style={{ fontSize: '0.8rem' }}>{copy.upcGroups} {index + 1} · {parseUpcs(group.upcs).length} {copy.items}</strong>
+                      {!isSaved && ruleForm.upcGroups.length > 1 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRuleForm(current => ({ ...current, upcGroups: current.upcGroups.filter(item => item.id !== group.id) }))}>{copy.remove}</button>}
+                    </div>
+                    <div className="form-group"><label className="form-label">{copy.groupName}</label><input className="form-input" maxLength={120} value={group.name} onChange={event => setRuleForm(current => ({ ...current, upcGroups: current.upcGroups.map(item => item.id === group.id ? { ...item, name: event.target.value } : item) }))} /></div>
+                    <div className="form-group"><label className="form-label">{copy.groupResponsible}</label>
+                      <input className="form-input" type="search" list={`auto-turn-off-responsibles-${group.id}`} value={group.responsibleSearch || responsible?.email || (group.responsibleId === account?.id ? account.email : '') || saved?.responsibleName || ''} onChange={event => {
+                        const match = responsibles.find(item => item.email.toLowerCase() === event.target.value.trim().toLowerCase());
+                        setRuleForm(current => ({ ...current, upcGroups: current.upcGroups.map(item => item.id === group.id ? { ...item, responsibleSearch: event.target.value, responsibleId: match?.id ?? '' } : item) }));
+                      }} placeholder={copy.groupResponsible} />
+                      <datalist id={`auto-turn-off-responsibles-${group.id}`}>{responsibles.map(item => <option key={item.id} value={item.email} label={item.name} />)}</datalist>
+                    </div>
+                    <div className="form-group"><label className="form-label">{copy.upcs} ({parseUpcs(group.upcs).length})</label><textarea className="form-input" rows={4} value={group.upcs} onChange={event => setRuleForm(current => ({ ...current, upcGroups: current.upcGroups.map(item => item.id === group.id ? { ...item, upcs: event.target.value } : item) }))} placeholder={'750100000001\n750100000002'} /></div>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: '0.78rem' }}><input type="checkbox" checked={group.active} onChange={event => setRuleForm(current => ({ ...current, upcGroups: current.upcGroups.map(item => item.id === group.id ? { ...item, active: event.target.checked } : item) }))} />{copy.groupActive}</label>
+                    {saved && <small style={{ display: 'block', color: 'var(--text-muted)', marginTop: 7 }}>{copy.groupAudit}: {new Date(saved.updatedAt).toLocaleString(intlLocaleForLang(lang))} · {saved.updatedByName ?? responsibles.find(item => item.id === saved.updatedById)?.name ?? saved.updatedById}</small>}
+                  </div>;
+                })}
+              </div>
+            </div>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: '0.84rem' }}><input type="checkbox" checked={ruleForm.active} onChange={event => setRuleForm({ ...ruleForm, active: event.target.checked })} />{copy.active}</label>
           </div>
         </Modal>

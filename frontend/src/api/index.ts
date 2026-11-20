@@ -626,6 +626,7 @@ export const integrationsApi = {
 /* ── Integrations: Auto Turn Off Items ─────────────────────────────────── */
 export const autoTurnOffApi = {
   listPools: () => client.get('/integrations/auto-turn-off/pools'),
+  listResponsibles: () => client.get('/integrations/auto-turn-off/responsibles'),
   createPool: (data: object) => client.post('/integrations/auto-turn-off/pools', data),
   updatePool: (id: string, data: object) => client.patch(`/integrations/auto-turn-off/pools/${id}`, data),
   deletePool: (id: string) => client.delete(`/integrations/auto-turn-off/pools/${id}`),

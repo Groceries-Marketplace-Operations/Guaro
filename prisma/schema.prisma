@@ -2282,6 +2282,8 @@ model AutoTurnOffRule {
   intervalMinutes Int       @map("interval_minutes")
   executionTimes  String[]  @default([]) @map("execution_times")
   upcs            String[]
+  upcGroups       Json?     @map("upc_groups")
+  configVersion   Int       @default(0) @map("config_version")
   shopIds         String[]  @map("shop_ids")
   resolvedShopIds Json?     @map("resolved_shop_ids")
   stockEndpoint   String    @default("setStock") @map("stock_endpoint")

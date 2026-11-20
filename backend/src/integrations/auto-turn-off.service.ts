@@ -1,12 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { AutoOpenStatus, Country, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { JwtUser } from '../auth/types/jwt-user.interface';
 import { CreateAutoTurnOffPoolDto } from './dto/create-auto-turn-off-pool.dto';
 import { UpdateAutoTurnOffPoolDto } from './dto/update-auto-turn-off-pool.dto';
 import { CreateAutoTurnOffRuleDto } from './dto/create-auto-turn-off-rule.dto';
 import { UpdateAutoTurnOffRuleDto } from './dto/update-auto-turn-off-rule.dto';
+import { AutoTurnOffUpcGroupDto } from './dto/auto-turn-off-upc-group.dto';
 import { timezoneForCountry } from './auto-fetch-time.util';
 import { AutoTurnOffScheduleMode, nextAutoTurnOffOccurrence } from './auto-turn-off-time.util';
 
@@ -43,6 +46,21 @@ const POOL_INCLUDE = {
   rules: { include: RULE_INCLUDE, orderBy: { createdAt: 'asc' as const } },
 };
 
+type StoredUpcGroup = {
+  id: string;
+  name: string;
+  responsibleId: string;
+  responsibleName: string;
+  upcs: string[];
+  active: boolean;
+  createdById: string;
+  createdByName: string;
+  updatedById: string;
+  updatedByName: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 @Injectable()
 export class AutoTurnOffService {
   constructor(
@@ -57,6 +75,19 @@ export class AutoTurnOffService {
     return this.prisma.autoTurnOffPool.findMany({
       include: POOL_INCLUDE,
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  listResponsibles(user: JwtUser) {
+    return this.prisma.account.findMany({
+      where: {
+        deletedAt: null,
+        ...(!user.roles.includes('super_admin') ? {
+          OR: [{ id: user.id }, ...(user.sectionId ? [{ sectionId: user.sectionId }] : [])],
+        } : {}),
+      },
+      select: { id: true, name: true, email: true },
+      orderBy: { name: 'asc' },
     });
   }
 
@@ -123,7 +154,12 @@ export class AutoTurnOffService {
   async createRule(poolId: string, dto: CreateAutoTurnOffRuleDto, userId: string) {
     const pool = await this.findPool(poolId);
     const shopIds = this.normalizeShopIds(dto.shopIds);
-    const upcs = this.normalizeUpcs(dto.upcs);
+    const groups = await this.prepareUpcGroups(
+      dto.upcGroups ?? [{ name: 'Original', responsibleId: userId, upcs: dto.upcs ?? [] }],
+      [],
+      userId,
+    );
+    const upcs = this.activeGroupUpcs(groups);
     const scheduleMode = dto.scheduleMode ?? 'interval';
     const intervalMinutes = dto.intervalMinutes ?? 10;
     const executionTimes = scheduleMode === 'daily_times'
@@ -146,6 +182,7 @@ export class AutoTurnOffService {
         intervalMinutes,
         executionTimes,
         upcs,
+        upcGroups: groups,
         shopIds,
         resolvedShopIds: {},
         stockEndpoint: dto.stockEndpoint,
@@ -174,10 +211,36 @@ export class AutoTurnOffService {
 
   async updateRule(id: string, dto: UpdateAutoTurnOffRuleDto, userId: string) {
     const current = await this.findRule(id);
+    if (dto.expectedConfigVersion !== undefined && dto.expectedConfigVersion !== current.configVersion) {
+      throw new ConflictException('Rule was modified by another user. Reload it before saving.');
+    }
     const pool = await this.findPool(current.poolId);
     const brandId = dto.brandId ?? current.brandId;
     const shopIds = dto.shopIds ? this.normalizeShopIds(dto.shopIds) : current.shopIds;
-    const upcs = dto.upcs ? this.normalizeUpcs(dto.upcs) : current.upcs;
+    const existingGroups = this.storedUpcGroups(current.upcGroups) ?? [{
+      id: current.id,
+      name: 'Original',
+      responsibleId: current.createdById,
+      responsibleName: current.createdBy.name || current.createdBy.email,
+      upcs: current.upcs,
+      active: true,
+      createdById: current.createdById,
+      createdByName: current.createdBy.name || current.createdBy.email,
+      updatedById: current.updatedById,
+      updatedByName: current.updatedBy.name || current.updatedBy.email,
+      createdAt: current.createdAt.toISOString(),
+      updatedAt: current.updatedAt.toISOString(),
+    }];
+    if (dto.upcs && current.upcGroups && !this.sameValues(this.normalizeUpcs(dto.upcs), current.upcs)) {
+      throw new BadRequestException('Edit UPC groups to change this rule’s UPCs');
+    }
+    const groupInputs = dto.upcGroups ?? (dto.upcs && !current.upcGroups
+      ? [{ ...existingGroups[0], upcs: dto.upcs }]
+      : undefined);
+    const groups = groupInputs
+      ? await this.prepareUpcGroups(groupInputs, existingGroups, userId)
+      : existingGroups;
+    const upcs = groupInputs ? this.activeGroupUpcs(groups) : current.upcs;
     const stockEndpoint = dto.stockEndpoint ?? current.stockEndpoint;
     const intervalMinutes = dto.intervalMinutes ?? current.intervalMinutes;
     const scheduleMode = dto.scheduleMode ?? current.scheduleMode;
@@ -201,12 +264,15 @@ export class AutoTurnOffService {
       : (dto.endsAt ? new Date(dto.endsAt) : null);
     this.validateLifetime(startsAt, endsAt, dto.active ?? current.active);
 
-    return this.prisma.autoTurnOffRule.update({
-      where: { id },
+    try {
+      return await this.prisma.autoTurnOffRule.update({
+      where: dto.expectedConfigVersion !== undefined ? { id, configVersion: current.configVersion } : { id },
       data: {
         name: dto.name?.trim(),
         brandId: dto.brandId,
         upcs,
+        upcGroups: groupInputs ? groups : undefined,
+        configVersion: { increment: 1 },
         shopIds,
         resolvedShopIds: dto.shopIds !== undefined || dto.brandId !== undefined ? {} : undefined,
         stockEndpoint: dto.stockEndpoint,
@@ -229,7 +295,13 @@ export class AutoTurnOffService {
           : undefined,
       },
       include: RULE_INCLUDE,
-    });
+      });
+    } catch (error) {
+      if (dto.expectedConfigVersion !== undefined && (error as { code?: string }).code === 'P2025') {
+        throw new ConflictException('Rule was modified by another user. Reload it before saving.');
+      }
+      throw error;
+    }
   }
 
   async removeRule(id: string) {
@@ -242,7 +314,7 @@ export class AutoTurnOffService {
     const now = new Date();
     if (rule.startsAt > now) throw new BadRequestException('This rule has not reached its start date yet');
     if (rule.endsAt && rule.endsAt <= now) {
-      if (rule.active) await this.prisma.autoTurnOffRule.update({ where: { id }, data: { active: false } });
+      if (rule.active) await this.prisma.autoTurnOffRule.update({ where: { id }, data: { active: false, configVersion: { increment: 1 } } });
       throw new BadRequestException('This rule has already reached its automatic end date');
     }
     await this.validateNoActiveShopConflicts(rule.shopIds, rule.stockEndpoint, id);
@@ -275,7 +347,7 @@ export class AutoTurnOffService {
     await this.prisma.$transaction([
       this.prisma.autoTurnOffRule.update({
         where: { id: rule.id },
-        data: { active: false, updatedById: userId },
+        data: { active: false, updatedById: userId, configVersion: { increment: 1 } },
       }),
       this.prisma.autoTurnOffExecution.updateMany({
         where: { id: { in: executions.map(execution => execution.id) }, status: { in: ['pending', 'running'] } },
@@ -508,6 +580,79 @@ export class AutoTurnOffService {
 
   private unique(values: string[]) {
     return [...new Set(values)];
+  }
+
+  private storedUpcGroups(value: Prisma.JsonValue | null): StoredUpcGroup[] | null {
+    return Array.isArray(value) ? value as unknown as StoredUpcGroup[] : null;
+  }
+
+  private sameValues(left: string[], right: string[]) {
+    return left.length === right.length && left.every(value => right.includes(value));
+  }
+
+  private activeGroupUpcs(groups: StoredUpcGroup[]) {
+    const upcs = new Set<string>();
+    for (const group of groups.filter(group => group.active)) {
+      for (const upc of group.upcs) {
+        if (upcs.has(upc)) throw new BadRequestException(`UPC ${upc} belongs to more than one active group`);
+        upcs.add(upc);
+      }
+    }
+    if (upcs.size === 0) throw new BadRequestException('At least one active UPC group is required');
+    if (upcs.size > 5000) throw new BadRequestException('A rule can contain at most 5,000 active UPCs');
+    return [...upcs];
+  }
+
+  private async prepareUpcGroups(
+    inputs: AutoTurnOffUpcGroupDto[],
+    existing: StoredUpcGroup[],
+    userId: string,
+  ): Promise<StoredUpcGroup[]> {
+    if (inputs.length === 0 || inputs.length > 100) {
+      throw new BadRequestException('A rule needs between 1 and 100 UPC groups');
+    }
+    const ids = inputs.map(group => group.id ?? randomUUID());
+    if (new Set(ids).size !== ids.length) throw new BadRequestException('Duplicate UPC group ID');
+    const existingById = new Map(existing.map(group => [group.id, group]));
+    if (existing.some(group => !ids.includes(group.id))) {
+      throw new BadRequestException('Deactivate an existing UPC group instead of removing it');
+    }
+    const accounts = await this.prisma.account.findMany({
+      where: { id: { in: [...new Set([userId, ...inputs.map(group => group.responsibleId)])] } },
+      select: { id: true, name: true, email: true, deletedAt: true, sectionId: true, roles: true },
+    });
+    const byId = new Map(accounts.map(account => [account.id, account]));
+    const actor = byId.get(userId);
+    if (!actor) throw new BadRequestException('Editor account not found');
+    const now = new Date().toISOString();
+    return inputs.map((input, index) => {
+      const previous = existingById.get(ids[index]);
+      const responsible = byId.get(input.responsibleId);
+      if (!responsible || (responsible.deletedAt && previous?.responsibleId !== responsible.id)) {
+        throw new BadRequestException(`Responsible account not found for group ${index + 1}`);
+      }
+      if (previous?.responsibleId !== responsible.id && !actor.roles.includes('super_admin')
+        && responsible.id !== actor.id && (!actor.sectionId || responsible.sectionId !== actor.sectionId)) {
+        throw new BadRequestException(`Responsible account is outside your section for group ${index + 1}`);
+      }
+      const name = input.name.trim();
+      if (!name) throw new BadRequestException(`Group ${index + 1} needs a name`);
+      const upcs = this.normalizeUpcs(input.upcs);
+      const active = input.active ?? true;
+      const changed = !previous || previous.name !== name || previous.responsibleId !== responsible.id
+        || previous.active !== active || !this.sameValues(previous.upcs, upcs);
+      return {
+        id: ids[index], name, responsibleId: responsible.id,
+        responsibleName: responsible.name || responsible.email,
+        upcs, active,
+        createdById: previous?.createdById ?? userId,
+        createdByName: previous?.createdByName ?? (actor.name || actor.email),
+        updatedById: changed ? userId : previous.updatedById,
+        updatedByName: changed ? (actor.name || actor.email) : previous.updatedByName,
+        createdAt: previous?.createdAt ?? now,
+        updatedAt: changed ? now : previous.updatedAt,
+      };
+    });
   }
 
   private normalizeUpcs(upcs: string[]) {

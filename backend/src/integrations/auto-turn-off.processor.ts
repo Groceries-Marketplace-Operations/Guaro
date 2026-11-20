@@ -52,7 +52,7 @@ export class AutoTurnOffCoordinator {
     const { rule } = execution;
     const now = new Date();
     if (rule.endsAt && rule.endsAt <= now) {
-      await this.prisma.autoTurnOffRule.update({ where: { id: rule.id }, data: { active: false } });
+      await this.prisma.autoTurnOffRule.update({ where: { id: rule.id }, data: { active: false, configVersion: { increment: 1 } } });
       await this.failExecution(executionId, 'Rule reached its automatic end date before execution started');
       return;
     }

@@ -14,7 +14,10 @@ import {
   Matches,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { AutoTurnOffUpcGroupDto } from './auto-turn-off-upc-group.dto';
 
 export class UpdateAutoTurnOffRuleDto {
   @IsOptional()
@@ -39,6 +42,19 @@ export class UpdateAutoTurnOffRuleDto {
   @ArrayMaxSize(5000)
   @IsString({ each: true })
   upcs?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => AutoTurnOffUpcGroupDto)
+  upcGroups?: AutoTurnOffUpcGroupDto[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  expectedConfigVersion?: number;
 
   @IsOptional()
   @IsInt()

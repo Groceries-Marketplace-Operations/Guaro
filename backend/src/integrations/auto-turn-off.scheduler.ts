@@ -19,7 +19,7 @@ export class AutoTurnOffScheduler {
     const now = new Date();
     const expired = await this.prisma.autoTurnOffRule.updateMany({
       where: { active: true, endsAt: { lte: now } },
-      data: { active: false },
+      data: { active: false, configVersion: { increment: 1 } },
     });
     if (expired.count > 0) this.logger.log(`Automatically stopped ${expired.count} expired auto turn off rule(s)`);
 
