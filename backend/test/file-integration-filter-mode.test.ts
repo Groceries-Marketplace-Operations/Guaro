@@ -120,8 +120,8 @@ test('City Club scope is rejected for Colombia and retained for Mexico', async (
   }), 'operator'), /requires the Soriana SFTP account/);
 });
 
-test('rule DTO accepts a 6,340-code list without converting identifiers to numbers', () => {
-  const codes = Array.from({ length: 6_340 }, (_, index) => String(index).padStart(12, '0'));
+test('rule DTO accepts 100,000 codes with leading zeros and rejects 100,001', () => {
+  const codes = Array.from({ length: 100_000 }, (_, index) => String(index).padStart(12, '0'));
   const dto = plainToInstance(UpsertFileIntegrationRuleDto, {
     name: 'Cencosud code filter',
     kind: FileIntegrationKind.price_filter,
@@ -135,6 +135,8 @@ test('rule DTO accepts a 6,340-code list without converting identifiers to numbe
   });
   assert.deepEqual(validateSync(dto), []);
   assert.equal(dto.excludedUpcs?.[0], '000000000000');
+  dto.excludedUpcs = [...codes, '000000100000'];
+  assert.ok(validateSync(dto).some(error => error.property === 'excludedUpcs' && error.constraints?.arrayMaxSize));
 });
 
 test('code-only rule saves code matching without requiring any amount field', async () => {

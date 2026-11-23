@@ -38,6 +38,9 @@ interface RuleForm {
 type CustomIntegrationSection = 'massive-rtbo' | 'didi-store-bindings' | 'daily-activation' | 'store-splitter' | 'offer-menu' | 'targeted-menu' | 'upc-activity-price' | 'cross-app';
 
 const runningStatuses = new Set(['pending', 'running']);
+const MAX_SFTP_FILTER_CODES = 100_000;
+const MAX_SFTP_FILTER_CODES_LABEL = MAX_SFTP_FILTER_CODES.toLocaleString('es-MX');
+const MAX_SFTP_CODE_FILE_BYTES = 7_000_000;
 
 function initialForm(kind: FileIntegrationKind): RuleForm {
   return kind === 'price_filter'
@@ -196,8 +199,8 @@ export default function FileIntegrationsPage({ kind, standaloneSftp = false }: {
 
   const importCodeFile = async (file?: File) => {
     if (!file) return;
-    if (file.size > 2_000_000) {
-      setCodeImportError('El archivo supera 2 MB. Usa una lista de códigos en TXT o CSV de una columna.');
+    if (file.size > MAX_SFTP_CODE_FILE_BYTES) {
+      setCodeImportError(`El archivo supera ${MAX_SFTP_CODE_FILE_BYTES / 1_000_000} MB. Usa una lista de códigos en TXT o CSV de una columna.`);
       return;
     }
     try {
@@ -418,7 +421,7 @@ export default function FileIntegrationsPage({ kind, standaloneSftp = false }: {
 
     {open && canConfigure && <Modal className={isFilter ? 'modal--sftp-rule' : ''} title={editing ? 'Editar regla SFTP' : 'Nueva regla SFTP'} onClose={() => setOpen(false)} footer={<>
       <button className="btn btn-ghost" onClick={() => setOpen(false)}>Cancelar</button>
-      <button className="btn btn-primary" disabled={save.isPending || !!duplicateRule || !form.name.trim() || !form.sftpApplicationId || (isFilter && !form.country) || (needsAmount && form.thresholdAmount <= 0) || (needsCodes && codeValues.length === 0) || codeValues.length > 10_000 || codeValues.some(code => code.length > 64)} onClick={() => {
+      <button className="btn btn-primary" disabled={save.isPending || !!duplicateRule || !form.name.trim() || !form.sftpApplicationId || (isFilter && !form.country) || (needsAmount && form.thresholdAmount <= 0) || (needsCodes && codeValues.length === 0) || codeValues.length > MAX_SFTP_FILTER_CODES || codeValues.some(code => code.length > 64)} onClick={() => {
         if (willResetTracking && !window.confirm('Cambiar la selección o los filtros reiniciará el seguimiento. La próxima ejecución revisará de nuevo los archivos modificados hoy. ¿Guardar los cambios?')) return;
         save.mutate();
       }}>{save.isPending ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar regla'}</button>
@@ -458,7 +461,7 @@ export default function FileIntegrationsPage({ kind, standaloneSftp = false }: {
           {needsAmount && <div className="form-group"><label className="form-label">Columna del monto (inicia en 0)</label><input className="form-input" type="number" min={0} value={form.priceColumn} onChange={event => setForm(value => ({ ...value, priceColumn: Number(event.target.value) }))} /><p className="form-hint">La columna 4 es la quinta posición. Verifica el separador y la estructura de los archivos de esta cuenta.</p></div>}
         </div>
         {needsCodes && <div className="sftp-processing-code-input">
-          <div className="form-group"><label className="form-label">Códigos a eliminar * ({codeValues.length.toLocaleString('es-MX')} / 10,000)</label>
+          <div className="form-group"><label className="form-label">Códigos a eliminar * ({codeValues.length.toLocaleString('es-MX')} / {MAX_SFTP_FILTER_CODES_LABEL})</label>
             <textarea className="form-input td-mono" rows={8} placeholder="Pega un código por línea o separados por espacio, coma o punto y coma" value={form.excludedUpcs} onChange={event => setForm(value => ({ ...value, excludedUpcs: event.target.value }))} />
             <p className="form-hint">Se comparan como texto: se conservan los ceros iniciales y se normaliza un sufijo .0. No se crean miles de etiquetas en pantalla.</p>
           </div>
@@ -471,7 +474,7 @@ export default function FileIntegrationsPage({ kind, standaloneSftp = false }: {
             {codeValues.length > 0 && <p className="form-hint">Muestra: <span className="td-mono">{codeValues.slice(0, 8).join(', ')}{codeValues.length > 8 ? '…' : ''}</span></p>}
           </div>
           {codeImportError && <div className="error-banner">{codeImportError}</div>}
-          {codeValues.length > 10_000 && <div className="error-banner">La regla admite hasta 10,000 códigos únicos.</div>}
+          {codeValues.length > MAX_SFTP_FILTER_CODES && <div className="error-banner">La regla admite hasta {MAX_SFTP_FILTER_CODES_LABEL} códigos únicos.</div>}
           {codeValues.some(code => code.length > 64) && <div className="error-banner">Los códigos deben tener máximo 64 caracteres.</div>}
         </div>}
       </>}

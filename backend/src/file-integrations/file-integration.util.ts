@@ -51,6 +51,7 @@ export function normalizeUpc(value: string) {
   return /^\d+[.]0+$/.test(trimmed) ? trimmed.replace(/[.]0+$/, '') : trimmed;
 }
 
+export const SFTP_FILTER_MAX_CODES = 100_000;
 export const SFTP_FILTER_MODES = ['amount', 'code', 'amount_and_code'] as const;
 export type SftpFilterMode = typeof SFTP_FILTER_MODES[number];
 

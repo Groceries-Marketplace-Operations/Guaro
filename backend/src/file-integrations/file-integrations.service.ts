@@ -11,7 +11,7 @@ import {
   nextDailyFileIntegrationRun,
 } from './daily-status-activation.util';
 import { UpsertFileIntegrationRuleDto } from './dto/upsert-file-integration-rule.dto';
-import { normalizeUpc, parseSftpFilterMode, priceFilterTimeZone } from './file-integration.util';
+import { normalizeUpc, parseSftpFilterMode, priceFilterTimeZone, SFTP_FILTER_MAX_CODES } from './file-integration.util';
 
 const PROMOTION_SHOPS_PER_RUN_LIMIT = 20;
 
@@ -223,8 +223,8 @@ export class FileIntegrationsService {
       throw new BadRequestException('Every code must be a non-empty value of at most 64 characters');
     }
     const excludedUpcs = [...new Set(requestedCodes)];
-    if (excludedUpcs.length > 10_000) {
-      throw new BadRequestException('A code filter supports at most 10,000 unique codes');
+    if (excludedUpcs.length > SFTP_FILTER_MAX_CODES) {
+      throw new BadRequestException(`A code filter supports at most ${SFTP_FILTER_MAX_CODES.toLocaleString('en-US')} unique codes`);
     }
     const filterMode = dto.kind === FileIntegrationKind.price_filter
       ? parseSftpFilterMode(dto.filterMode

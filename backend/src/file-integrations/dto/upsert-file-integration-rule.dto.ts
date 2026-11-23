@@ -1,7 +1,7 @@
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { Country, FileIntegrationKind } from '@prisma/client';
-import { SFTP_FILTER_MODES, SftpFilterMode } from '../file-integration.util';
+import { SFTP_FILTER_MAX_CODES, SFTP_FILTER_MODES, SftpFilterMode } from '../file-integration.util';
 
 export class UpsertFileIntegrationRuleDto {
   @IsString()
@@ -83,7 +83,7 @@ export class UpsertFileIntegrationRuleDto {
 
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(10000)
+  @ArrayMaxSize(SFTP_FILTER_MAX_CODES)
   @IsString({ each: true })
   @MaxLength(64, { each: true })
   excludedUpcs?: string[];
