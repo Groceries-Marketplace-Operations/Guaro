@@ -30,3 +30,7 @@ export class SftpApiDto {
 export class SftpApiRunDto {
   @IsIn(['full', 'delta']) mode!: 'full' | 'delta';
 }
+
+export class SftpApiProductsDto {
+  @IsArray() @ArrayMaxSize(3000) products!: unknown[];
+}

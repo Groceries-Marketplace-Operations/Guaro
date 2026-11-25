@@ -42,6 +42,7 @@ import RoleAccessPage from './pages/admin/RoleAccessPage';
 import StoreOnboardingPage from './pages/integrations/StoreOnboardingPage';
 import { ThemeProvider } from './theme/ThemeContext';
 import SftpApiPage from './pages/integrations/SftpApiPage';
+import SftpApiProductsPage from './pages/integrations/SftpApiProductsPage';
 import CompletionRatePage from './pages/integrations/CompletionRatePage';
 import AppShopInventoryPage from './pages/admin/AppShopInventoryPage';
 
@@ -111,6 +112,7 @@ export default function App() {
               <Route path="integrations/auto-menu-fetch" element={protectedPage('integrations.auto_menu_fetch', <AutoFetchPage kind="menu" />)} />
               <Route path="integrations/emergencies" element={protectedPage('integrations.emergencies', <StoreEmergenciesPage />)} />
               <Route path="integrations/complex-promotions-sftp" element={protectedPage('integrations.promotions_sftp', <FileIntegrationsPage kind="complex_promotion_reader" />)} />
+              <Route path="integrations/sftp-api-products" element={protectedPage('integrations.sftp_api', <SftpApiProductsPage />)} />
               <Route path="integrations/sftp-api" element={protectedPage('integrations.sftp_api', <SftpApiPage />)} />
               <Route path="integrations/sftp-api/:id" element={protectedPage('integrations.sftp_api', <SftpApiPage />)} />
               <Route path="integrations/custom" element={protectedPage('integrations.custom', <FileIntegrationsPage kind="price_filter" />)} />

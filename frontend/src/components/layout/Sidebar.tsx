@@ -216,6 +216,9 @@ export default function Sidebar() {
           {can('integrations.sftp_api') && <NavLink to="/integrations/sftp-api" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconApp /> {t('nav.sftpApi')}
           </NavLink>}
+          {can('integrations.sftp_api') && <NavLink to="/integrations/sftp-api-products" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <IconApp /> Productos adicionales SFTP
+          </NavLink>}
           {can('integrations.custom') && <NavLink to="/integrations/custom" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <IconSettings /> {t('nav.customIntegrations')}
           </NavLink>}

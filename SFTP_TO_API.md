@@ -97,3 +97,13 @@ Las pruebas de procesamiento simulan SFTP y la API: no modifican tiendas reales.
 El buscador valida que `q` sea un texto antes de truncarlo: parámetros repetidos o estructurados reciben HTTP 400. Los regex son configurables de forma intencional; se limitan a 500 caracteres y tanto su compilación como sus coincidencias pasan por el mismo límite de ejecución de un segundo, sin interpolar patrones en código. Escapar los metacaracteres impediría configurar filtros y grupos de captura.
 
 La alerta de MD5 en `didi-header-sign` se conserva visible para revisión: corresponde al esquema de firma que utiliza la integración DiDi Grocery, sobre HTTPS. Sustituirlo por SHA-256 sin soporte del proveedor cambiaría la firma enviada. No se ha desactivado la regla de CodeQL ni descartado la alerta; cualquier excepción de compatibilidad requiere revisión. El cifrado de auditorías usa AES-256-GCM y los hashes de archivos usan SHA-256.
+
+## Productos adicionales
+
+En **Integrations → Productos adicionales SFTP** se selecciona una marca y su aplicación API entre las configuraciones existentes de SFTP to API. Cada configuración guarda una lista JSON de hasta 3,000 productos con `app_item_id` (texto alfanumérico de hasta 50 caracteres), `price` (pesos, positivo) y `stock` (entero no negativo). Guardar reemplaza la lista; `[]` la vacía. Se usan los permisos de consulta y configuración de SFTP to API.
+
+En los siguientes Full manuales o programados, los productos se incorporan a todas las tiendas del archivo seleccionado. `app_item_id` conserva ceros iniciales y también se usa como UPC/EAN y `item_name`; `price` se convierte a centavos con la misma función decimal del CSV. Un ID ya presente en el SFTP conserva los datos del archivo y deja un reporte. Delta no incorpora ni actualiza estos productos. Guardar la lista no inicia envíos y las ejecuciones ya creadas conservan su snapshot.
+
+Se utilizan las categorías Despensa del menú generado por el SFTP, con hasta 3,000 productos por categoría y 30,000 por tienda. Si los adicionales no caben en esas categorías, el archivo falla antes de enviarse; no se crea una categoría extra para ellos. Un archivo sin productos válidos conserva el comportamiento de error existente.
+
+Antes de desplegar, aplicar `20261124010000_sftp_api_additional_products` y regenerar Prisma Client. Las configuraciones existentes comienzan con una lista vacía.

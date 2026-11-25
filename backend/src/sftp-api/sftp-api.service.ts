@@ -4,10 +4,12 @@ import { Queue } from 'bullmq';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SftpApiDto } from './sftp-api.dto';
+import { validateAdditionalProducts } from './sftp-api-products';
 import { resolveSftpApiApplications } from './sftp-api.credentials';
 import { columnIndex, MAPPING_FIELDS, Mode, nextSchedule, regexMatches, renamedFile, Schedule } from './sftp-api.util';
 
 export const RULE_SELECT = {
+  additionalProducts: true,
   id: true, brandId: true, brand: { select: { brandName: true, brandId: true } },
   applicationId: true, sftpApplicationId: true,
   application: { select: { id: true, appName: true, appId: true, country: true, deletedAt: true } },
@@ -61,6 +63,14 @@ export class SftpApiService {
     const rule = await this.prisma.sftpApiRule.findUnique({ where: { id }, select: RULE_SELECT });
     if (!rule) throw new NotFoundException('Configuración no encontrada');
     return rule;
+  }
+
+  async saveProducts(id: string, products: unknown) {
+    let validated;
+    try { validated = validateAdditionalProducts(products); }
+    catch (error) { throw new BadRequestException((error as Error).message); }
+    await this.detail(id);
+    return this.prisma.sftpApiRule.update({ where: { id }, data: { additionalProducts: validated }, select: RULE_SELECT });
   }
 
   async save(dto: SftpApiDto, actorId: string, id?: string) {
