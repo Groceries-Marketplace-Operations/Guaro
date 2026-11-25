@@ -5,7 +5,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { JwtUser } from '../auth/types/jwt-user.interface';
-import { SftpApiDto, SftpApiRunDto } from './sftp-api.dto';
+import { SftpApiDto, SftpApiRunDto, SftpApiProductsDto } from './sftp-api.dto';
 import { SftpApiService } from './sftp-api.service';
 
 @Controller('integrations/sftp-api')
@@ -21,6 +21,8 @@ export class SftpApiController {
   applications(@Query('brandId', ParseUUIDPipe) brandId: string) { return this.service.applicationOptions(brandId); }
   @Get() list() { return this.service.list(); }
   @Get(':id') detail(@Param('id', ParseUUIDPipe) id: string) { return this.service.detail(id); }
+  @Patch(':id/products') @Permissions('integrations.sftp_api.configure')
+  products(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SftpApiProductsDto) { return this.service.saveProducts(id, dto.products); }
   @Post() @Permissions('integrations.sftp_api.configure')
   create(@Body() dto: SftpApiDto, @CurrentUser() user: JwtUser) { return this.service.save(dto, user.id); }
   @Patch(':id') @Permissions('integrations.sftp_api.configure')

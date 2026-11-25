@@ -969,6 +969,7 @@ model CompletionRateRun {
 }
 
 model SftpApiRule {
+  additionalProducts Json                 @default("[]") @map("additional_products")
   renameFile        Boolean                @default(false) @map("rename_file")
   renameRegex       String                 @default("") @map("rename_regex")
   renameReplacement String                 @default("") @map("rename_replacement")

@@ -202,3 +202,16 @@ test('save persists encoding and rename options and rejects unsafe replacements'
   const errors = await validate(plainToInstance(SftpApiDto, { ...dto, sourceEncoding: 'invalid' }));
   assert.ok(errors.some(error => error.property === 'sourceEncoding'));
 });
+
+test('additional products can only be saved on an existing SFTP configuration', async () => {
+  const h = harness();
+  let writes = 0;
+  h.prisma.sftpApiRule.update = async ({ data }: any) => { writes++; return data; };
+  const product = { app_item_id: '000123', price: 12000, stock: 21 };
+  assert.deepEqual(await h.service.saveProducts('rule', [product]), { additionalProducts: [product] });
+  await assert.rejects(h.service.saveProducts('rule', [{ ...product, stock: -1 }]), { status: 400 });
+  assert.equal(writes, 1);
+  h.prisma.sftpApiRule.findUnique = async () => null;
+  await assert.rejects(h.service.saveProducts('missing', [product]), { status: 404 });
+  assert.equal(writes, 1);
+});

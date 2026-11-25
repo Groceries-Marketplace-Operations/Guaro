@@ -531,3 +531,25 @@ test('all-invalid prices produce reports and no authentication or empty menu', a
     assert.equal(h.posts.length, 0);
   } finally { mock.restoreAll(); }
 });
+
+test('Full sends configured additional products while Delta excludes them', async () => {
+  for (const mode of ['full', 'delta'] as const) {
+    const h = harness(mode);
+    Object.assign(h.rule, { additionalProducts: [{ app_item_id: '7702085005231', price: 12000, stock: 21 }] });
+    try {
+      await h.processor.process({ data: { runId: 'run' } } as any);
+      assert.equal(h.posts.length, 1);
+      if (mode === 'full') {
+        const item = h.posts[0].items.find((entry: any) => entry.app_item_id === '7702085005231');
+        assert.equal(item.price, 1200000);
+        assert.equal(item.upc, item.app_item_id);
+        assert.equal(item.item_name, item.app_item_id);
+        assert.ok(h.posts[0].categories[0].app_item_ids.includes(item.app_item_id));
+        assert.equal(h.uploads[0].itemCount, 2);
+      } else {
+        assert.deepEqual(h.posts[0].stock_list, [{ app_item_id: '001234', stock: 7 }]);
+        assert.equal(h.uploads[0].itemCount, 1);
+      }
+    } finally { mock.restoreAll(); }
+  }
+});

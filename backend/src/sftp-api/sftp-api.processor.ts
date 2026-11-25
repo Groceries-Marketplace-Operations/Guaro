@@ -15,6 +15,7 @@ import { DIDI_BASE, parseJsonKeepingIds } from '../queue/handlers/didi-food.util
 import { resolveSftpApiApplications } from './sftp-api.credentials';
 import { decodeFile, renamedFile, groceryPayload, Item, Mode, mxDate, parseFile, ParseConfig, redact, regexMatches } from './sftp-api.util';
 import { SftpApiStockLimiter, STOCK_BATCH_SIZE } from './sftp-api-stock-limiter';
+import { appendAdditionalProducts } from './sftp-api-products';
 
 const FULL_ENDPOINT = '/v3/item/item/uploadGrocery';
 const STOCK_ENDPOINT = '/v1/item/item/setstockSync';
@@ -106,6 +107,7 @@ export class SftpApiProcessor extends WorkerHost {
           const content = decodeFile(buffer, rule);
           const reports: string[] = [];
           const stores = parseFile(content, entry.name, rule as unknown as ParseConfig, run.mode as Mode, reports);
+          appendAdditionalProducts(stores, rule.additionalProducts, run.mode as Mode, reports);
           const newName = rule.renameFile ? renamedFile(entry.name, rule.renameRegex, rule.renameReplacement) : entry.name;
           if (newName !== entry.name && await client.exists(posix.join(rootPath, newName))) throw new Error('El nombre de destino ya existe: ' + newName);
           const fileHash = hash(buffer);
